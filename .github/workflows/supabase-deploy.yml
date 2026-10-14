@@ -1,0 +1,29 @@
+name: Supabase deploy (manual)
+
+# Applies migrations from Git and deploys Edge Functions to the linked hosted project.
+# Manual trigger only: schema changes to production are an explicit operator action.
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+      - name: Show pending migrations
+        run: pnpm exec supabase migration list
+      - run: pnpm exec supabase db push --password "$SUPABASE_DB_PASSWORD"
+      - run: pnpm exec supabase functions deploy checkout --project-ref "$SUPABASE_PROJECT_REF"
+      - run: pnpm exec supabase functions deploy my-orders --project-ref "$SUPABASE_PROJECT_REF"

@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint · types · unit · build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm check:tenant-names
+      - name: Validate every tenant config
+        run: for d in tenants/*/; do pnpm -s tenant:validate --slug "$(basename "$d")"; done
+      - name: Build (public values only)
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key' }}
+        run: pnpm build
+      - run: pnpm check:bundle-secrets
+
+  integration:
+    name: SQL/integration + Playwright (local Supabase in Docker)
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start local Supabase (applies migrations from Git)
+        run: pnpm db:start
+      - name: Migrations reproduce the schema
+        run: pnpm exec supabase db diff --local | tee diff.txt && grep -q "No schema changes found" diff.txt
+      - name: Seed and publish demo tenants
+        run: |
+          for slug in noir-vapor mint-lab; do
+            pnpm -s tenant:seed --slug "$slug"
+            OWNER_PASSWORD="ci-$(openssl rand -hex 12)" pnpm -s owner:add --slug "$slug" --email "ci-owner@$slug.local"
+            pnpm -s tenant:publish --slug "$slug" --yes
+            pnpm -s tenant:verify --slug "$slug"
+          done
+      - run: pnpm test:integration
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report
+
+  deploy-cloudflare-pages:
+    name: Deploy frontend to Cloudflare Pages
+    runs-on: ubuntu-latest
+    needs: [quality, integration]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CLOUDFLARE_PAGES_PROJECT != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+        run: pnpm build && pnpm check:bundle-secrets
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }}

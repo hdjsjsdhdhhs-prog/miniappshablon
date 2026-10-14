@@ -1,0 +1,28 @@
+node_modules
+dist
+coverage
+playwright-report
+test-results
+blob-report
+*.log
+*.tsbuildinfo
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+supabase/functions/.env
+supabase/.env*
+.vercel
+.wrangler
+
+# Supabase CLI local state
+supabase/.temp
+supabase/.branches
+
+# E2E runtime artifacts (contain generated local test credentials)
+e2e/.auth

@@ -1,0 +1,128 @@
+{
+  "slug": "noir-vapor",
+  "name": "Noir Vapor",
+  "description": "Демонстрационная витрина в тёмном премиальном стиле. Товары и цены вымышлены.",
+  "logo": "assets/logo.png",
+  "cover": "assets/cover.png",
+  "theme": {
+    "mode": "dark",
+    "radius": 14,
+    "background": "#0e0e10",
+    "foreground": "#f4f4f5",
+    "card": "#18181b",
+    "cardForeground": "#f4f4f5",
+    "primary": "#d4a24c",
+    "primaryForeground": "#141414",
+    "accent": "#2b2b31",
+    "accentForeground": "#f4f4f5",
+    "muted": "#232327",
+    "mutedForeground": "#a1a1aa",
+    "border": "#2e2e34"
+  },
+  "currency": "RUB",
+  "demo": true,
+  "ageRestriction": 18,
+  "legalNotice": "DEMO. Продажа никотинсодержащей продукции лицам младше 18 лет запрещена. Заказ не является офертой: магазин подтверждает его и согласовывает оплату и получение отдельно.",
+  "shopInformation": {
+    "address": "Демо-адрес: ул. Примерная, 1",
+    "hours": "Ежедневно 11:00–22:00",
+    "delivery": "Самовывоз и курьер по городу (демо).",
+    "payment": "Оплата при получении после подтверждения заказа магазином.",
+    "phone": "",
+    "telegram": ""
+  },
+  "settings": { "showFeatured": true, "showInfo": true, "showCategories": true },
+  "telegram": { "botUsername": null, "miniAppShortName": null },
+  "initialCategories": [
+    { "key": "liquids", "name": "Жидкости", "slug": "liquids", "image": "assets/category-liquids.png" },
+    { "key": "pods", "name": "Pod-системы", "slug": "pods", "image": "assets/category-pods.png" },
+    { "key": "carts", "name": "Картриджи", "slug": "carts", "image": "assets/category-carts.png" },
+    { "key": "accessories", "name": "Аксессуары", "slug": "accessories", "image": null }
+  ],
+  "initialProducts": [
+    {
+      "key": "noir-salt-30",
+      "category": "liquids",
+      "name": "Noir Salt 30 мл",
+      "description": "Солевая жидкость 30 мл. Демонстрационный товар: вкус выбирается перед добавлением в корзину.",
+      "priceMinor": 69000,
+      "featured": true,
+      "images": ["assets/noir-salt-30-1.png", "assets/noir-salt-30-2.png"],
+      "variants": [
+        { "key": "mango", "flavor": "Манго-маракуйя", "stock": 12 },
+        { "key": "cherry", "flavor": "Ледяная вишня", "stock": 8 },
+        { "key": "tobacco", "flavor": "Табак-ваниль", "stock": 0 },
+        { "key": "blueberry", "flavor": "Черника", "priceMinor": 74000, "stock": 5 }
+      ]
+    },
+    {
+      "key": "velvet-ice",
+      "category": "liquids",
+      "name": "Velvet Ice 30 мл",
+      "description": "Освежающая линейка с холодком. Демонстрационный товар.",
+      "priceMinor": 59000,
+      "images": ["assets/velvet-ice-1.png"],
+      "variants": [
+        { "key": "mint", "flavor": "Мята", "stock": 15 },
+        { "key": "watermelon", "flavor": "Арбуз", "stock": 6 },
+        { "key": "lemonade", "flavor": "Лимонад", "stock": 3 }
+      ]
+    },
+    {
+      "key": "aurum-pod",
+      "category": "pods",
+      "name": "Aurum Pod",
+      "description": "Компактная pod-система. Цена зависит от цвета корпуса. Демонстрационный товар.",
+      "priceMinor": 249000,
+      "featured": true,
+      "images": ["assets/aurum-pod-1.png", "assets/aurum-pod-2.png"],
+      "variants": [
+        { "key": "graphite", "color": "Графит", "stock": 4 },
+        { "key": "gold", "color": "Золото", "priceMinor": 269000, "stock": 2 },
+        { "key": "bordeaux", "color": "Бордо", "stock": 0 }
+      ]
+    },
+    {
+      "key": "obsidian-kit",
+      "category": "pods",
+      "name": "Obsidian Kit",
+      "description": "Набор с увеличенной батареей. Демонстрационный товар.",
+      "priceMinor": 389000,
+      "images": ["assets/obsidian-kit-1.png"],
+      "variants": [
+        { "key": "black", "color": "Чёрный", "stock": 3 },
+        { "key": "silver", "color": "Серебро", "stock": 1 }
+      ]
+    },
+    {
+      "key": "aurum-cart",
+      "category": "carts",
+      "name": "Картридж Aurum 0.8 Ом",
+      "description": "Сменный картридж для Aurum Pod. Демонстрационный товар.",
+      "priceMinor": 39000,
+      "images": ["assets/aurum-cart-1.png"],
+      "variants": [{ "key": "default", "stock": 30 }]
+    },
+    {
+      "key": "case-leather",
+      "category": "accessories",
+      "name": "Чехол кожаный",
+      "description": "Чехол для pod-систем. Демонстрационный товар.",
+      "priceMinor": 99000,
+      "images": ["assets/case-leather-1.png"],
+      "variants": [
+        { "key": "black", "color": "Чёрный", "stock": 10 },
+        { "key": "cognac", "color": "Коньячный", "stock": 6 }
+      ]
+    },
+    {
+      "key": "lanyard",
+      "category": "accessories",
+      "name": "Шнурок для pod",
+      "description": "Демонстрационный товар без фото — проверка плейсхолдера.",
+      "priceMinor": 29000,
+      "images": [],
+      "variants": [{ "key": "default", "stock": 25 }]
+    }
+  ]
+}

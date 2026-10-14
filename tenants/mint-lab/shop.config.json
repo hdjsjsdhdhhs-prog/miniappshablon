@@ -1,0 +1,114 @@
+{
+  "slug": "mint-lab",
+  "name": "Mint Lab",
+  "description": "Демонстрационная витрина в светлом минималистичном стиле. Товары и цены вымышлены.",
+  "logo": "assets/logo.png",
+  "cover": null,
+  "theme": {
+    "mode": "light",
+    "radius": 8,
+    "background": "#f6f8f7",
+    "foreground": "#0f1a17",
+    "card": "#ffffff",
+    "cardForeground": "#0f1a17",
+    "primary": "#0f766e",
+    "primaryForeground": "#ffffff",
+    "accent": "#e3f1ee",
+    "accentForeground": "#0f3d38",
+    "muted": "#eef3f1",
+    "mutedForeground": "#4b5b57",
+    "border": "#dbe4e1"
+  },
+  "currency": "RUB",
+  "demo": true,
+  "ageRestriction": 18,
+  "legalNotice": "DEMO. Товары только для лиц старше 18 лет. Оформленный заказ магазин подтверждает вручную; оплата и получение согласуются после подтверждения.",
+  "shopInformation": {
+    "address": "Демо-адрес: пр. Тестовый, 10",
+    "hours": "Пн–Сб 10:00–20:00",
+    "delivery": "Самовывоз (демо).",
+    "payment": "Наличные или перевод после подтверждения (демо).",
+    "phone": "",
+    "telegram": ""
+  },
+  "settings": { "showFeatured": true, "showInfo": true, "showCategories": true },
+  "telegram": { "botUsername": null, "miniAppShortName": null },
+  "initialCategories": [
+    { "key": "liquids", "name": "Жидкости", "slug": "liquids", "image": null },
+    { "key": "devices", "name": "Устройства", "slug": "devices", "image": null },
+    { "key": "consumables", "name": "Расходники", "slug": "consumables", "image": null }
+  ],
+  "initialProducts": [
+    {
+      "key": "clear-mint",
+      "category": "liquids",
+      "name": "Clear Mint 30 мл",
+      "description": "Мятная линейка. Демонстрационный товар.",
+      "priceMinor": 55000,
+      "featured": true,
+      "images": ["assets/clear-mint-1.png"],
+      "variants": [
+        { "key": "mint", "flavor": "Мята", "stock": 20 },
+        { "key": "mint-lime", "flavor": "Мята-лайм", "stock": 7 },
+        { "key": "eucalyptus", "flavor": "Эвкалипт", "stock": 2 }
+      ]
+    },
+    {
+      "key": "berry-lab",
+      "category": "liquids",
+      "name": "Berry Lab 30 мл",
+      "description": "Ягодная линейка. Демонстрационный товар.",
+      "priceMinor": 57000,
+      "images": ["assets/berry-lab-1.png"],
+      "variants": [
+        { "key": "strawberry", "flavor": "Клубника", "stock": 9 },
+        { "key": "raspberry", "flavor": "Малина", "stock": 0 },
+        { "key": "currant", "flavor": "Смородина", "stock": 4 }
+      ]
+    },
+    {
+      "key": "lab-one",
+      "category": "devices",
+      "name": "Lab One",
+      "description": "Лёгкое устройство на каждый день. Демонстрационный товар.",
+      "priceMinor": 199000,
+      "featured": true,
+      "images": ["assets/lab-one-1.png", "assets/lab-one-2.png"],
+      "variants": [
+        { "key": "white", "color": "Белый", "stock": 5 },
+        { "key": "mint", "color": "Мятный", "stock": 3 },
+        { "key": "grey", "color": "Серый", "stock": 1 }
+      ]
+    },
+    {
+      "key": "lab-mini",
+      "category": "devices",
+      "name": "Lab Mini",
+      "description": "Компактная версия. Демонстрационный товар.",
+      "priceMinor": 149000,
+      "images": ["assets/lab-mini-1.png"],
+      "variants": [
+        { "key": "white", "color": "Белый", "stock": 0 },
+        { "key": "sand", "color": "Песочный", "stock": 5 }
+      ]
+    },
+    {
+      "key": "lab-cart",
+      "category": "consumables",
+      "name": "Картридж Lab 1.0 Ом",
+      "description": "Сменный картридж. Демонстрационный товар.",
+      "priceMinor": 35000,
+      "images": ["assets/lab-cart-1.png"],
+      "variants": [{ "key": "default", "stock": 40 }]
+    },
+    {
+      "key": "usb-c-cable",
+      "category": "consumables",
+      "name": "Кабель USB-C",
+      "description": "Кабель для зарядки. Демонстрационный товар.",
+      "priceMinor": 49000,
+      "images": ["assets/usb-c-cable-1.png"],
+      "variants": [{ "key": "default", "stock": 12 }]
+    }
+  ]
+}

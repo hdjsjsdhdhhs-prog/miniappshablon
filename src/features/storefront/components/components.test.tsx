@@ -1,0 +1,75 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
+import { MemoryRouter } from 'react-router';
+import { describe, expect, it } from 'vitest';
+import type { VariantLike, VariantSelection } from '@/domain/variants';
+import { BottomNav } from './BottomNav';
+import { CategoryChips } from './CategoryChips';
+import { QuantityStepper } from './QuantityStepper';
+import { VariantPicker } from './VariantPicker';
+
+const variants: VariantLike[] = [
+  { id: 'a', flavor: 'Мята', color: 'Чёрный', stock_quantity: 3, is_active: true, price_override_minor: null },
+  { id: 'b', flavor: 'Вишня', color: 'Белый', stock_quantity: 0, is_active: true, price_override_minor: null },
+];
+
+function PickerHarness({ onSel }: { onSel?: (s: VariantSelection) => void }) {
+  const [sel, setSel] = useState<VariantSelection>({ flavor: 'Мята', color: 'Чёрный' });
+  return (
+    <>
+      <VariantPicker variants={variants} selection={sel} onChange={(s) => { setSel(s); onSel?.(s); }} />
+      <output data-testid="sel">{`${sel.flavor}|${sel.color}`}</output>
+    </>
+  );
+}
+
+describe('VariantPicker', () => {
+  it('renders flavor and color groups with radio semantics and stock hints', () => {
+    render(<PickerHarness />);
+    expect(screen.getByRole('radiogroup', { name: 'Вкус' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Мята' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: /Вишня.*нет в наличии/ })).toBeInTheDocument();
+  });
+
+  it('switching to an option without the current combination selects an existing variant', async () => {
+    render(<PickerHarness />);
+    await userEvent.click(screen.getByRole('radio', { name: /Вишня/ }));
+    // Вишня exists only with Белый, so the color follows; the selection always maps to a real row.
+    expect(screen.getByTestId('sel')).toHaveTextContent('Вишня|Белый');
+  });
+});
+
+describe('BottomNav', () => {
+  it('links to catalog, cart (with count) and profile of the current shop', () => {
+    render(
+      <MemoryRouter initialEntries={['/s/demo/cart']}>
+        <BottomNav slug="demo" cartCount={3} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('link', { name: /Каталог/ })).toHaveAttribute('href', '/s/demo/catalog');
+    const cart = screen.getByRole('link', { name: /Корзина/ });
+    expect(cart).toHaveAttribute('href', '/s/demo/cart');
+    expect(cart).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByTestId('cart-count')).toHaveTextContent('3');
+    expect(screen.getByRole('link', { name: /Профиль/ })).toHaveAttribute('href', '/s/demo/profile');
+  });
+});
+
+describe('QuantityStepper & CategoryChips', () => {
+  it('respects min/max bounds', async () => {
+    const values: number[] = [];
+    render(<QuantityStepper value={1} max={2} onChange={(v) => values.push(v)} />);
+    expect(screen.getByRole('button', { name: 'Уменьшить' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Увеличить' }));
+    expect(values).toEqual([2]);
+  });
+
+  it('selects categories', async () => {
+    const picked: Array<string | null> = [];
+    render(<CategoryChips categories={[{ id: '1', name: 'Жидкости', slug: 'liquids', imagePath: null }]} selected={null} onSelect={(s) => picked.push(s)} />);
+    expect(screen.getByRole('radio', { name: 'Все' })).toHaveAttribute('aria-checked', 'true');
+    await userEvent.click(screen.getByRole('radio', { name: 'Жидкости' }));
+    expect(picked).toEqual(['liquids']);
+  });
+});
