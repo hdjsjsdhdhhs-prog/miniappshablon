@@ -23,7 +23,7 @@ export function ThemeScope({ theme, children, className }: { theme: ShopTheme; c
   return (
     <div
       data-theme-mode={theme.mode}
-      className={cn(theme.mode === 'dark' && 'dark', 'min-h-dvh bg-background text-foreground', className)}
+      className={cn(theme.mode === 'dark' && 'dark', 'storefront-scene min-h-dvh bg-background text-foreground', className)}
       style={themeToCssVars(theme) as CSSProperties}
     >
       {children}

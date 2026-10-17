@@ -106,7 +106,7 @@ export function CartPage() {
 
       <ul className="space-y-3" aria-label="Товары в корзине">
         {cart.lines.map((l) => (
-          <li key={l.variantId} className="flex gap-3 rounded-lg border bg-card p-3" data-testid="cart-line">
+          <li key={l.variantId} className="glass-card flex gap-3 rounded-xl p-3" data-testid="cart-line">
             <ProductImage path={l.imagePath} alt={l.name} className="size-20 shrink-0 rounded-md" sizes="80px" />
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <Link to={`/s/${shop.slug}/product/${l.productId}`} className="line-clamp-2 text-sm font-medium">
@@ -136,7 +136,7 @@ export function CartPage() {
         ))}
       </ul>
 
-      <div className="flex items-center justify-between rounded-lg border bg-card p-4">
+      <div className="glass-panel flex items-center justify-between rounded-xl p-4">
         <span className="text-muted-foreground">Итого</span>
         <span className="text-lg font-bold tabular-nums" data-testid="cart-total">
           {formatMoney(cart.totalMinor, shop.currency)}

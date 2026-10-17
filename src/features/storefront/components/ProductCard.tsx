@@ -20,20 +20,25 @@ export const ProductCard = memo(function ProductCard({
   return (
     <Link
       to={`/s/${slug}/product/${product.id}`}
-      className="group flex flex-col overflow-hidden rounded-lg border bg-card text-card-foreground transition-colors hover:border-primary/60 focus-visible:border-primary"
+      className="glass-card glass-transition glass-lift group flex flex-col overflow-hidden rounded-xl text-card-foreground focus-visible:border-primary"
       data-testid="product-card"
     >
-      <div className="relative">
-        <ProductImage path={image?.storage_path} alt={image?.alt_text || product.name} />
+      {/* The photo stays crisp: no glass or tint over it, only a hairline that separates it from the text part. */}
+      <div className="relative border-b border-(--glass-edge)">
+        <ProductImage
+          path={image?.storage_path}
+          alt={image?.alt_text || product.name}
+          className="[&_img]:transition-transform [&_img]:duration-500 [&_img]:ease-(--ease-glass) motion-safe:group-hover:[&_img]:scale-[1.03]"
+        />
         {!inStock && (
-          <span className="absolute top-2 left-2 rounded-md bg-background/90 px-2 py-0.5 text-xs font-medium">
+          <span className="absolute top-2 left-2 rounded-full border border-(--glass-edge) bg-background/85 px-2.5 py-0.5 text-xs font-medium">
             Нет в наличии
           </span>
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-1 p-3">
+      <div className="flex flex-1 flex-col gap-1.5 p-3">
         <h3 className="line-clamp-2 text-sm leading-snug font-medium">{product.name}</h3>
-        <p className="mt-auto text-sm font-semibold">
+        <p className="mt-auto text-[0.9375rem] font-semibold tracking-tight tabular-nums">
           {min !== max && <span className="font-normal text-muted-foreground">от </span>}
           {formatMoney(min, currency)}
         </p>

@@ -30,7 +30,7 @@ export function SearchBox({
   return (
     <form
       role="search"
-      className="relative"
+      className="glass-panel glass-transition rounded-full hover:border-(--glass-edge-strong) focus-within:border-(--glass-accent-edge) focus-within:shadow-[inset_0_1px_0_var(--glass-highlight),0_0_0_3px_var(--glass-focus),var(--glass-shadow)]"
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit?.(draft.trim());
@@ -48,7 +48,8 @@ export function SearchBox({
         autoFocus={autoFocus}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        className="h-11 rounded-full bg-card pr-10 pl-10 text-base"
+        // The glass surface and focus state live on the <form>; the field itself is transparent.
+        className="h-12 rounded-full border-0 bg-transparent pr-11 pl-11 text-base shadow-none placeholder:text-muted-foreground focus-visible:ring-0 md:text-[0.9375rem] dark:bg-transparent"
       />
       {draft && (
         <button

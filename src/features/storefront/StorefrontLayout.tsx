@@ -16,12 +16,15 @@ function ShopFrame({ shop }: { shop: Shop }) {
     <div className="pb-nav mx-auto min-h-dvh max-w-3xl">
       {(shop.isDemo || shop.mode === 'preview') && (
         <div
-          className="sticky top-0 z-30 bg-primary px-4 py-1.5 text-center text-xs font-semibold text-primary-foreground"
+          className="glass-bar sticky top-0 z-30 flex items-center justify-center gap-2 border-x-0 border-t-0 border-b-[color:var(--glass-accent-edge)] px-4 py-1.5 text-center text-xs font-medium text-foreground"
           data-testid="demo-banner"
         >
-          {shop.mode === 'preview'
-            ? 'Предпросмотр: магазин не опубликован, заказы отключены'
-            : 'DEMO-витрина: товары вымышлены, заказы тестовые'}
+          <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary shadow-[0_0_0_3px_var(--glass-accent-glow)]" />
+          <span>
+            {shop.mode === 'preview'
+              ? 'Предпросмотр: магазин не опубликован, заказы отключены'
+              : 'DEMO-витрина: товары вымышлены, заказы тестовые'}
+          </span>
         </div>
       )}
       <Outlet />

@@ -122,6 +122,201 @@
   }
 }
 
+/*
+ * Storefront "Liquid Glass" system. Scoped to `.storefront-scene` (the ThemeScope root), so the admin
+ * (`.admin-theme`) never receives these styles. Every value derives from the shop's runtime tokens
+ * (--background, --card, --foreground, --primary…), so each tenant palette — dark or light — gets its own glass.
+ *
+ * Depth levels:
+ *   .glass-card  — level 0: content surfaces (product cards, cart lines). Translucent, NO backdrop-filter:
+ *                  there can be dozens of them and nothing scrolls behind them.
+ *   .glass-panel — level 1: header, search, category tiles, info. Real backdrop blur.
+ *   .glass-bar   — level 2: floating chrome (bottom nav, demo banner) that content scrolls under.
+ * Without backdrop-filter support every level falls back to a near-opaque fill (see @supports below).
+ */
+/*
+ * Base tokens are safe without color-mix() (older Android/iOS WebViews): opaque theme surfaces, neutral
+ * hairlines and NO accent glow. The tenant-derived translucent values are layered on top in the @supports block.
+ * (Do not put color-mix() here: the CSS minifier would "fall back" to its first colour, e.g. a solid --primary glow.)
+ */
+.storefront-scene {
+  --glass-blur: 18px;
+  --glass-blur-bar: 26px;
+  --glass-saturate: 165%;
+  --glass-fill: var(--card);
+  --glass-fill-bar: var(--card);
+  --glass-fill-card: var(--card);
+  --glass-fill-solid: var(--card);
+  --glass-edge: rgb(255 255 255 / 0.1);
+  --glass-edge-strong: rgb(255 255 255 / 0.18);
+  --glass-highlight: rgb(255 255 255 / 0.08);
+  --glass-sheen: rgb(255 255 255 / 0.06);
+  --glass-shadow: 0 1px 1px rgb(0 0 0 / 0.25), 0 10px 30px -12px rgb(0 0 0 / 0.6);
+  --glass-shadow-lift: 0 2px 4px rgb(0 0 0 / 0.25), 0 18px 40px -14px rgb(0 0 0 / 0.7);
+  --glass-shadow-bar: 0 -12px 32px -18px rgb(0 0 0 / 0.6);
+  --glass-accent-fill: var(--card);
+  --glass-accent-fill-solid: var(--card);
+  --glass-accent-edge: var(--primary);
+  --glass-accent-glow: transparent;
+  --glass-focus: transparent;
+  --scene-glow-strong: transparent;
+  --scene-glow-soft: transparent;
+  --scene-haze: transparent;
+  --scene-lift: var(--background);
+  --ease-glass: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  position: relative;
+  isolation: isolate;
+}
+
+.storefront-scene[data-theme-mode='light'] {
+  --glass-edge: rgb(0 0 0 / 0.08);
+  --glass-edge-strong: rgb(0 0 0 / 0.14);
+  --glass-highlight: rgb(255 255 255 / 0.85);
+  --glass-sheen: rgb(255 255 255 / 0.5);
+  --glass-shadow: 0 1px 1px rgb(15 23 20 / 0.04), 0 10px 28px -14px rgb(15 23 20 / 0.22);
+  --glass-shadow-lift: 0 2px 4px rgb(15 23 20 / 0.05), 0 18px 36px -16px rgb(15 23 20 / 0.3);
+  --glass-shadow-bar: 0 -10px 28px -18px rgb(15 23 20 / 0.18);
+  --scene-haze: rgb(255 255 255 / 0.7);
+}
+
+@supports (color: color-mix(in oklab, red, red)) {
+  .storefront-scene {
+    --glass-fill: color-mix(in oklab, var(--card) 58%, transparent);
+    --glass-fill-bar: color-mix(in oklab, var(--card) 66%, transparent);
+    --glass-fill-card: color-mix(in oklab, var(--card) 82%, transparent);
+    --glass-fill-solid: color-mix(in oklab, var(--card) 94%, var(--background));
+    --glass-edge: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --glass-edge-strong: color-mix(in oklab, var(--foreground) 18%, transparent);
+    --glass-accent-fill: color-mix(in oklab, var(--primary) 13%, var(--glass-fill));
+    --glass-accent-fill-solid: color-mix(in oklab, var(--primary) 13%, var(--glass-fill-solid));
+    --glass-accent-edge: color-mix(in oklab, var(--primary) 45%, transparent);
+    --glass-accent-glow: color-mix(in oklab, var(--primary) 30%, transparent);
+    --glass-focus: color-mix(in oklab, var(--primary) 20%, transparent);
+    --scene-glow-strong: color-mix(in oklab, var(--primary) 13%, transparent);
+    --scene-glow-soft: color-mix(in oklab, var(--primary) 7%, transparent);
+    --scene-haze: color-mix(in oklab, var(--foreground) 5%, transparent);
+    --scene-lift: color-mix(in oklab, var(--background) 90%, var(--foreground));
+  }
+  .storefront-scene[data-theme-mode='light'] {
+    --glass-fill: color-mix(in oklab, var(--card) 62%, transparent);
+    --glass-fill-bar: color-mix(in oklab, var(--card) 72%, transparent);
+    --glass-fill-card: color-mix(in oklab, var(--card) 86%, transparent);
+    --glass-edge: color-mix(in oklab, var(--foreground) 9%, transparent);
+    --glass-edge-strong: color-mix(in oklab, var(--foreground) 16%, transparent);
+    --scene-glow-strong: color-mix(in oklab, var(--primary) 11%, transparent);
+    --scene-glow-soft: color-mix(in oklab, var(--primary) 6%, transparent);
+    --scene-haze: rgb(255 255 255 / 0.7);
+    --scene-lift: color-mix(in oklab, var(--background) 94%, var(--foreground));
+  }
+}
+
+/*
+ * Background scene: a fixed, static layer of soft radial light (no animation, no filter). It sits above the
+ * scene's own background (isolation) and below every child.
+ */
+.storefront-scene::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(110% 55% at 50% -12%, var(--scene-glow-strong), transparent 62%),
+    radial-gradient(70% 45% at 105% 28%, var(--scene-haze), transparent 70%),
+    radial-gradient(80% 55% at -10% 78%, var(--scene-glow-soft), transparent 72%),
+    linear-gradient(180deg, var(--scene-lift) 0%, var(--background) 42%, var(--background) 100%);
+}
+
+@layer components {
+  .glass-card,
+  .glass-panel,
+  .glass-bar {
+    position: relative;
+    isolation: isolate;
+    border: 1px solid var(--glass-edge);
+    background-color: var(--glass-fill-solid);
+  }
+
+  /* Inner sheen: a light falloff from the top edge. Painted under the content (z-index -1 inside the isolated
+     surface), never intercepts taps. */
+  .glass-card::before,
+  .glass-panel::before,
+  .glass-bar::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(180deg, var(--glass-sheen), transparent 46%);
+  }
+
+  .glass-card {
+    background-color: var(--glass-fill-card);
+    box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow);
+  }
+
+  .glass-panel {
+    box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow);
+  }
+
+  .glass-bar {
+    box-shadow: inset 0 1px 0 var(--glass-highlight);
+  }
+
+  /* Selected surface: lighter glass, a thin accent edge and a soft accent reflection in the top corner. */
+  .glass-active {
+    border-color: var(--primary);
+    /* Opaque variant by default; the translucent one is enabled together with backdrop-filter below. */
+    background-color: var(--glass-accent-fill-solid);
+    box-shadow:
+      inset 0 1px 0 var(--glass-highlight),
+      inset 0 0 0 1px var(--glass-accent-edge),
+      0 10px 28px -14px var(--glass-accent-glow),
+      var(--glass-shadow);
+  }
+  .glass-active::before {
+    background:
+      radial-gradient(120% 90% at 0% 0%, var(--glass-accent-glow), transparent 60%),
+      linear-gradient(180deg, var(--glass-sheen), transparent 46%);
+  }
+
+  .glass-transition {
+    transition-property: background-color, border-color, box-shadow, transform, color;
+    transition-duration: 220ms;
+    transition-timing-function: var(--ease-glass);
+  }
+
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass-panel {
+      background-color: var(--glass-fill);
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    }
+    .glass-panel.glass-active {
+      background-color: var(--glass-accent-fill);
+    }
+    .glass-bar {
+      background-color: var(--glass-fill-bar);
+      -webkit-backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));
+      backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));
+    }
+  }
+
+  /* Desktop-only lift on hover; touch devices and reduced motion keep a static card. */
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    .glass-lift:hover {
+      transform: translateY(-2px);
+      border-color: var(--glass-edge-strong);
+      box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow-lift);
+    }
+  }
+  .glass-press:active {
+    transform: scale(0.985);
+  }
+}
+
 @utility pb-nav {
   padding-bottom: calc(var(--bottom-nav-height) + var(--safe-bottom) + 1rem);
 }

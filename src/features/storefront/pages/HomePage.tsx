@@ -88,15 +88,30 @@ export function HomePage() {
   return (
     <main className="space-y-6 pb-6">
       <header className="relative">
-        {cover && <img src={cover} alt="" aria-hidden className="h-36 w-full object-cover sm:h-48" />}
-        <div className={cover ? '-mt-8 px-4' : 'px-4 pt-6'}>
-          <div className="flex items-end gap-3">
-            <ShopLogo name={shop.name} path={shop.logoPath} className="size-16 border-4 border-background" />
-            <div className="min-w-0 pb-1">
-              <h1 className="truncate text-xl font-bold">{shop.name}</h1>
-            </div>
+        {cover && (
+          <div aria-hidden className="relative h-40 overflow-hidden sm:h-52">
+            <img src={cover} alt="" className="size-full object-cover" />
+            {/* The cover melts into the scene so the brand panel can sit on it. */}
+            <div className="absolute inset-0 bg-linear-to-b from-transparent from-35% to-background" />
           </div>
-          {shop.description && <p className="mt-2 text-sm text-muted-foreground">{shop.description}</p>}
+        )}
+        {/* Brand panel: real glass over the cover (or over the scene light when there is no cover). */}
+        <div className={cover ? 'relative -mt-16 px-4' : 'px-4 pt-5'}>
+          <div className="glass-panel rounded-2xl p-4">
+            <div className="flex items-center gap-3.5">
+              <ShopLogo
+                name={shop.name}
+                path={shop.logoPath}
+                className="size-16 shrink-0 rounded-2xl shadow-(--glass-shadow) ring-1 ring-(--glass-edge-strong)"
+              />
+              <h1 className="line-clamp-2 min-w-0 text-[1.375rem] leading-tight font-semibold tracking-tight break-words">
+                {shop.name}
+              </h1>
+            </div>
+            {shop.description && (
+              <p className="mt-3 text-sm leading-relaxed text-pretty break-words text-muted-foreground">{shop.description}</p>
+            )}
+          </div>
         </div>
       </header>
 
@@ -106,7 +121,7 @@ export function HomePage() {
 
       {showCategories && (
         <section aria-labelledby="cats-title" className="space-y-3">
-          <h2 id="cats-title" className="px-4 text-lg font-semibold">
+          <h2 id="cats-title" className="px-4 text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase">
             Категории
           </h2>
           {categories.isPending ? (
@@ -124,14 +139,19 @@ export function HomePage() {
       )}
 
       <section aria-labelledby="products-title" aria-busy={products.isFetching} className="space-y-3">
-        <div className="flex min-h-9 items-center justify-between gap-3 px-4">
-          <h2 id="products-title" className="truncate text-lg font-semibold" data-testid="products-title">
-            {listTitle}
+        <div className="flex min-h-10 items-center justify-between gap-3 px-4">
+          <h2 id="products-title" className="flex min-w-0 items-center gap-2.5 text-xl font-semibold tracking-tight" data-testid="products-title">
+            <span aria-hidden className="h-5 w-1 shrink-0 rounded-full bg-primary shadow-[0_0_10px_var(--glass-accent-glow)]" />
+            <span className="truncate">{listTitle}</span>
           </h2>
           {category && (
-            <Button variant="ghost" size="sm" className="shrink-0 text-primary" onClick={() => update({ category: null })}>
+            <button
+              type="button"
+              className="glass-panel glass-transition glass-press inline-flex h-10 shrink-0 items-center rounded-full px-4 text-sm font-medium text-primary hover:border-(--glass-accent-edge)"
+              onClick={() => update({ category: null })}
+            >
               Все товары
-            </Button>
+            </button>
           )}
         </div>
 
@@ -191,7 +211,7 @@ export function HomePage() {
       </section>
 
       {hasInfo && (
-        <section aria-labelledby="info-title" className="mx-4 space-y-3 rounded-lg border bg-card p-4">
+        <section aria-labelledby="info-title" className="glass-panel mx-4 space-y-3 rounded-2xl p-4">
           <h2 id="info-title" className="font-semibold">
             О магазине
           </h2>

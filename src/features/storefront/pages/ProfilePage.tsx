@@ -48,7 +48,7 @@ export function ProfilePage() {
   const { user, orders } = query.data;
   return (
     <main className="space-y-5 px-4 pt-4 pb-6">
-      <header className="flex items-center gap-3 rounded-lg border bg-card p-4">
+      <header className="glass-panel flex items-center gap-3 rounded-2xl p-4">
         <span className="flex size-12 items-center justify-center rounded-full bg-primary text-lg font-bold text-primary-foreground" aria-hidden>
           {(user.first_name ?? '?').slice(0, 1).toUpperCase()}
         </span>
@@ -75,7 +75,7 @@ export function ProfilePage() {
         ) : (
           <ul className="space-y-3">
             {orders.map((o) => (
-              <li key={o.id} className="space-y-2 rounded-lg border bg-card p-4" data-testid="my-order">
+              <li key={o.id} className="glass-card space-y-2 rounded-xl p-4" data-testid="my-order">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold">Заказ №{o.order_number}</span>
                   <Badge variant={o.status === 'cancelled' ? 'destructive' : 'secondary'}>

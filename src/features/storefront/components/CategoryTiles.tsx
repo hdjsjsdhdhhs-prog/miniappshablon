@@ -26,16 +26,23 @@ export function CategoryTiles({
               aria-pressed={active}
               onClick={() => onSelect(c.slug)}
               data-testid="category-tile"
+              // Same size, padding and font weight in both states: selection only changes light, never layout.
               className={cn(
-                'flex w-full items-center gap-3 rounded-lg border bg-card p-2 pr-3 text-left transition-colors',
-                active ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'hover:border-primary/60',
+                'glass-panel glass-transition glass-press flex min-h-16 w-full items-center gap-3 rounded-xl p-2 pr-3 text-left',
+                active ? 'glass-active text-foreground' : 'text-foreground/85 hover:border-(--glass-edge-strong) hover:text-foreground',
               )}
             >
               {/* Decorative: the tile is named by its text, not "Жидкости Жидкости". */}
-              <span aria-hidden className="shrink-0">
-                <ProductImage path={c.imagePath} alt={c.name} className="size-12 rounded-md" sizes="48px" />
+              <span
+                aria-hidden
+                className={cn(
+                  'glass-transition shrink-0 overflow-hidden rounded-lg ring-1 ring-(--glass-edge)',
+                  active && 'ring-(--glass-accent-edge)',
+                )}
+              >
+                <ProductImage path={c.imagePath} alt={c.name} className="size-12 bg-muted/60" sizes="48px" />
               </span>
-              <span className={cn('line-clamp-2 text-sm font-medium', active && 'font-semibold')}>{c.name}</span>
+              <span className="line-clamp-2 text-sm leading-snug font-medium tracking-[-0.005em]">{c.name}</span>
             </button>
           </li>
         );
