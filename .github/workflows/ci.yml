@@ -49,7 +49,8 @@ jobs:
       - name: Start local Supabase (applies migrations from Git)
         run: pnpm db:start
       - name: Migrations reproduce the schema
-        run: pnpm exec supabase db diff --local | tee diff.txt && grep -q "No schema changes found" diff.txt
+        # The CLI prints the verdict to stderr (stdout only carries JSON), so capture both streams.
+        run: pnpm exec supabase db diff --local 2>&1 | tee diff.txt && grep -q "No schema changes found" diff.txt
       - name: Seed and publish demo tenants
         run: |
           for slug in noir-vapor mint-lab; do
