@@ -28,6 +28,18 @@ describe('tenant config schema', () => {
     expect(a.name).not.toBe(b.name);
   });
 
+  it('validates the optional Telegram channel link (old configs without it stay valid)', () => {
+    const base = load('mint-lab');
+    const info = base.shopInformation as Record<string, unknown>;
+    const parsed = tenantConfigSchema.parse(base);
+    expect(parsed.shopInformation.telegramChannelUrl).toBe('');
+    expect(parsed.shopInformation.telegramChannelLabel).toBe('');
+    const withLink = (url: string) => ({ ...base, shopInformation: { ...info, telegramChannelUrl: url } });
+    expect(tenantConfigSchema.safeParse(withLink('https://t.me/mint_lab_shop')).success).toBe(true);
+    expect(tenantConfigSchema.safeParse(withLink('javascript:alert(1)')).success).toBe(false);
+    expect(tenantConfigSchema.safeParse(withLink('https://example.com/mint')).success).toBe(false);
+  });
+
   it('rejects bad slugs, unknown categories, duplicate combos and path traversal', () => {
     const base = load('mint-lab');
     expect(tenantConfigSchema.safeParse({ ...base, slug: 'Bad Slug' }).success).toBe(false);

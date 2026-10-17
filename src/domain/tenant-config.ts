@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SUPPORTED_CURRENCIES } from './money';
+import { normalizeTelegramChannelUrl } from './telegram-link';
 import { themeSchema } from './theme';
 
 /**
@@ -64,6 +65,10 @@ export const shopInformationSchema = z.strictObject({
   payment: z.string().max(1000).default(''),
   phone: z.string().max(32).default(''),
   telegram: z.string().max(64).default(''),
+  // Header button "Наш канал в Телеграме". Stored as typed; validated/normalized by
+  // normalizeTelegramChannelUrl (admin on save, storefront before rendering). Empty URL = no button.
+  telegramChannelUrl: z.string().max(200).default(''),
+  telegramChannelLabel: z.string().max(60).default(''),
 });
 
 export const shopSettingsSchema = z.strictObject({
@@ -97,6 +102,10 @@ export const tenantConfigSchema = z
     initialProducts: z.array(productConfigSchema).max(500).default([]),
   })
   .superRefine((cfg, ctx) => {
+    const channel = cfg.shopInformation.telegramChannelUrl;
+    if (channel.trim() && !normalizeTelegramChannelUrl(channel)) {
+      ctx.addIssue({ code: 'custom', message: 'Ссылка на канал: https://t.me/<канал> или https://t.me/+<приглашение>', path: ['shopInformation', 'telegramChannelUrl'] });
+    }
     const catKeys = new Set<string>();
     cfg.initialCategories.forEach((c, i) => {
       if (catKeys.has(c.key)) ctx.addIssue({ code: 'custom', message: `Повтор key категории ${c.key}`, path: ['initialCategories', i, 'key'] });

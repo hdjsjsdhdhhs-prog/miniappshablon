@@ -30,9 +30,12 @@
   --border: #2e2e34;
   --input: #34343b;
   --ring: #d4a24c;
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Inside Telegram, viewport.bindCssVars() also exposes the client's own insets (e.g. fullscreen mode). */
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--tg-viewport-safe-area-inset-bottom, 0px));
   --safe-top: env(safe-area-inset-top, 0px);
+  /* Floating bottom nav: panel height and its distance from the bottom edge (safe area is added on top). */
   --bottom-nav-height: 4rem;
+  --bottom-nav-gap: 0.625rem;
 }
 
 /* Admin always uses a neutral, high-contrast light theme independent from tenants. */
@@ -154,11 +157,17 @@
   --glass-shadow: 0 1px 1px rgb(0 0 0 / 0.25), 0 10px 30px -12px rgb(0 0 0 / 0.6);
   --glass-shadow-lift: 0 2px 4px rgb(0 0 0 / 0.25), 0 18px 40px -14px rgb(0 0 0 / 0.7);
   --glass-shadow-bar: 0 -12px 32px -18px rgb(0 0 0 / 0.6);
+  --glass-shadow-float: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 18px -8px rgb(0 0 0 / 0.45), 0 22px 44px -18px rgb(0 0 0 / 0.7);
   --glass-accent-fill: var(--card);
   --glass-accent-fill-solid: var(--card);
   --glass-accent-edge: var(--primary);
   --glass-accent-glow: transparent;
   --glass-focus: transparent;
+  /* Bottom-nav selected item ("pill"): graphite glass, lighter at the top, light hairline edge. */
+  --glass-pill-fill: rgb(255 255 255 / 0.05);
+  --glass-pill-fill-top: rgb(255 255 255 / 0.12);
+  --glass-pill-edge: rgb(255 255 255 / 0.24);
+  --glass-pill-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 16px -8px rgb(0 0 0 / 0.55);
   --scene-glow-strong: transparent;
   --scene-glow-soft: transparent;
   --scene-haze: transparent;
@@ -177,6 +186,11 @@
   --glass-shadow: 0 1px 1px rgb(15 23 20 / 0.04), 0 10px 28px -14px rgb(15 23 20 / 0.22);
   --glass-shadow-lift: 0 2px 4px rgb(15 23 20 / 0.05), 0 18px 36px -16px rgb(15 23 20 / 0.3);
   --glass-shadow-bar: 0 -10px 28px -18px rgb(15 23 20 / 0.18);
+  --glass-shadow-float: 0 1px 2px rgb(15 23 20 / 0.06), 0 8px 18px -10px rgb(15 23 20 / 0.16), 0 20px 40px -20px rgb(15 23 20 / 0.28);
+  --glass-pill-fill: rgb(255 255 255 / 0.45);
+  --glass-pill-fill-top: rgb(255 255 255 / 0.9);
+  --glass-pill-edge: rgb(0 0 0 / 0.12);
+  --glass-pill-shadow: 0 1px 2px rgb(15 23 20 / 0.06), 0 6px 14px -8px rgb(15 23 20 / 0.22);
   --scene-haze: rgb(255 255 255 / 0.7);
 }
 
@@ -193,6 +207,9 @@
     --glass-accent-edge: color-mix(in oklab, var(--primary) 45%, transparent);
     --glass-accent-glow: color-mix(in oklab, var(--primary) 30%, transparent);
     --glass-focus: color-mix(in oklab, var(--primary) 20%, transparent);
+    --glass-pill-fill: color-mix(in oklab, var(--foreground) 5%, transparent);
+    --glass-pill-fill-top: color-mix(in oklab, var(--foreground) 12%, transparent);
+    --glass-pill-edge: color-mix(in oklab, color-mix(in oklab, var(--foreground) 85%, var(--primary)) 30%, transparent);
     --scene-glow-strong: color-mix(in oklab, var(--primary) 13%, transparent);
     --scene-glow-soft: color-mix(in oklab, var(--primary) 7%, transparent);
     --scene-haze: color-mix(in oklab, var(--foreground) 5%, transparent);
@@ -204,6 +221,9 @@
     --glass-fill-card: color-mix(in oklab, var(--card) 86%, transparent);
     --glass-edge: color-mix(in oklab, var(--foreground) 9%, transparent);
     --glass-edge-strong: color-mix(in oklab, var(--foreground) 16%, transparent);
+    --glass-pill-fill: color-mix(in oklab, var(--card) 55%, transparent);
+    --glass-pill-fill-top: color-mix(in oklab, var(--card) 95%, white);
+    --glass-pill-edge: color-mix(in oklab, color-mix(in oklab, var(--foreground) 80%, var(--primary)) 22%, transparent);
     --scene-glow-strong: color-mix(in oklab, var(--primary) 11%, transparent);
     --scene-glow-soft: color-mix(in oklab, var(--primary) 6%, transparent);
     --scene-haze: rgb(255 255 255 / 0.7);
@@ -265,6 +285,62 @@
     box-shadow: inset 0 1px 0 var(--glass-highlight);
   }
 
+  /* Floating variant of .glass-bar (bottom nav): detached rounded panel with a layered drop shadow.
+     The radius follows the tenant's --radius (like the category tiles) but stays in a 20–26 px range. */
+  .glass-bar.glass-dock {
+    border-color: var(--glass-edge-strong);
+    border-radius: clamp(20px, calc(var(--radius) + 8px), 26px);
+    box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow-float);
+    /* Inner geometry shared by the nav items and the selected pill: inset from the dock edge and a radius
+       concentric with the dock's own (dock radius − inset − 1 px border, kept in a 14–18 px range). */
+    --nav-inset: 5px;
+    --nav-item-radius: clamp(14px, calc(var(--radius) + 2px), 18px);
+  }
+
+  /* Bottom sheet variant of .glass-bar (quick flavor picker): same translucent fill and controlled blur as
+     the dock, a stronger top edge and an upward shadow. Colours come only from the shop tokens. */
+  .glass-bar.glass-sheet {
+    border-color: var(--glass-edge-strong);
+    box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow-bar), var(--glass-shadow-float);
+  }
+
+  /* Selected bottom-nav item: ONE shared surface that slides between equal slots (index from the route,
+     see BottomNav). The slot moves; the inner pill carries the glass, so the press scale never shifts layout.
+     No backdrop-filter here: the dock already blurs, a nested blur would only muddy it. */
+  .glass-nav-indicator {
+    position: absolute;
+    top: var(--nav-inset);
+    bottom: var(--nav-inset);
+    left: var(--nav-inset);
+    width: calc((100% - 2 * var(--nav-inset)) / var(--nav-count, 3));
+    padding-inline: 2px;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateX(calc(var(--nav-index, 0) * 100%));
+    transition:
+      transform 380ms var(--ease-glass),
+      opacity 220ms var(--ease-glass);
+  }
+  .glass-nav-indicator[data-visible] {
+    opacity: 1;
+  }
+  .glass-nav-pill {
+    display: block;
+    height: 100%;
+    border: 1px solid var(--glass-pill-edge);
+    border-radius: var(--nav-item-radius);
+    background: linear-gradient(180deg, var(--glass-pill-fill-top), var(--glass-pill-fill));
+    box-shadow:
+      inset 0 1px 0 var(--glass-highlight),
+      0 0 14px -6px var(--glass-accent-glow),
+      var(--glass-pill-shadow);
+    transition: transform 160ms var(--ease-glass);
+  }
+  /* Pressed (momentary) on the selected item: the pill gives a little together with its content. */
+  .glass-dock:has(a[aria-current='page']:active) .glass-nav-pill {
+    transform: scale(0.985); /* same as .glass-press, so pill and label shrink together */
+  }
+
   /* Selected surface: lighter glass, a thin accent edge and a soft accent reflection in the top corner. */
   .glass-active {
     border-color: var(--primary);
@@ -318,7 +394,8 @@
 }
 
 @utility pb-nav {
-  padding-bottom: calc(var(--bottom-nav-height) + var(--safe-bottom) + 1rem);
+  /* Room for the floating nav (panel + its bottom gap + safe area) plus breathing space above it. */
+  padding-bottom: calc(var(--bottom-nav-height) + var(--bottom-nav-gap) + var(--safe-bottom) + 1rem);
 }
 
 @utility scrollbar-none {

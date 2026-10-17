@@ -9,6 +9,12 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { queryKeys } from '@/domain/query-keys';
+import {
+  DEFAULT_TELEGRAM_CHANNEL_LABEL,
+  normalizeTelegramChannelUrl,
+  TELEGRAM_CHANNEL_LABEL_MAX,
+  telegramChannelLabel,
+} from '@/domain/telegram-link';
 import { shopInformationSchema, shopSettingsSchema } from '@/domain/tenant-config';
 import { parseTheme, THEME_COLOR_KEYS, themeContrastIssues, themeSchema, themeToCssVars, type ShopTheme, type ThemeColorKey } from '@/domain/theme';
 import { useAdminShop } from '../admin-context';
@@ -59,6 +65,10 @@ export function SettingsPage() {
   const [theme, setTheme] = useState<ShopTheme>(() => parseTheme(shop.theme_config));
   const [info, setInfo] = useState(() => shopInformationSchema.parse(shopInformationSchema.safeParse(shop.info).data ?? {}));
   const [settings, setSettings] = useState(() => shopSettingsSchema.parse(shopSettingsSchema.safeParse(shop.settings).data ?? {}));
+  // An empty stored label means "default text", so the owner sees (and can edit) the actual button text.
+  const [channelLabel, setChannelLabel] = useState(() => telegramChannelLabel(info.telegramChannelLabel));
+  const channelUrl = info.telegramChannelUrl;
+  const channelUrlInvalid = !!channelUrl.trim() && !normalizeTelegramChannelUrl(channelUrl);
   const issues = themeContrastIssues(theme);
 
   const refresh = async () => {
@@ -71,9 +81,21 @@ export function SettingsPage() {
       const t = themeSchema.safeParse(theme);
       if (!t.success) throw new Error('Проверьте цвета темы (#RRGGBB)');
       if (!name.trim()) throw new Error('Название обязательно');
-      return updateShopSettings(shop.id, { name: name.trim(), description, legal_notice: legal, theme_config: t.data, info, settings });
+      const url = channelUrl.trim() ? normalizeTelegramChannelUrl(channelUrl) : '';
+      if (url === null) throw new Error('Ссылка на канал: укажите https://t.me/<канал> или https://t.me/+<приглашение>');
+      const label = channelLabel.trim().slice(0, TELEGRAM_CHANNEL_LABEL_MAX);
+      const nextInfo = {
+        ...info,
+        telegramChannelUrl: url,
+        // Default text is stored as '' so a future change of the platform default reaches untouched shops.
+        telegramChannelLabel: label === DEFAULT_TELEGRAM_CHANNEL_LABEL ? '' : label,
+      };
+      return updateShopSettings(shop.id, { name: name.trim(), description, legal_notice: legal, theme_config: t.data, info: nextInfo, settings });
     },
-    onSuccess: async () => {
+    onSuccess: async (saved) => {
+      // Show the canonical link (e.g. "@channel" → "https://t.me/channel") that was actually stored.
+      const stored = shopInformationSchema.safeParse(saved.info);
+      if (stored.success) setInfo(stored.data);
       toast.success('Сохранено. Витрина обновится без новой сборки.');
       await refresh();
     },
@@ -170,6 +192,45 @@ export function SettingsPage() {
                 </div>
               ))}
             </div>
+            <fieldset className="space-y-3 rounded-lg border p-3" data-testid="settings-channel">
+              <legend className="px-1 text-sm font-medium">Telegram-канал магазина</legend>
+              <p className="text-xs text-muted-foreground">
+                Кнопка под названием магазина на витрине. Без ссылки кнопка не показывается.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="i-channel-label">Название кнопки</Label>
+                  <Input
+                    id="i-channel-label"
+                    value={channelLabel}
+                    maxLength={TELEGRAM_CHANNEL_LABEL_MAX}
+                    placeholder={DEFAULT_TELEGRAM_CHANNEL_LABEL}
+                    onChange={(e) => setChannelLabel(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="i-channel-url">Ссылка на канал</Label>
+                  <Input
+                    id="i-channel-url"
+                    type="url"
+                    inputMode="url"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="https://t.me/your_channel"
+                    maxLength={200}
+                    value={channelUrl}
+                    aria-invalid={channelUrlInvalid || undefined}
+                    aria-describedby="i-channel-url-hint"
+                    onChange={(e) => setInfo({ ...info, telegramChannelUrl: e.target.value })}
+                  />
+                  <p id="i-channel-url-hint" className={channelUrlInvalid ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+                    {channelUrlInvalid
+                      ? 'Нужна ссылка Telegram: https://t.me/канал, @канал или приглашение https://t.me/+…'
+                      : 'Публичный канал https://t.me/канал или приватное приглашение https://t.me/+…'}
+                  </p>
+                </div>
+              </div>
+            </fieldset>
             <div className="flex flex-wrap gap-4">
               {(Object.keys(SETTINGS_LABELS) as Array<keyof typeof SETTINGS_LABELS>).map((k) => (
                 <label key={k} className="flex items-center gap-2 text-sm">

@@ -3,6 +3,7 @@ import {
   init,
   isTMA,
   miniApp,
+  openTelegramLink,
   retrieveLaunchParams,
   retrieveRawInitData,
   viewport,
@@ -79,6 +80,23 @@ export function setTelegramHeaderColors(background: string): void {
     if (miniApp.setBottomBarColor.isAvailable()) miniApp.setBottomBarColor(background as `#${string}`);
   } catch {
     /* optional cosmetics */
+  }
+}
+
+/**
+ * Opens a `https://t.me/...` link (already validated by normalizeTelegramChannelUrl) inside Telegram
+ * via the native method, so the channel opens in the client and the user can return to the Mini App.
+ * Returns false when the native method is unavailable; the caller then lets the regular `<a target="_blank">`
+ * navigation happen (ordinary browsers, Telegram Web without the bridge).
+ */
+export function openTelegramUrl(url: string): boolean {
+  if (!envState.inTelegram) return false;
+  try {
+    if (!openTelegramLink.isAvailable()) return false;
+    openTelegramLink(url);
+    return true;
+  } catch {
+    return false;
   }
 }
 

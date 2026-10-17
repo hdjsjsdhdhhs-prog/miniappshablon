@@ -57,6 +57,34 @@ describe('BottomNav', () => {
     expect(screen.getByTestId('cart-count')).toHaveTextContent('3');
     expect(screen.getByRole('link', { name: /Профиль/ })).toHaveAttribute('href', '/s/demo/profile');
   });
+
+  it('the shared selected surface follows the current route and hides where no tab is current', async () => {
+    render(
+      <MemoryRouter initialEntries={['/s/demo/cart']}>
+        <BottomNav slug="demo" cartCount={0} />
+      </MemoryRouter>,
+    );
+    const indicator = screen.getByTestId('bottom-nav-indicator');
+    expect(indicator).toHaveAttribute('data-visible');
+    expect(indicator.style.getPropertyValue('--nav-index')).toBe('1');
+
+    await userEvent.click(screen.getByRole('link', { name: /Профиль/ }));
+    expect(screen.getByRole('link', { name: /Профиль/ })).toHaveAttribute('aria-current', 'page');
+    expect(indicator.style.getPropertyValue('--nav-index')).toBe('2');
+
+    await userEvent.click(screen.getByRole('link', { name: /Каталог/ }));
+    expect(indicator.style.getPropertyValue('--nav-index')).toBe('0');
+  });
+
+  it('no tab highlighted on a product page', () => {
+    render(
+      <MemoryRouter initialEntries={['/s/demo/product/42']}>
+        <BottomNav slug="demo" cartCount={0} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('bottom-nav-indicator')).not.toHaveAttribute('data-visible');
+    expect(screen.queryByRole('link', { current: 'page' })).not.toBeInTheDocument();
+  });
 });
 
 describe('QuantityStepper & CategoryTiles', () => {

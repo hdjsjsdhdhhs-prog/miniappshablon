@@ -8,15 +8,18 @@ import {
   TelegramLogoIcon,
   TruckIcon,
 } from '@phosphor-icons/react';
-import { useCallback, useMemo, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { EmptyState, ErrorState, ProductGridSkeleton, StaleDataNotice } from '@/components/state-views';
 import { Button } from '@/components/ui/button';
 import { publicImageUrl } from '@/lib/supabase';
 import { CategoryTiles } from '../components/CategoryTiles';
+import type { ProductDetail } from '../api';
 import { ProductCard } from '../components/ProductCard';
+import { QuickAddSheet } from '../components/QuickAddSheet';
 import { SearchBox } from '../components/SearchBox';
 import { ShopLogo } from '../components/ShopLogo';
+import { TelegramChannelButton } from '../components/TelegramChannelButton';
 import { useCategories, useProducts } from '../hooks';
 import { useShop } from '../shop-context';
 
@@ -49,7 +52,9 @@ export function HomePage() {
   const categories = useCategories(shop.id);
   const cover = publicImageUrl(shop.coverPath);
   const info = shop.info;
-  const hasInfo = shop.settings.showInfo && Object.values(info).some(Boolean);
+  // The channel link lives in the header, so it alone does not make the "О магазине" block appear.
+  const hasInfo =
+    shop.settings.showInfo && [info.address, info.hours, info.delivery, info.payment, info.phone, info.telegram].some(Boolean);
 
   // An unknown/archived slug in the URL falls back to "all products".
   const category = useMemo(
@@ -83,6 +88,15 @@ export function HomePage() {
   );
   const onSearch = useCallback((q: string) => update({ q }), [update]);
 
+  // Quick flavor picker over the catalog. `seq` remounts it on every open, so a previous choice never leaks;
+  // the product stays set after closing so the sheet can play its exit animation.
+  const [quickAdd, setQuickAdd] = useState<{ product: ProductDetail; seq: number } | null>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const openQuickAdd = useCallback((product: ProductDetail) => {
+    setQuickAdd((prev) => ({ product, seq: (prev?.seq ?? 0) + 1 }));
+    setQuickAddOpen(true);
+  }, [setQuickAdd, setQuickAddOpen]);
+
   const listTitle = category?.name ?? 'Все товары';
 
   return (
@@ -104,9 +118,13 @@ export function HomePage() {
                 path={shop.logoPath}
                 className="size-16 shrink-0 rounded-2xl shadow-(--glass-shadow) ring-1 ring-(--glass-edge-strong)"
               />
-              <h1 className="line-clamp-2 min-w-0 text-[1.375rem] leading-tight font-semibold tracking-tight break-words">
-                {shop.name}
-              </h1>
+              {/* Title + channel link stack next to the logo; without a link the title stays centred on it. */}
+              <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
+                <h1 className="line-clamp-2 max-w-full text-[1.375rem] leading-tight font-semibold tracking-tight break-words">
+                  {shop.name}
+                </h1>
+                <TelegramChannelButton url={info.telegramChannelUrl} label={info.telegramChannelLabel} />
+              </div>
             </div>
             {shop.description && (
               <p className="mt-3 text-sm leading-relaxed text-pretty break-words text-muted-foreground">{shop.description}</p>
@@ -115,16 +133,15 @@ export function HomePage() {
         </div>
       </header>
 
-      <div className="px-4">
-        <SearchBox value={search} onChange={onSearch} />
-      </div>
+      {/* Search and category tiles form one filter block: the same 12 px rhythm as the gap between tiles
+          (no visible "Категории" heading — the tile list is labelled for assistive tech instead). */}
+      <div className="space-y-3">
+        <div className="px-4">
+          <SearchBox value={search} onChange={onSearch} />
+        </div>
 
-      {showCategories && (
-        <section aria-labelledby="cats-title" className="space-y-3">
-          <h2 id="cats-title" className="px-4 text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase">
-            Категории
-          </h2>
-          {categories.isPending ? (
+        {showCategories &&
+          (categories.isPending ? (
             <ProductGridSkeleton count={4} />
           ) : categories.isError && !categories.data ? (
             <ErrorState onRetry={() => void categories.refetch()} />
@@ -134,9 +151,8 @@ export function HomePage() {
               selected={category?.slug ?? null}
               onSelect={(slug) => update({ category: slug })}
             />
-          )}
-        </section>
-      )}
+          ))}
+      </div>
 
       <section aria-labelledby="products-title" aria-busy={products.isFetching} className="space-y-3">
         <div className="flex min-h-10 items-center justify-between gap-3 px-4">
@@ -191,7 +207,7 @@ export function HomePage() {
           <>
             <div className="grid grid-cols-2 gap-3 px-4 sm:grid-cols-3 lg:grid-cols-4" data-testid="product-grid">
               {items.map((p) => (
-                <ProductCard key={p.id} product={p} slug={shop.slug} currency={shop.currency} />
+                <ProductCard key={p.id} product={p} slug={shop.slug} currency={shop.currency} onAddToCart={openQuickAdd} />
               ))}
             </div>
             {products.hasNextPage && (
@@ -227,6 +243,10 @@ export function HomePage() {
       )}
 
       {shop.legalNotice && <p className="px-4 text-xs text-muted-foreground">{shop.legalNotice}</p>}
+
+      {quickAdd && (
+        <QuickAddSheet key={quickAdd.seq} product={quickAdd.product} open={quickAddOpen} onOpenChange={setQuickAddOpen} />
+      )}
     </main>
   );
 }

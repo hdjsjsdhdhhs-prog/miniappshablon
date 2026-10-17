@@ -38,6 +38,11 @@ const inStock = [
 const productsCalls: Array<{ categoryId: string | null; search: string }> = [];
 
 vi.mock('../hooks', () => ({
+  // Used by the quick flavor sheet: returns the same in-stock listing row.
+  useProduct: (_shopId: string, id: string) => {
+    const data = inStock.find((p) => p.id === id);
+    return { data, isError: false, error: null, refetch: async () => ({ data, isError: false, error: null }) };
+  },
   useCategories: () => ({ isPending: false, isError: false, data: categories, refetch: vi.fn() }),
   // Fake server: applies the same category + name filter as fetchProductsPage.
   useProducts: (_shopId: string, params: { categoryId: string | null; search: string }) => {
@@ -72,7 +77,7 @@ const shop: Shop = {
   isDemo: true,
   ageRestriction: 18,
   legalNotice: '18+',
-  info: { address: '', hours: '', delivery: '', payment: '', phone: '', telegram: '' },
+  info: { address: '', hours: '', delivery: '', payment: '', phone: '', telegram: '', telegramChannelUrl: '', telegramChannelLabel: '' },
   settings: { showFeatured: true, showInfo: true, showCategories: true },
   telegram: { botUsername: null, miniAppShortName: null },
 };
@@ -82,12 +87,13 @@ function LocationProbe() {
   return <output data-testid="location">{loc.pathname + loc.search}</output>;
 }
 
-function renderHome(entry = '/s/demo/') {
+function renderHome(entry = '/s/demo/', value: Shop = shop) {
   return render(
-    <ShopContext.Provider value={shop}>
+    <ShopContext.Provider value={value}>
       <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/s/:slug" element={<><HomePage /><LocationProbe /></>} />
+          <Route path="/s/:slug/product/:productId" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
     </ShopContext.Provider>,
@@ -112,6 +118,38 @@ describe('HomePage catalog', () => {
     expect(cardNames()).toHaveLength(4);
     expect(screen.queryByText('Рекомендуем')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Весь каталог/ })).not.toBeInTheDocument();
+    // No visible "Категории" heading; the tile list keeps an accessible name.
+    expect(screen.queryByRole('heading', { name: 'Категории' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Категории')).not.toBeInTheDocument();
+    expect(screen.getByRole('list', { name: 'Категории' })).toBeInTheDocument();
+    // No channel link configured → no button, and the info block does not appear because of it.
+    expect(screen.queryByTestId('telegram-channel-link')).not.toBeInTheDocument();
+  });
+
+  it('shows the shop channel button under the title with the configured text and canonical link', () => {
+    renderHome('/s/demo/', {
+      ...shop,
+      info: { ...shop.info, telegramChannelUrl: 't.me/noir_vapor_channel', telegramChannelLabel: 'Новости магазина' },
+    });
+    const link = screen.getByRole('link', { name: 'Новости магазина' });
+    expect(link).toHaveAttribute('href', 'https://t.me/noir_vapor_channel');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    // Placed in the brand header, right after the shop name.
+    const h1 = screen.getByRole('heading', { level: 1, name: 'Demo Shop' });
+    expect(h1.nextElementSibling).toBe(link);
+    expect(screen.queryByRole('heading', { name: 'О магазине' })).not.toBeInTheDocument();
+  });
+
+  it('uses the default button text and hides the button for unsafe or non-Telegram links', () => {
+    const { unmount } = renderHome('/s/demo/', { ...shop, info: { ...shop.info, telegramChannelUrl: 'https://t.me/+AbCdEfGhIj12' } });
+    expect(screen.getByRole('link', { name: 'Наш канал в Телеграме' })).toHaveAttribute('href', 'https://t.me/+AbCdEfGhIj12');
+    unmount();
+    for (const bad of ['javascript:alert(1)', 'https://evil.example/t.me/channel', 'tg://resolve?domain=channel']) {
+      const r = renderHome('/s/demo/', { ...shop, info: { ...shop.info, telegramChannelUrl: bad } });
+      expect(screen.queryByTestId('telegram-channel-link')).not.toBeInTheDocument();
+      r.unmount();
+    }
   });
 
   it('selecting a tile filters in place, highlights it and renames the list; re-tapping keeps it', async () => {
@@ -169,5 +207,29 @@ describe('HomePage catalog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Все товары' }));
     expect(cardNames()).toEqual(['Чехол кожаный']);
     expect(productsCalls.at(-1)).toEqual({ categoryId: null, search: 'чехол' });
+  });
+
+  it('every card has "В корзину" right under the price; it opens the quick sheet, never the product page', async () => {
+    renderHome();
+    for (const card of screen.getAllByTestId('product-card')) {
+      const link = within(card).getByTestId('product-card-link');
+      const button = within(card).getByRole('button', { name: /^В корзину/ });
+      // Sibling areas, not nested (valid HTML), and the button follows the link that ends with the price.
+      expect(link).not.toContainElement(button);
+      expect(link.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(link.lastElementChild?.lastElementChild?.textContent).toMatch(/500/);
+    }
+
+    const card = screen.getAllByTestId('product-card')[0]!;
+    await userEvent.click(within(card).getByRole('button', { name: /^В корзину/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/s\/demo\/$/);
+    const sheet = screen.getByRole('dialog');
+    expect(within(sheet).getByRole('heading', { name: 'Noir Salt 30 мл' })).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Закрыть' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // The rest of the card (photo, name, price) still opens the full product page.
+    await userEvent.click(within(card).getByRole('heading', { name: 'Noir Salt 30 мл' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/s/demo/product/p1');
   });
 });
