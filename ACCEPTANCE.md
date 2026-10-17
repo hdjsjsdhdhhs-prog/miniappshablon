@@ -83,7 +83,7 @@
 | Запуск в **настоящем Telegram-клиенте**, BotFather, deep link `t.me/...?startapp=` | нет бота и токена; E2E эмулирует только клиентский мост (`TelegramWebviewProxy`) и передаёт launch params в hash, initData подписан **локальным тестовым токеном** | создать бота, `supabase secrets set TELEGRAM_BOT_TOKEN`, проверить на телефоне |
 | **Hosted Supabase** (`db push`, `functions deploy`, secrets) | `supabase projects list` → `AccessTokenRequiredError`; Supabase MCP в среде агента недоступен | `supabase login` или `SUPABASE_ACCESS_TOKEN` + `project-ref` |
 | **Деплой frontend** (Vercel / Cloudflare Pages) и проверка публичной ссылки | Vercel CLI не установлен, логина и токенов нет; Vercel MCP недоступен | вход владельца, проект Vercel или Cloudflare, переменные `VITE_*`; затем `tenant:verify --app-url` |
-| GitHub Actions на реальном раннере | репозиторий не запушен; workflow написаны, но не запускались | push в GitHub |
+| GitHub Actions: деплой на Cloudflare Pages и `supabase-deploy.yml` | CI на раннере проходит (см. «Прогон 17.10.2026»), но job деплоя пропускается: не заданы `vars.CLOUDFLARE_PAGES_PROJECT` и секреты Cloudflare; ручной `supabase-deploy.yml` не запускался (нет секретов Supabase) | переменные и секреты в настройках репозитория |
 | Ручная визуальная проверка на устройствах, скринридер, landscape | не проводилась; автоматически проверены роли и подписи (RTL/Playwright) и контраст палитр | ручной прогон |
 | Коммерческая эксплуатация на бесплатных тарифах | Vercel Hobby только некоммерческий; Supabase Free ставит проект на паузу и не делает бэкапы | выбор тарифа владельцем |
 
@@ -125,6 +125,15 @@
 задана ссылка на канал (её ввели вручную, в `tenants/` её нет), а тест считал, что у второго магазина канала нет. Код витрины
 ошибки не содержит. Исправлено предусловие теста: `beforeAll` очищает канал у `noir-vapor`, `afterAll` возвращает исходные
 `info` обоих магазинов (после прогона проверено в БД). Каталог `.tmp-shots/` (скриншоты и временные скрипты) добавлен в `.gitignore`.
+
+**GitHub Actions (CI, `ubuntu-latest`).** Прогоны #1–#5 падали на шаге `Migrations reproduce the schema` из-за ошибки в самом
+workflow: `supabase db diff` пишет «No schema changes found» в stderr, а шаг перехватывал только stdout, поэтому `grep` не
+находил фразу. Локально в bash с тем же Supabase CLI 2.120.0 старая команда давала exit 1, исправленная (`2>&1 | tee`) — exit 0.
+После исправления (`85ebe26`) run #6 зелёный
+([39069907972](https://github.com/hdjsjsdhdhhs-prog/miniappshablon/actions/runs/39069907972)): job «Lint · types · unit · build»
+и job «SQL/integration + Playwright» прошли все шаги, включая `db diff`, seed/publish/verify обоих tenants,
+`test:integration` и `test:e2e`. Job «Deploy frontend to Cloudflare Pages» пропущен: не задан `CLOUDFLARE_PAGES_PROJECT`.
+Логи раннера без токена GitHub недоступны (403), поэтому число тестов на раннере не приводится — только статусы шагов из API.
 
 **Не проверено:** работа кнопки канала через `openTelegramLink` в настоящем Telegram-клиенте и поведение навигации при открытой
 экранной клавиатуре на реальных Android/iOS. Скрытие навигации при открытой клавиатуре автотестами не покрыто.
