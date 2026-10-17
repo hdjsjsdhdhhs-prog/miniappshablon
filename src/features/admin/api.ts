@@ -109,7 +109,6 @@ export interface ProductInput {
   category_id: string;
   base_price_minor: number;
   is_published: boolean;
-  is_featured: boolean;
   sort_order: number;
 }
 

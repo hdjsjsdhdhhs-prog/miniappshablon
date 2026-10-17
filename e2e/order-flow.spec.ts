@@ -48,8 +48,10 @@ test('buyer orders a flavor variant → owner sees the order → stock change ap
   await expect(page.getByTestId('demo-banner')).toContainText('DEMO');
 
   // 2. Category → 3. product
-  await page.getByRole('link', { name: 'Жидкости' }).click();
-  await expect(page).toHaveURL(/\/catalog\?category=liquids/);
+  // The category filters the home page in place (no separate catalog screen).
+  await page.getByRole('button', { name: 'Жидкости' }).click();
+  await expect(page).toHaveURL(/\/s\/noir-vapor\/\?category=liquids$/);
+  await expect(page.getByTestId('products-title')).toHaveText('Жидкости');
   await page.getByTestId('product-card').filter({ hasText: 'Noir Salt 30 мл' }).click();
   await expect(page.getByRole('heading', { name: 'Noir Salt 30 мл' })).toBeVisible();
 
@@ -101,6 +103,8 @@ test('buyer orders a flavor variant → owner sees the order → stock change ap
   // 10. Change the stock of the variant
   await admin.getByRole('navigation', { name: 'Разделы магазина' }).getByRole('link', { name: 'Товары', exact: true }).click();
   await admin.getByTestId('admin-product-link').filter({ hasText: 'Noir Salt 30 мл' }).click();
+  await expect(admin.getByText('Опубликован', { exact: true })).toBeVisible();
+  await expect(admin.getByText('Рекомендуемый', { exact: true })).toHaveCount(0);
   const row = admin.getByTestId('variant-row').filter({ has: admin.getByLabel('Вкус').and(admin.locator('[value="Черника"]')) });
   await row.getByTestId('variant-stock').fill('42');
   await row.getByTestId('variant-save').click();

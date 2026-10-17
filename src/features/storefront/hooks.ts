@@ -2,7 +2,6 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { queryKeys } from '@/domain/query-keys';
 import {
   fetchCategories,
-  fetchFeatured,
   fetchProduct,
   fetchProductsPage,
   fetchShopBySlug,
@@ -17,10 +16,6 @@ export function useShopQuery(slug: string) {
 
 export function useCategories(shopId: string) {
   return useQuery({ queryKey: queryKeys.categories(shopId), queryFn: () => fetchCategories(shopId), staleTime: 60_000 });
-}
-
-export function useFeatured(shopId: string, enabled: boolean) {
-  return useQuery({ queryKey: queryKeys.featured(shopId), queryFn: () => fetchFeatured(shopId), enabled, staleTime: 30_000 });
 }
 
 export function useProducts(shopId: string, params: { categoryId: string | null; search: string }) {

@@ -7,7 +7,6 @@ export const queryKeys = {
   categories: (shopId: string) => ['shop', shopId, 'categories'] as const,
   products: (shopId: string, params: { categoryId: string | null; search: string }) =>
     ['shop', shopId, 'products', params] as const,
-  featured: (shopId: string) => ['shop', shopId, 'featured'] as const,
   product: (shopId: string, productId: string) => ['shop', shopId, 'product', productId] as const,
   myOrders: (shopId: string, telegramUserId: number | null) =>
     ['shop', shopId, 'my-orders', telegramUserId] as const,

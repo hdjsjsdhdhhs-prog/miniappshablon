@@ -31,7 +31,8 @@ const COLOR_LABELS: Record<ThemeColorKey, string> = {
 };
 
 const INFO_LABELS = { address: 'Адрес', hours: 'Часы работы', delivery: 'Получение', payment: 'Оплата', phone: 'Телефон', telegram: 'Telegram' } as const;
-const SETTINGS_LABELS = { showCategories: 'Показывать категории', showFeatured: 'Показывать рекомендуемые', showInfo: 'Показывать блок «О магазине»' } as const;
+// `settings.showFeatured` is still stored (strict schema, existing data) but the storefront has no featured block anymore.
+const SETTINGS_LABELS = { showCategories: 'Показывать категории', showInfo: 'Показывать блок «О магазине»' } as const;
 
 function ThemePreview({ theme, name }: { theme: ShopTheme; name: string }) {
   return (

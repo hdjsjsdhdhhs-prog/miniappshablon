@@ -67,7 +67,7 @@ export function CartPage() {
                 <Link to={`/s/${shop.slug}/profile`}>Мои заказы</Link>
               </Button>
               <Button asChild variant="outline">
-                <Link to={`/s/${shop.slug}/catalog`}>Продолжить покупки</Link>
+                <Link to={`/s/${shop.slug}/`}>Продолжить покупки</Link>
               </Button>
             </div>
           }
@@ -85,7 +85,7 @@ export function CartPage() {
           description="Добавьте товары из каталога."
           action={
             <Button asChild>
-              <Link to={`/s/${shop.slug}/catalog`}>В каталог</Link>
+              <Link to={`/s/${shop.slug}/`}>В каталог</Link>
             </Button>
           }
         />

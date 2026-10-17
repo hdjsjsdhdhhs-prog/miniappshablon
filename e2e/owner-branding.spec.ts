@@ -35,6 +35,10 @@ test('owner changes name, palette and logo in the admin → storefront updates w
   await admin.getByRole('link', { name: /Mint Lab/ }).click();
   await admin.getByRole('navigation', { name: 'Разделы магазина' }).getByRole('link', { name: 'Оформление', exact: true }).click();
 
+  // The storefront has no featured block, so its toggle is gone from the admin too.
+  await expect(admin.getByText('Показывать категории')).toBeVisible();
+  await expect(admin.getByText('Показывать рекомендуемые')).toHaveCount(0);
+
   await admin.getByTestId('settings-name').fill('Mint Lab Renamed');
   await admin.getByLabel('Основной (кнопки) (hex)').fill('#7c3aed');
   await admin.getByTestId('settings-save').click();

@@ -55,7 +55,6 @@ export interface ProductSummary {
   name: string;
   basePriceMinor: number;
   categoryId: string;
-  isFeatured: boolean;
   variants: Variant[];
   images: ProductImage[];
 }
@@ -63,6 +62,7 @@ export interface ProductSummary {
 export interface ProductDetail extends ProductSummary {
   description: string;
   categoryName: string;
+  categorySlug: string;
 }
 
 export const PAGE_SIZE = 20;
@@ -71,10 +71,16 @@ const SHOP_COLUMNS =
   'id, slug, name, description, logo_path, cover_path, theme_config, currency, mode, status, is_demo, age_restriction, legal_notice, info, settings, telegram';
 
 const PRODUCT_COLUMNS =
-  'id, name, base_price_minor, category_id, is_featured, description, ' +
-  'categories!inner(name, is_active, archived_at), ' +
+  'id, name, base_price_minor, category_id, description, ' +
+  'categories!inner(name, slug, is_active, archived_at), ' +
   'product_variants(id, flavor, color, price_override_minor, stock_quantity, is_active, sort_order), ' +
   'product_images(id, storage_path, is_primary, sort_order, alt_text)';
+
+/**
+ * Listing columns: an extra inner-joined alias of the variants is used only as an "in stock" filter
+ * (see fetchProductsPage), so `product_variants` above still returns every active variant for prices.
+ */
+const LIST_COLUMNS = `${PRODUCT_COLUMNS}, in_stock:product_variants!inner(id)`;
 
 export class NotFoundError extends Error {}
 
@@ -123,8 +129,7 @@ interface ProductRow {
   description: string;
   base_price_minor: number;
   category_id: string;
-  is_featured: boolean;
-  categories: { name: string; is_active: boolean; archived_at: string | null };
+  categories: { name: string; slug: string; is_active: boolean; archived_at: string | null };
   product_variants: Variant[];
   product_images: ProductImage[];
 }
@@ -137,7 +142,7 @@ function toDetail(row: ProductRow): ProductDetail {
     basePriceMinor: row.base_price_minor,
     categoryId: row.category_id,
     categoryName: row.categories.name,
-    isFeatured: row.is_featured,
+    categorySlug: row.categories.slug,
     variants: row.product_variants.filter((v) => v.is_active).sort((a, b) => a.sort_order - b.sort_order),
     images: [...row.product_images].sort(
       (a, b) => Number(b.is_primary) - Number(a.is_primary) || a.sort_order - b.sort_order,
@@ -154,10 +159,10 @@ export function normalizeSearch(input: string): string {
   return input.trim().replace(/\s+/g, ' ').slice(0, 60);
 }
 
-function publicProductsQuery(shopId: string) {
+function publicProductsQuery(shopId: string, columns: string = PRODUCT_COLUMNS) {
   return supabase
     .from('products')
-    .select(PRODUCT_COLUMNS)
+    .select(columns)
     .eq('shop_id', shopId)
     .eq('is_published', true)
     .is('archived_at', null)
@@ -170,7 +175,11 @@ export async function fetchProductsPage(
   params: { categoryId: string | null; search: string },
   page: number,
 ): Promise<{ items: ProductDetail[]; nextPage: number | null }> {
-  let q = publicProductsQuery(shopId);
+  // Storefront listing shows only products with at least one active variant in stock. Filtering on
+  // the server keeps pagination correct (no half-empty pages after client-side filtering).
+  let q = publicProductsQuery(shopId, LIST_COLUMNS)
+    .gt('in_stock.stock_quantity', 0)
+    .eq('in_stock.is_active', true);
   if (params.categoryId) q = q.eq('category_id', params.categoryId);
   const search = normalizeSearch(params.search);
   if (search) q = q.ilike('name', `%${escapeLike(search)}%`);
@@ -183,16 +192,6 @@ export async function fetchProductsPage(
     .overrideTypes<ProductRow[], { merge: false }>();
   if (error) throw error;
   return { items: data.map(toDetail), nextPage: data.length === PAGE_SIZE ? page + 1 : null };
-}
-
-export async function fetchFeatured(shopId: string): Promise<ProductDetail[]> {
-  const { data, error } = await publicProductsQuery(shopId)
-    .eq('is_featured', true)
-    .order('sort_order')
-    .limit(8)
-    .overrideTypes<ProductRow[], { merge: false }>();
-  if (error) throw error;
-  return data.map(toDetail);
 }
 
 export async function fetchProduct(shopId: string, productId: string): Promise<ProductDetail> {

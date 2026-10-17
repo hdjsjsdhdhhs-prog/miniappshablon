@@ -26,9 +26,10 @@ let initialized = false;
 export function initTelegram(): TelegramEnv {
   if (initialized) return envState;
   initialized = true;
+  // 1) Identity data: read launch params first, so a failure of optional UI features below can
+  //    never drop the raw initData (which the server verifies anyway).
   try {
     if (!isTMA()) return envState;
-    init();
     const lp = retrieveLaunchParams();
     envState = {
       inTelegram: true,
@@ -36,6 +37,15 @@ export function initTelegram(): TelegramEnv {
       startParam: typeof lp.tgWebAppStartParam === 'string' ? lp.tgWebAppStartParam : null,
       platform: typeof lp.tgWebAppPlatform === 'string' ? lp.tgWebAppPlatform : null,
     };
+  } catch (err) {
+    // Outside Telegram (regular browser): the storefront works, Telegram-identity features
+    // (checkout, my orders) stay disabled.
+    console.warn('Telegram launch params unavailable', err);
+    return envState;
+  }
+  // 2) Platform UX (Back button, viewport, header colors): best effort.
+  try {
+    init();
     if (backButton.mount.isAvailable()) backButton.mount();
     if (miniApp.mount.isAvailable()) {
       miniApp.mount();
@@ -51,9 +61,8 @@ export function initTelegram(): TelegramEnv {
         .catch(() => undefined);
     }
   } catch (err) {
-    // Outside Telegram (regular browser) or an unsupported client: the storefront still works,
-    // only Telegram-identity features (checkout, my orders) are disabled.
-    console.warn('Telegram SDK init skipped', err);
+    // No native bridge (e.g. a local browser preview with signed launch params): cosmetics only.
+    console.warn('Telegram UI features unavailable', err);
   }
   return envState;
 }

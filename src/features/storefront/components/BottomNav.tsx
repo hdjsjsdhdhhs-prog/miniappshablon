@@ -3,8 +3,9 @@ import { NavLink } from 'react-router';
 import { cn } from '@/lib/utils';
 
 export function BottomNav({ slug, cartCount }: { slug: string; cartCount: number }) {
+  // The catalog is the shop home (`end`: not "active" on cart/profile/product pages).
   const items = [
-    { to: `/s/${slug}/catalog`, label: 'Каталог', Icon: SquaresFourIcon },
+    { to: `/s/${slug}/`, label: 'Каталог', Icon: SquaresFourIcon, end: true },
     { to: `/s/${slug}/cart`, label: 'Корзина', Icon: ShoppingCartIcon, badge: cartCount },
     { to: `/s/${slug}/profile`, label: 'Профиль', Icon: UserCircleIcon },
   ];
@@ -15,10 +16,11 @@ export function BottomNav({ slug, cartCount }: { slug: string; cartCount: number
       style={{ paddingBottom: 'var(--safe-bottom)' }}
     >
       <ul className="mx-auto grid h-(--bottom-nav-height) max-w-3xl grid-cols-3">
-        {items.map(({ to, label, Icon, badge }) => (
+        {items.map(({ to, label, Icon, badge, end }) => (
           <li key={to}>
             <NavLink
               to={to}
+              end={end}
               className={({ isActive }) =>
                 cn(
                   'relative flex h-full flex-col items-center justify-center gap-0.5 text-xs font-medium transition-colors',

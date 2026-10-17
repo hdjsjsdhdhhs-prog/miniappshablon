@@ -8,7 +8,6 @@ describe('query keys', () => {
       queryKeys.shop(a),
       queryKeys.categories(a),
       queryKeys.products(a, { categoryId: null, search: '' }),
-      queryKeys.featured(a),
       queryKeys.product(a, 'p1'),
       queryKeys.myOrders(a, 1),
       queryKeys.adminCategories(a),

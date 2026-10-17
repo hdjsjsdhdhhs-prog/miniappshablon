@@ -33,7 +33,8 @@
     "tenant:seed": "tsx scripts/tenant/seed.ts",
     "tenant:publish": "tsx scripts/tenant/publish.ts",
     "tenant:verify": "tsx scripts/tenant/verify.ts",
-    "owner:add": "tsx scripts/owner-add.ts"
+    "owner:add": "tsx scripts/owner-add.ts",
+    "dev:tg-link": "tsx scripts/dev-telegram-link.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

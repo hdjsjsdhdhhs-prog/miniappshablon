@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import type { VariantLike, VariantSelection } from '@/domain/variants';
 import { BottomNav } from './BottomNav';
-import { CategoryChips } from './CategoryChips';
+import { CategoryTiles } from './CategoryTiles';
 import { QuantityStepper } from './QuantityStepper';
 import { VariantPicker } from './VariantPicker';
 
@@ -47,7 +47,10 @@ describe('BottomNav', () => {
         <BottomNav slug="demo" cartCount={3} />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('link', { name: /Каталог/ })).toHaveAttribute('href', '/s/demo/catalog');
+    // The catalog is the shop home; it must not stay highlighted on other sections.
+    const catalog = screen.getByRole('link', { name: /Каталог/ });
+    expect(catalog).toHaveAttribute('href', '/s/demo/');
+    expect(catalog).not.toHaveAttribute('aria-current');
     const cart = screen.getByRole('link', { name: /Корзина/ });
     expect(cart).toHaveAttribute('href', '/s/demo/cart');
     expect(cart).toHaveAttribute('aria-current', 'page');
@@ -56,7 +59,7 @@ describe('BottomNav', () => {
   });
 });
 
-describe('QuantityStepper & CategoryChips', () => {
+describe('QuantityStepper & CategoryTiles', () => {
   it('respects min/max bounds', async () => {
     const values: number[] = [];
     render(<QuantityStepper value={1} max={2} onChange={(v) => values.push(v)} />);
@@ -65,11 +68,17 @@ describe('QuantityStepper & CategoryChips', () => {
     expect(values).toEqual([2]);
   });
 
-  it('selects categories', async () => {
-    const picked: Array<string | null> = [];
-    render(<CategoryChips categories={[{ id: '1', name: 'Жидкости', slug: 'liquids', imagePath: null }]} selected={null} onSelect={(s) => picked.push(s)} />);
-    expect(screen.getByRole('radio', { name: 'Все' })).toHaveAttribute('aria-checked', 'true');
-    await userEvent.click(screen.getByRole('radio', { name: 'Жидкости' }));
-    expect(picked).toEqual(['liquids']);
+  it('category tiles mark only the selected tile as pressed and report clicks (also on the active one)', async () => {
+    const picked: string[] = [];
+    const cats = [
+      { id: '1', name: 'Жидкости', slug: 'liquids', imagePath: null },
+      { id: '2', name: 'Pod-системы', slug: 'pods', imagePath: null },
+    ];
+    render(<CategoryTiles categories={cats} selected="liquids" onSelect={(s) => picked.push(s)} />);
+    expect(screen.getByRole('button', { name: 'Жидкости' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Pod-системы' })).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.click(screen.getByRole('button', { name: 'Pod-системы' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Жидкости' }));
+    expect(picked).toEqual(['pods', 'liquids']);
   });
 });

@@ -26,7 +26,6 @@ const schema = z.object({
   categoryId: z.string().min(1, 'Выберите категорию'),
   price: z.string().refine((v) => parseMoneyInput(v) !== null, 'Цена в формате 1290 или 1290,50'),
   isPublished: z.boolean(),
-  isFeatured: z.boolean(),
   sortOrder: z.coerce.number().int().min(-100000).max(100000),
 });
 type FormValues = z.input<typeof schema>;
@@ -43,7 +42,6 @@ function ProductForm({ product, onSaved }: { product: AdminProduct | null; onSav
       categoryId: product?.category_id ?? '',
       price: product ? minorToInput(product.base_price_minor) : '',
       isPublished: product?.is_published ?? false,
-      isFeatured: product?.is_featured ?? false,
       sortOrder: product?.sort_order ?? 0,
     },
   });
@@ -56,7 +54,6 @@ function ProductForm({ product, onSaved }: { product: AdminProduct | null; onSav
       category_id: v.categoryId,
       base_price_minor: parseMoneyInput(v.price)!,
       is_published: v.isPublished,
-      is_featured: v.isFeatured,
       sort_order: v.sortOrder,
     };
     try {
@@ -122,15 +119,6 @@ function ProductForm({ product, onSaved }: { product: AdminProduct | null; onSav
           render={({ field }) => (
             <label className="flex items-center gap-2 text-sm">
               <Switch checked={field.value} onCheckedChange={field.onChange} /> Опубликован
-            </label>
-          )}
-        />
-        <Controller
-          control={form.control}
-          name="isFeatured"
-          render={({ field }) => (
-            <label className="flex items-center gap-2 text-sm">
-              <Switch checked={field.value} onCheckedChange={field.onChange} /> Рекомендуемый
             </label>
           )}
         />

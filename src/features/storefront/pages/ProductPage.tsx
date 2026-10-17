@@ -41,7 +41,7 @@ export function ProductPage() {
         description="Возможно, он снят с продажи."
         action={
           <Button asChild variant="outline">
-            <Link to={`/s/${shop.slug}/catalog`}>В каталог</Link>
+            <Link to={`/s/${shop.slug}/`}>В каталог</Link>
           </Button>
         }
       />
@@ -89,7 +89,10 @@ export function ProductPage() {
       <Gallery images={p.images} name={p.name} />
       <div className="space-y-5 px-4 pt-4">
         <div className="space-y-1">
-          <Link to={`/s/${shop.slug}/catalog`} className="text-xs text-muted-foreground hover:text-foreground">
+          <Link
+            to={`/s/${shop.slug}/?category=${encodeURIComponent(p.categorySlug)}`}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
             {p.categoryName}
           </Link>
           <h1 className="text-xl font-bold">{p.name}</h1>

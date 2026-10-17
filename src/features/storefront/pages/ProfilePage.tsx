@@ -68,7 +68,7 @@ export function ProfilePage() {
             title="Заказов пока нет"
             action={
               <Button asChild variant="outline">
-                <Link to={`/s/${shop.slug}/catalog`}>В каталог</Link>
+                <Link to={`/s/${shop.slug}/`}>В каталог</Link>
               </Button>
             }
           />
