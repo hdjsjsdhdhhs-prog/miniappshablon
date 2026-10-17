@@ -170,7 +170,7 @@ export function ProductEditPage() {
           <CardTitle>Новый товар</CardTitle>
         </CardHeader>
         <CardContent>
-          <ProductForm product={null} onSaved={(id) => navigate(`../products/${id}`, { replace: true, relative: 'path' })} />
+          <ProductForm product={null} onSaved={(id) => navigate(`/admin/shops/${shop.slug}/products/${id}`, { replace: true })} />
         </CardContent>
       </Card>
     );
