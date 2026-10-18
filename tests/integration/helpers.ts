@@ -1,4 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '../../src/lib/database.types.ts';
 import { DARK_PREMIUM_THEME } from '../../src/domain/theme.ts';
@@ -138,6 +142,50 @@ export async function stockOf(variantId: string): Promise<number> {
   const { data, error } = await admin.from('product_variants').select('stock_quantity').eq('id', variantId).single();
   if (error) throw error;
   return data.stock_quantity;
+}
+
+function runLocalSql(sql: string): { ok: true; out: string } | { ok: false; out: string } {
+  // Privilege checks talk to PostgreSQL directly. Only ever against the LOCAL stack: `--local`
+  // is hard-coded and remote credentials make this throw before any query is sent.
+  if (!env.isLocal) throw new Error('SQL privilege checks run only against the local Supabase stack');
+  const dir = mkdtempSync(join(tmpdir(), 'it-sql-'));
+  const file = join(dir, 'q.sql');
+  writeFileSync(file, sql, 'utf8');
+  try {
+    const out = execFileSync('pnpm', ['exec', 'supabase', 'db', 'query', '--local', '-o', 'json', '-f', file], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
+    });
+    return { ok: true, out };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string };
+    return { ok: false, out: `${e.stdout ?? ''}\n${e.stderr ?? ''}` };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Runs ONE SQL statement as `postgres` on the local database and returns its rows. */
+export function localSql<T = Record<string, unknown>>(sql: string): T[] {
+  const res = runLocalSql(sql);
+  if (!res.ok) throw new Error(`local SQL failed: ${res.out}`);
+  const json = res.out.slice(res.out.indexOf('{'), res.out.lastIndexOf('}') + 1);
+  return (JSON.parse(json) as { rows: T[] }).rows;
+}
+
+/**
+ * Runs a PL/pgSQL body as `postgres` on the local database inside a DO block that ALWAYS ends with
+ * an exception, so every change (DDL included) is rolled back. The body must store its result in
+ * the jsonb variable `result`; it is carried out in the exception message.
+ */
+export function localSqlRolledBack<T = Record<string, unknown>>(body: string): T {
+  const res = runLocalSql(
+    `do $it_probe$\ndeclare result jsonb;\nbegin\n${body}\nraise exception 'IT_RESULT<<%>>IT_RESULT', result;\nend\n$it_probe$;`,
+  );
+  const m = /IT_RESULT<<([\s\S]*?)>>IT_RESULT/.exec(res.out);
+  if (!m) throw new Error(`rolled-back SQL did not produce a result: ${res.out}`);
+  return JSON.parse(m[1]!) as T;
 }
 
 /** Deletes only rows/users created by this test run (safe: never touches demo tenants). */
