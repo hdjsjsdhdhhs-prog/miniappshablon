@@ -1,12 +1,13 @@
-/** Pricing rules shared by UI. The same rule is implemented in SQL (create_order). */
-
-export interface PricedVariant {
-  price_override_minor: number | null;
-}
-
-/** Variant price = price_override_minor when set, otherwise the product base price. */
-export function effectivePriceMinor(basePriceMinor: number, variant: PricedVariant | null | undefined): number {
-  return variant?.price_override_minor ?? basePriceMinor;
+/**
+ * Pricing rules shared by UI.
+ *
+ * One price per product: `products.base_price_minor` is the only price, the same for every flavor/color.
+ * Variants never carry their own price (`price_override_minor` is always NULL: the admin cannot set it,
+ * tenant configs reject it, seed writes NULL), so checkout (`create_order`, which charges
+ * `coalesce(price_override_minor, base_price_minor)`) charges exactly this price as well.
+ */
+export function productPriceMinor(product: { basePriceMinor: number }): number {
+  return product.basePriceMinor;
 }
 
 export interface CartLineLike {
@@ -24,14 +25,4 @@ export function orderTotalMinor(lines: readonly CartLineLike[]): number {
 
 export function totalQuantity(lines: readonly { quantity: number }[]): number {
   return lines.reduce((sum, l) => sum + l.quantity, 0);
-}
-
-/** Price range for a product card ("от 1 290 ₽" when variants differ). */
-export function priceRange(
-  basePriceMinor: number,
-  variants: readonly PricedVariant[],
-): { min: number; max: number } {
-  if (variants.length === 0) return { min: basePriceMinor, max: basePriceMinor };
-  const prices = variants.map((v) => effectivePriceMinor(basePriceMinor, v));
-  return { min: Math.min(...prices), max: Math.max(...prices) };
 }

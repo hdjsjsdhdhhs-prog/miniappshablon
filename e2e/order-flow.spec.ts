@@ -55,9 +55,10 @@ test('buyer orders a flavor variant → owner sees the order → stock change ap
   await page.getByTestId('product-card').filter({ hasText: 'Noir Salt 30 мл' }).click();
   await expect(page.getByRole('heading', { name: 'Noir Salt 30 мл' })).toBeVisible();
 
-  // 4. Choose flavor with its own price and stock
+  // 4. Choose a flavor: its own stock, the one product price (690 ₽ for every flavor)
+  await expect(page.getByTestId('product-price')).toHaveText(/^690\s?₽$/);
   await page.getByRole('radio', { name: 'Черника' }).click();
-  await expect(page.getByTestId('product-price')).toContainText('740');
+  await expect(page.getByTestId('product-price')).toHaveText(/^690\s?₽$/);
   await expect(page.getByTestId('product-stock')).toContainText(`В наличии: ${originalStock} шт.`);
 
   // 5. Add to cart
@@ -65,7 +66,7 @@ test('buyer orders a flavor variant → owner sees the order → stock change ap
   await expect(page.getByTestId('cart-count')).toHaveText('1');
   await page.getByRole('link', { name: /Корзина/ }).click();
   await expect(page.getByTestId('cart-line')).toContainText('Черника');
-  await expect(page.getByTestId('cart-total')).toContainText('740');
+  await expect(page.getByTestId('cart-total')).toContainText('690');
 
   // 6. Create the (test) order — the Edge Function verifies initData and runs create_order.
   await page.getByLabel('Имя').fill('E2E Покупатель');
@@ -82,8 +83,8 @@ test('buyer orders a flavor variant → owner sees the order → stock change ap
     .eq('order_number', orderNumber)
     .single();
   createdOrderId = order!.id;
-  expect(order).toMatchObject({ total_minor: 74000, is_test: true, customer_tg_id: buyer.id });
-  expect(order!.order_items).toEqual([{ unit_price_minor: 74000, flavor: 'Черника', quantity: 1 }]);
+  expect(order).toMatchObject({ total_minor: 69000, is_test: true, customer_tg_id: buyer.id });
+  expect(order!.order_items).toEqual([{ unit_price_minor: 69000, flavor: 'Черника', quantity: 1 }]);
   expect(originalStock - 1).toBe((await db.from('product_variants').select('stock_quantity').eq('id', variantId).single()).data!.stock_quantity);
 
   // Buyer profile shows only own orders

@@ -6,7 +6,6 @@ export interface VariantLike {
   color: string | null;
   stock_quantity: number;
   is_active: boolean;
-  price_override_minor: number | null;
 }
 
 export interface VariantSelection {
@@ -81,20 +80,14 @@ export function canAddToCart(
   return { ok: true, variant };
 }
 
-/** Admin form schema for a variant row. */
-export const variantFormSchema = z
-  .object({
-    flavor: z.string().trim().max(60),
-    color: z.string().trim().max(60),
-    sku: z.string().trim().max(64),
-    price: z.string().trim(),
-    stock: z.coerce.number().int('Целое число').min(0, 'Не меньше 0').max(1_000_000),
-    isActive: z.boolean(),
-  })
-  .refine((v) => v.price === '' || /^\d+([.,]\d{1,2})?$/.test(v.price.replace(/\s/g, '')), {
-    message: 'Цена в формате 1290 или 1290,50',
-    path: ['price'],
-  });
+/** Admin form schema for a variant row. A variant has no price of its own (one price per product). */
+export const variantFormSchema = z.object({
+  flavor: z.string().trim().max(60),
+  color: z.string().trim().max(60),
+  sku: z.string().trim().max(64),
+  stock: z.coerce.number().int('Целое число').min(0, 'Не меньше 0').max(1_000_000),
+  isActive: z.boolean(),
+});
 
 /** Duplicate flavor/color combinations violate the DB unique index; detect before saving. */
 export function findDuplicateCombos(rows: ReadonlyArray<Pick<VariantLike, 'flavor' | 'color'>>): number[] {

@@ -115,7 +115,14 @@ export interface ProductInput {
 export async function createProduct(shopId: string, input: ProductInput) {
   const product = check(await supabase.from('products').insert({ shop_id: shopId, ...input }).select('*').single());
   // Every product needs at least one sellable row; start with the default (no flavor/color) variant.
-  check(await supabase.from('product_variants').insert({ shop_id: shopId, product_id: product.id }).select('id').single());
+  // It has no own price: the product price applies to it, as to every later variant.
+  check(
+    await supabase
+      .from('product_variants')
+      .insert({ shop_id: shopId, product_id: product.id, price_override_minor: null })
+      .select('id')
+      .single(),
+  );
   return product;
 }
 
@@ -123,26 +130,60 @@ export async function updateProduct(id: string, patch: Partial<ProductInput> & {
   return check(await supabase.from('products').update(patch).eq('id', id).select('*').single());
 }
 
+/**
+ * One price per product. The price lives in products.base_price_minor; checkout (create_order) charges
+ * coalesce(price_override_minor, base_price_minor). Clearing every variant's own price therefore makes all
+ * variants of the product sell at exactly the product price. Returns the ids of the variants that changed.
+ */
+export async function syncVariantPricesToProduct(productId: string): Promise<string[]> {
+  const rows = check(
+    await supabase
+      .from('product_variants')
+      .update({ price_override_minor: null })
+      .eq('product_id', productId)
+      .not('price_override_minor', 'is', null)
+      .select('id'),
+  );
+  return rows.map((r) => r.id);
+}
+
+/** Saves the product card; its price becomes the price of every variant. */
+export async function saveProductWithPrice(id: string, input: ProductInput) {
+  const product = await updateProduct(id, input);
+  await syncVariantPricesToProduct(id);
+  return product;
+}
+
 // ---- variants --------------------------------------------------------------------
 
+/** A variant has no price of its own: it always sells at the product price (base_price_minor). */
 export interface VariantInput {
   flavor: string | null;
   color: string | null;
   sku: string | null;
-  price_override_minor: number | null;
   is_active: boolean;
+}
+
+/** Writable variant fields; the price is deliberately not one of them. */
+function variantRow(input: Partial<VariantInput>) {
+  const { flavor, color, sku, is_active } = input;
+  return Object.fromEntries(Object.entries({ flavor, color, sku, is_active }).filter(([, v]) => v !== undefined)) as Partial<VariantInput>;
 }
 
 export async function createVariant(shopId: string, productId: string, input: VariantInput, stock: number) {
   const v = check(
-    await supabase.from('product_variants').insert({ shop_id: shopId, product_id: productId, ...input }).select('*').single(),
+    await supabase
+      .from('product_variants')
+      .insert({ shop_id: shopId, product_id: productId, ...variantRow(input), price_override_minor: null })
+      .select('*')
+      .single(),
   );
   if (stock > 0) await setVariantStock(v.id, stock);
   return v;
 }
 
 export async function updateVariant(id: string, patch: Partial<VariantInput>) {
-  return check(await supabase.from('product_variants').update(patch).eq('id', id).select('*').single());
+  return check(await supabase.from('product_variants').update(variantRow(patch)).eq('id', id).select('*').single());
 }
 
 /** Stock changes are journaled server-side (inventory_movements) by the RPC. */

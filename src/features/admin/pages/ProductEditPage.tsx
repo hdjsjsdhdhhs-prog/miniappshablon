@@ -16,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { minorToInput, parseMoneyInput } from '@/domain/money';
 import { queryKeys } from '@/domain/query-keys';
 import { useAdminShop } from '../admin-context';
-import { createProduct, fetchAdminCategories, fetchAdminProduct, updateProduct, type AdminProduct } from '../api';
+import { createProduct, fetchAdminCategories, fetchAdminProduct, saveProductWithPrice, updateProduct, type AdminProduct } from '../api';
 import { ProductImagesEditor } from '../components/ProductImagesEditor';
 import { VariantsEditor } from '../components/VariantsEditor';
 
@@ -57,7 +57,9 @@ function ProductForm({ product, onSaved }: { product: AdminProduct | null; onSav
       sort_order: v.sortOrder,
     };
     try {
-      const saved = product ? await updateProduct(product.id, input) : await createProduct(shop.id, input);
+      // One price per product: saving it also clears any per-variant price, so every variant sells at it.
+      // A new product starts with a single default variant without its own price.
+      const saved = product ? await saveProductWithPrice(product.id, input) : await createProduct(shop.id, input);
       await qc.invalidateQueries({ queryKey: ['admin', 'shop', shop.id] });
       await qc.invalidateQueries({ queryKey: ['shop', shop.id] });
       toast.success('Товар сохранён');
@@ -104,9 +106,13 @@ function ProductForm({ product, onSaved }: { product: AdminProduct | null; onSav
         {errors.categoryId && <p className="text-sm text-destructive">{errors.categoryId.message}</p>}
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="pf-price">Базовая цена, {shop.currency}</Label>
+        <Label htmlFor="pf-price">Цена, {shop.currency}</Label>
         <Input id="pf-price" inputMode="decimal" aria-invalid={!!errors.price} {...form.register('price')} data-testid="product-price-input" />
-        {errors.price && <p className="text-sm text-destructive">{errors.price.message}</p>}
+        {errors.price ? (
+          <p className="text-sm text-destructive">{errors.price.message}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">Одна цена для всех вкусов и цветов товара.</p>
+        )}
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="pf-sort">Порядок</Label>
@@ -197,7 +203,7 @@ export function ProductEditPage() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>Варианты: вкусы, цвета, цены и остатки</CardTitle>
+          <CardTitle>Варианты: вкусы, цвета и остатки</CardTitle>
         </CardHeader>
         <CardContent>
           <VariantsEditor shopId={shop.id} productId={p.id} variants={p.product_variants} queryKey={key} />

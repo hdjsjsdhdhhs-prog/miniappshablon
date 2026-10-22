@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { EmptyState, ErrorState, PageSpinner, StaleDataNotice } from '@/components/state-views';
 import { Button } from '@/components/ui/button';
 import { formatMoney } from '@/domain/money';
-import { effectivePriceMinor } from '@/domain/pricing';
+import { productPriceMinor } from '@/domain/pricing';
 import { canAddToCart, defaultSelection, findVariant, MAX_LINE_QUANTITY, variantLabel, type VariantSelection } from '@/domain/variants';
 import { useCart } from '@/features/cart/useCart';
 import { NotFoundError } from '../api';
@@ -55,7 +55,8 @@ export function ProductPage() {
   // A stale selection (variant deactivated after refetch) falls back to the default one.
   const sel = selection && findVariant(variants, selection) ? selection : defaultSelection(variants);
   const variant = findVariant(variants, sel);
-  const price = effectivePriceMinor(p.basePriceMinor, variant);
+  // One price per product: choosing a flavor/color never changes it.
+  const price = productPriceMinor(p);
   const stock = variant?.stock_quantity ?? 0;
   const inCart = cart.lines.find((l) => l.variantId === variant?.id)?.quantity ?? 0;
   const maxQty = Math.max(1, Math.min(stock - inCart, MAX_LINE_QUANTITY));

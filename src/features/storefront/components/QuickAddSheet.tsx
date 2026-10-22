@@ -7,7 +7,7 @@ import { ProductImage } from '@/components/product-image';
 import { Button } from '@/components/ui/button';
 import { DialogClose, DialogDescription, DialogOverlay, DialogTitle } from '@/components/ui/dialog';
 import { formatMoney } from '@/domain/money';
-import { effectivePriceMinor, priceRange } from '@/domain/pricing';
+import { productPriceMinor } from '@/domain/pricing';
 import {
   canAddToCart,
   findVariant,
@@ -30,11 +30,21 @@ const REASONS: Record<string, string> = {
   exceeds_stock: 'Больше нет в наличии',
 };
 
-/** Low stock is worth telling the buyer; exact big numbers are noise in a compact picker. */
-const LOW_STOCK = 5;
-
 function uniq(values: Array<string | null>): string[] {
   return [...new Set(values.filter((v): v is string => v !== null))];
+}
+
+/**
+ * Stock behind an option chip: the exact variant when the chip resolves to one, otherwise the sum of the sellable
+ * variants with that value that still fit the other choice (e.g. a flavor offered in several colors).
+ */
+function optionStock(sellable: readonly VariantLike[], kind: 'flavor' | 'color', value: string, selection: VariantSelection): number {
+  const exact = findVariant(sellable, { ...selection, [kind]: value });
+  if (exact) return exact.stock_quantity;
+  const other = kind === 'flavor' ? 'color' : 'flavor';
+  const withValue = sellable.filter((v) => v[kind] === value);
+  const matching = withValue.filter((v) => selection[other] === null || v[other] === selection[other]);
+  return (matching.length ? matching : withValue).reduce((sum, v) => sum + v.stock_quantity, 0);
 }
 
 function OptionGroup({
@@ -43,9 +53,6 @@ function OptionGroup({
   values,
   selection,
   sellable,
-  showPrice,
-  basePriceMinor,
-  currency,
   onPick,
 }: {
   legend: string;
@@ -53,9 +60,6 @@ function OptionGroup({
   values: string[];
   selection: VariantSelection;
   sellable: readonly VariantLike[];
-  showPrice: boolean;
-  basePriceMinor: number;
-  currency: string;
   onPick: (value: string) => void;
 }) {
   return (
@@ -64,10 +68,8 @@ function OptionGroup({
       <div role="radiogroup" aria-label={legend} className="grid grid-cols-2 gap-2">
         {values.map((value) => {
           const active = selection[kind] === value;
-          // Meta (price / low stock) only when this chip resolves to one concrete sellable variant.
-          const v = findVariant(sellable, { ...selection, [kind]: value });
-          const price = v ? effectivePriceMinor(basePriceMinor, v) : null;
-          const low = v && v.stock_quantity <= LOW_STOCK ? v.stock_quantity : null;
+          // The price lives once in the header; a chip shows only its name and remaining stock.
+          const stock = optionStock(sellable, kind, value, selection);
           return (
             <button
               key={value}
@@ -84,13 +86,9 @@ function OptionGroup({
               )}
             >
               <span className="line-clamp-2 leading-snug break-words">{value}</span>
-              {(showPrice && price !== null) || low !== null ? (
-                <span className="mt-0.5 text-xs font-normal text-muted-foreground tabular-nums">
-                  {showPrice && price !== null && formatMoney(price, currency)}
-                  {showPrice && price !== null && low !== null && ' · '}
-                  {low !== null && `осталось ${low}`}
-                </span>
-              ) : null}
+              <span className="mt-0.5 text-xs font-normal text-muted-foreground tabular-nums" data-testid="quick-option-stock">
+                ОСТАЛОСЬ: {stock}
+              </span>
               {active && (
                 <CheckIcon aria-hidden weight="bold" className="absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-primary" />
               )}
@@ -132,9 +130,8 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
   // A product without options has a single default variant: nothing to choose, direct add with quantity.
   // With options, nothing is pre-selected — the buyer always picks explicitly.
   const variant = needsChoice && flavor === null && color === null ? null : findVariant(sellable, sel);
-  const range = priceRange(p.basePriceMinor, sellable.length ? sellable : p.variants);
-  const pricesDiffer = range.min !== range.max;
-  const price = variant ? effectivePriceMinor(p.basePriceMinor, variant) : range.min;
+  // One price per product, shown once in the header; it does not depend on the chosen flavor/color.
+  const price = productPriceMinor(p);
 
   const inCart = variant ? (cart.lines.find((l) => l.variantId === variant.id)?.quantity ?? 0) : 0;
   const room = variant ? Math.min(variant.stock_quantity, MAX_LINE_QUANTITY) - inCart : 0;
@@ -200,7 +197,7 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
         productId: data.id,
         name: data.name,
         variantLabel: variantLabel(check.variant),
-        unitPriceMinor: effectivePriceMinor(data.basePriceMinor, check.variant),
+        unitPriceMinor: productPriceMinor(data),
         imagePath: data.images[0]?.storage_path ?? null,
         maxQuantity: check.variant.stock_quantity,
       },
@@ -236,7 +233,6 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
           <div className="min-w-0 flex-1 space-y-0.5">
             <DialogTitle className="line-clamp-2 text-base leading-snug font-semibold">{p.name}</DialogTitle>
             <p className="text-lg font-semibold tracking-tight tabular-nums" data-testid="quick-price">
-              {!variant && pricesDiffer && <span className="text-sm font-normal text-muted-foreground">от </span>}
               {formatMoney(price, shop.currency)}
             </p>
             <DialogDescription className="sr-only">Выбор варианта и количества для добавления в корзину</DialogDescription>
@@ -257,9 +253,6 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
                 values={flavors}
                 selection={sel}
                 sellable={sellable}
-                showPrice={pricesDiffer}
-                basePriceMinor={p.basePriceMinor}
-                currency={shop.currency}
                 onPick={(v) => pick('flavor', v)}
               />
             )}
@@ -270,9 +263,6 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
                 values={colors}
                 selection={sel}
                 sellable={sellable}
-                showPrice={pricesDiffer}
-                basePriceMinor={p.basePriceMinor}
-                currency={shop.currency}
                 onPick={(v) => pick('color', v)}
               />
             )}

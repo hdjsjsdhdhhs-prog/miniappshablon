@@ -17,7 +17,7 @@ async function productVariants() {
   const { data: product } = await db.from('products').select('id').eq('shop_id', shop!.id).eq('name', PRODUCT).single();
   const { data } = await db
     .from('product_variants')
-    .select('id, flavor, color, stock_quantity, is_active, price_override_minor')
+    .select('id, flavor, color, stock_quantity, is_active')
     .eq('product_id', product!.id);
   return { productId: product!.id, variants: data! };
 }
@@ -77,7 +77,8 @@ test('button opens the compact sheet over the catalog; chosen flavor goes to the
 
   await sheet(page).getByRole('radio', { name: /Черника/ }).click();
   await expect(sheet(page).getByRole('radio', { name: /Черника/ })).toHaveAttribute('aria-checked', 'true');
-  await expect(sheet(page).getByTestId('quick-price')).toContainText('740');
+  // One price per product: Черника costs the same 690 ₽ as every other flavor, without "от".
+  await expect(sheet(page).getByTestId('quick-price')).toHaveText(/^690\s?₽$/);
 
   // Not covered by the bottom nav: the confirm button is the topmost element at its own centre.
   await settled(page);
@@ -110,7 +111,7 @@ test('button opens the compact sheet over the catalog; chosen flavor goes to the
   await page.getByRole('navigation', { name: 'Основная навигация' }).getByRole('link', { name: /Корзина/ }).click();
   await expect(page.getByTestId('cart-line')).toHaveCount(1);
   await expect(page.getByTestId('cart-line')).toContainText('Черника');
-  await expect(page.getByTestId('cart-total')).toContainText('1 480');
+  await expect(page.getByTestId('cart-total')).toContainText('1 380');
 });
 
 test('photo, name and price open the full product page with the detailed picker', async ({ page }) => {

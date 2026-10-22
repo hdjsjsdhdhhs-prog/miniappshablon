@@ -17,7 +17,6 @@ const v = (id: string, flavor: string | null, color: string | null, stock: numbe
   color,
   stock_quantity: stock,
   is_active: active,
-  price_override_minor: null,
 });
 
 const variants = [
@@ -66,11 +65,12 @@ describe('variants', () => {
   });
 
   it('validates admin variant form input', () => {
-    const base = { flavor: '', color: '', sku: '', price: '', stock: '5', isActive: true };
+    const base = { flavor: '', color: '', sku: '', stock: '5', isActive: true };
     expect(variantFormSchema.safeParse(base).success).toBe(true);
     expect(variantFormSchema.safeParse({ ...base, stock: '-1' }).success).toBe(false);
     expect(variantFormSchema.safeParse({ ...base, stock: '1.5' }).success).toBe(false);
-    expect(variantFormSchema.safeParse({ ...base, price: '12,345' }).success).toBe(false);
-    expect(variantFormSchema.safeParse({ ...base, price: '1290,50' }).success).toBe(true);
+    // One price per product: the variant form has no price; a stray price field never reaches the parsed row.
+    const parsed = variantFormSchema.parse({ ...base, price: '740' });
+    expect(Object.keys(parsed).sort()).toEqual(['color', 'flavor', 'isActive', 'sku', 'stock']);
   });
 });

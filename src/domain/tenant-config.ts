@@ -35,7 +35,9 @@ export const variantConfigSchema = z.strictObject({
   flavor: z.string().trim().min(1).max(60).nullable().default(null),
   color: z.string().trim().min(1).max(60).nullable().default(null),
   sku: z.string().trim().min(1).max(64).nullable().default(null),
-  priceMinor: z.number().int().min(0).nullable().default(null),
+  // A product has ONE price (product `priceMinor`) for every flavor/color. A variant must not have the field at
+  // all — any value, null included, is rejected — so a per-variant price can never come back through a config.
+  priceMinor: z.never({ error: 'Цена задаётся одна на товар (priceMinor товара), у вариантов поля priceMinor быть не должно' }).optional(),
   stock: z.number().int().min(0).max(1_000_000),
 });
 

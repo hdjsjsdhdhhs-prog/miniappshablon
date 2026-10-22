@@ -32,11 +32,11 @@ export interface Category {
   imagePath: string | null;
 }
 
+/** A sellable flavor/color row. It has no price: every variant sells at the product price (basePriceMinor). */
 export interface Variant {
   id: string;
   flavor: string | null;
   color: string | null;
-  price_override_minor: number | null;
   stock_quantity: number;
   is_active: boolean;
   sort_order: number;
@@ -73,7 +73,7 @@ const SHOP_COLUMNS =
 const PRODUCT_COLUMNS =
   'id, name, base_price_minor, category_id, description, ' +
   'categories!inner(name, slug, is_active, archived_at), ' +
-  'product_variants(id, flavor, color, price_override_minor, stock_quantity, is_active, sort_order), ' +
+  'product_variants(id, flavor, color, stock_quantity, is_active, sort_order), ' +
   'product_images(id, storage_path, is_primary, sort_order, alt_text)';
 
 /**

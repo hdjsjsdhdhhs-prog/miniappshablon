@@ -6,18 +6,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { minorToInput, parseMoneyInput } from '@/domain/money';
 import { findDuplicateCombos, variantFormSchema } from '@/domain/variants';
 import type { Tables } from '@/lib/supabase';
 import { createVariant, setVariantStock, updateVariant } from '../api';
 
 type Variant = Tables<'product_variants'>;
 
+// A product has ONE price (products.base_price_minor) for every flavor/color. A variant row has no price
+// field at all; creating or saving a variant never writes a price (see VariantInput in ../api).
 interface RowDraft {
   flavor: string;
   color: string;
   sku: string;
-  price: string;
   stock: string;
   isActive: boolean;
 }
@@ -26,15 +26,14 @@ const toDraft = (v: Variant): RowDraft => ({
   flavor: v.flavor ?? '',
   color: v.color ?? '',
   sku: v.sku ?? '',
-  price: v.price_override_minor === null ? '' : minorToInput(v.price_override_minor),
   stock: String(v.stock_quantity),
   isActive: v.is_active,
 });
 
-const EMPTY: RowDraft = { flavor: '', color: '', sku: '', price: '', stock: '0', isActive: true };
+const EMPTY: RowDraft = { flavor: '', color: '', sku: '', stock: '0', isActive: true };
 
 function parseRow(d: RowDraft) {
-  const r = variantFormSchema.safeParse({ ...d, stock: d.stock });
+  const r = variantFormSchema.safeParse(d);
   if (!r.success) return { ok: false as const, error: r.error.issues[0]?.message ?? 'Ошибка' };
   return {
     ok: true as const,
@@ -42,7 +41,6 @@ function parseRow(d: RowDraft) {
       flavor: r.data.flavor || null,
       color: r.data.color || null,
       sku: r.data.sku || null,
-      price_override_minor: r.data.price === '' ? null : parseMoneyInput(r.data.price),
       is_active: r.data.isActive,
     },
     stock: r.data.stock,
@@ -71,7 +69,6 @@ function VariantRow({ variant, onSaved }: { variant: Variant; onSaved: () => voi
       <TableCell><Input aria-label="Вкус" value={d.flavor} onChange={set('flavor')} placeholder="—" /></TableCell>
       <TableCell><Input aria-label="Цвет" value={d.color} onChange={set('color')} placeholder="—" /></TableCell>
       <TableCell><Input aria-label="SKU" value={d.sku} onChange={set('sku')} placeholder="—" /></TableCell>
-      <TableCell><Input aria-label="Цена варианта" value={d.price} onChange={set('price')} placeholder="базовая" inputMode="decimal" /></TableCell>
       <TableCell><Input aria-label="Остаток" value={d.stock} onChange={set('stock')} inputMode="numeric" className="w-24" data-testid="variant-stock" /></TableCell>
       <TableCell><Switch aria-label="Активен" checked={d.isActive} onCheckedChange={(v) => setD({ ...d, isActive: v })} /></TableCell>
       <TableCell>
@@ -93,6 +90,7 @@ export function VariantsEditor({ shopId, productId, variants, queryKey }: { shop
       if (!r.ok) throw new Error(r.error);
       const dupes = findDuplicateCombos([...variants, { flavor: r.input.flavor, color: r.input.color }]);
       if (dupes.length) throw new Error('Такое сочетание вкус/цвет уже есть');
+      // A new variant sells at the product price (createVariant always stores no own price).
       await createVariant(shopId, productId, r.input, r.stock);
     },
     onSuccess: () => {
@@ -108,8 +106,8 @@ export function VariantsEditor({ shopId, productId, variants, queryKey }: { shop
   return (
     <div className="space-y-2">
       <p className="text-sm text-muted-foreground">
-        Каждое сочетание вкуса и цвета — отдельная позиция со своим остатком. Пустая цена = базовая цена товара. Остаток меняется через
-        журнал склада.
+        Каждое сочетание вкуса и цвета — отдельная позиция со своим остатком. Цена у всех вариантов одна — цена товара. Остаток меняется
+        через журнал склада.
       </p>
       <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>
@@ -118,7 +116,6 @@ export function VariantsEditor({ shopId, productId, variants, queryKey }: { shop
               <TableHead>Вкус</TableHead>
               <TableHead>Цвет</TableHead>
               <TableHead>SKU</TableHead>
-              <TableHead>Цена</TableHead>
               <TableHead>Остаток</TableHead>
               <TableHead>Активен</TableHead>
               <TableHead />
@@ -132,7 +129,6 @@ export function VariantsEditor({ shopId, productId, variants, queryKey }: { shop
               <TableCell><Input aria-label="Новый вкус" value={draft.flavor} onChange={set('flavor')} placeholder="Новый вкус" /></TableCell>
               <TableCell><Input aria-label="Новый цвет" value={draft.color} onChange={set('color')} placeholder="Новый цвет" /></TableCell>
               <TableCell><Input aria-label="Новый SKU" value={draft.sku} onChange={set('sku')} /></TableCell>
-              <TableCell><Input aria-label="Цена нового варианта" value={draft.price} onChange={set('price')} placeholder="базовая" /></TableCell>
               <TableCell><Input aria-label="Остаток нового варианта" value={draft.stock} onChange={set('stock')} className="w-24" /></TableCell>
               <TableCell />
               <TableCell>

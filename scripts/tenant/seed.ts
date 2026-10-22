@@ -9,7 +9,7 @@
 import { extname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { seedKeys } from '../../src/domain/tenant-config.ts';
-import { planProductImages, planSeed } from '../../src/domain/seed-plan.ts';
+import { planProductImages, planSeed, variantSeedRow } from '../../src/domain/seed-plan.ts';
 import { log, parseArgs, requireString, run } from '../lib/cli.ts';
 import { serviceClient } from '../lib/supabase-env.ts';
 import { loadAsset, validateTenant } from '../lib/tenant-fs.ts';
@@ -235,25 +235,13 @@ run(async () => {
   for (const [index, { productKey, variant }] of plan.variants.entries()) {
     const productId = productIdByKey.get(seedKeys.product(productKey));
     if (!productId) throw new Error(`Нет товара ${productKey}`);
-    const seed_key = seedKeys.variant(productKey, variant.key);
+    // One price per product: the variant row never gets its own price (see variantSeedRow).
+    const row = variantSeedRow({ shopId, productId, productKey }, variant, index);
+    const seed_key = row.seed_key;
     const rows = must(
       await db
         .from('product_variants')
-        .upsert(
-          {
-            shop_id: shopId,
-            product_id: productId,
-            flavor: variant.flavor,
-            color: variant.color,
-            sku: variant.sku,
-            price_override_minor: variant.priceMinor,
-            stock_quantity: variant.stock,
-            is_active: true,
-            sort_order: index,
-            seed_key,
-          },
-          { onConflict: 'shop_id,seed_key', ignoreDuplicates: true },
-        )
+        .upsert(row, { onConflict: 'shop_id,seed_key', ignoreDuplicates: true })
         .select('id'),
       `Вариант ${seed_key}`,
     );

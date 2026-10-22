@@ -23,7 +23,11 @@ const product = (id: string, name: string, categoryId: string): ProductDetail =>
   categoryName: '',
   categorySlug: '',
   images: [],
-  variants: [{ id: `${id}-v`, flavor: null, color: null, price_override_minor: null, stock_quantity: 5, is_active: true, sort_order: 0 }],
+  // Several flavors per product: the card still shows ONE fixed product price.
+  variants: [
+    { id: `${id}-a`, flavor: 'Мята', color: null, stock_quantity: 5, is_active: true, sort_order: 0 },
+    { id: `${id}-b`, flavor: 'Черника', color: null, stock_quantity: 2, is_active: true, sort_order: 1 },
+  ],
 });
 
 // What the server returns for the in-stock listing (out-of-stock products are filtered by the API).
@@ -207,6 +211,19 @@ describe('HomePage catalog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Все товары' }));
     expect(cardNames()).toEqual(['Чехол кожаный']);
     expect(productsCalls.at(-1)).toEqual({ categoryId: null, search: 'чехол' });
+  });
+
+  it('catalog and search cards show the fixed product price, never "от", for products with several flavors', async () => {
+    renderHome();
+    const prices = () => screen.getAllByTestId('product-card-price').map((p) => p.textContent);
+    expect(prices()).toHaveLength(4);
+    for (const p of prices()) expect(p).toMatch(/^500\s?₽$/);
+    expect(screen.getByTestId('product-grid')).not.toHaveTextContent(/(^|\s)от\s/);
+
+    await userEvent.type(screen.getByRole('searchbox'), 'noir');
+    await waitFor(() => expect(cardNames()).toEqual(['Noir Salt 30 мл']));
+    expect(prices()).toEqual([expect.stringMatching(/^500\s?₽$/)]);
+    expect(screen.getByTestId('product-grid')).not.toHaveTextContent(/(^|\s)от\s/);
   });
 
   it('every card has "В корзину" right under the price; it opens the quick sheet, never the product page', async () => {

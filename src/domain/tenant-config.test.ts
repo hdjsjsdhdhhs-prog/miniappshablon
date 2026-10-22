@@ -58,6 +58,46 @@ describe('tenant config schema', () => {
     expect(tenantConfigSchema.safeParse({ ...base, unknownField: 1 }).success).toBe(false);
   });
 
+  it('one price per product: no committed config has a variant price field, every product keeps its own price', () => {
+    const slugs = readdirSync(TENANTS);
+    // Every existing tenant is checked, including the ones named in the migration.
+    expect(slugs).toEqual(expect.arrayContaining(['noir-vapor', 'mint-lab', 'neon-district']));
+    for (const slug of slugs) {
+      // Raw JSON, before any schema default: the field must be absent, not just null.
+      const raw = load(slug).initialProducts as Array<{ key: string; priceMinor: unknown; variants: Array<Record<string, unknown>> }>;
+      for (const p of raw) {
+        expect(Number.isInteger(p.priceMinor), `${slug}/${p.key} product price`).toBe(true);
+        for (const v of p.variants) expect(Object.keys(v), `${slug}/${p.key}/${v.key}`).not.toContain('priceMinor');
+      }
+    }
+  });
+
+  it('keeps the existing product prices (Noir Salt 30 мл 690 ₽, Aurum Pod 2 490 ₽)', () => {
+    const products = tenantConfigSchema.parse(load('noir-vapor')).initialProducts;
+    const price = (key: string) => products.find((p) => p.key === key)?.priceMinor;
+    expect(price('noir-salt-30')).toBe(69000);
+    expect(price('aurum-pod')).toBe(249000);
+  });
+
+  it('rejects any per-variant price in a config, null included', () => {
+    const base = load('noir-vapor');
+    const products = base.initialProducts as Array<Record<string, unknown>>;
+    const withVariantPrice = (priceMinor: unknown) => ({
+      ...base,
+      initialProducts: [{ ...products[0], variants: [{ key: 'a', flavor: 'X', stock: 1, priceMinor }] }],
+    });
+    for (const value of [74000, 0, null, '740']) {
+      const bad = tenantConfigSchema.safeParse(withVariantPrice(value));
+      expect(bad.success, String(value)).toBe(false);
+      expect(bad.error?.issues[0]?.message).toMatch(/одна на товар/);
+      expect(bad.error?.issues[0]?.path.at(-1)).toBe('priceMinor');
+    }
+    // Without the field the same variant is valid.
+    expect(
+      tenantConfigSchema.safeParse({ ...base, initialProducts: [{ ...products[0], variants: [{ key: 'a', flavor: 'X', stock: 1 }] }] }).success,
+    ).toBe(true);
+  });
+
   it('detects secret-looking keys anywhere in the config', () => {
     expect(findForbiddenKeys({ telegram: { botToken: 'x' }, a: [{ password: 1 }] })).toEqual(['$.telegram.botToken', '$.a[0].password']);
   });
@@ -88,7 +128,7 @@ describe('seed plan (idempotency)', () => {
     const first = cfg.initialProducts[0]!;
     const grown: TenantConfig = {
       ...cfg,
-      initialProducts: [{ ...first, variants: [...first.variants, { key: 'new-one', flavor: 'Новый', color: null, sku: null, priceMinor: null, stock: 1 }] }, ...cfg.initialProducts.slice(1)],
+      initialProducts: [{ ...first, variants: [...first.variants, { key: 'new-one', flavor: 'Новый', color: null, sku: null, stock: 1 }] }, ...cfg.initialProducts.slice(1)],
     };
     const delta = planSeed(grown, all);
     expect(delta.variants.map((v) => v.variant.key)).toEqual(['new-one']);

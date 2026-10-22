@@ -8,11 +8,10 @@ import type { ProductDetail, Shop, Variant } from '../api';
 import { ShopContext } from '../shop-context';
 import { QuickAddSheet } from './QuickAddSheet';
 
-const v = (id: string, flavor: string | null, color: string | null, stock: number, price: number | null = null): Variant => ({
+const v = (id: string, flavor: string | null, color: string | null, stock: number): Variant => ({
   id,
   flavor,
   color,
-  price_override_minor: price,
   stock_quantity: stock,
   is_active: true,
   sort_order: 0,
@@ -74,7 +73,7 @@ describe('QuickAddSheet', () => {
   });
 
   it('shows name, price and only purchasable flavors; nothing is pre-selected or added on open', () => {
-    const { sheet } = open(make([v('a', 'Мята', null, 3), v('b', 'Вишня', null, 0), v('c', 'Черника', null, 8, 74000)]));
+    const { sheet } = open(make([v('a', 'Мята', null, 3), v('b', 'Вишня', null, 0), v('c', 'Черника', null, 8)]));
     expect(within(sheet).getByRole('heading', { name: 'Noir Salt 30 мл' })).toBeInTheDocument();
     const group = within(sheet).getByRole('radiogroup', { name: 'Выберите вкус' });
     expect(within(group).getAllByRole('radio').map((r) => r.textContent)).toEqual([
@@ -83,23 +82,27 @@ describe('QuickAddSheet', () => {
     ]);
     expect(within(group).queryByText('Вишня')).not.toBeInTheDocument();
     for (const r of within(group).getAllByRole('radio')) expect(r).toHaveAttribute('aria-checked', 'false');
-    // Prices differ → "от" the minimum until a flavor is chosen.
-    expect(screen.getByTestId('quick-price')).toHaveTextContent(/от\s*690/);
+    // Chips carry only the name and the remaining stock — never a price (the price is shown once, in the header).
+    expect(within(group).getAllByTestId('quick-option-stock').map((s) => s.textContent)).toEqual(['ОСТАЛОСЬ: 3', 'ОСТАЛОСЬ: 8']);
+    for (const r of within(group).getAllByRole('radio')) expect(r.textContent).not.toMatch(/₽|\d\s?\d{3}/);
+    // One fixed product price in the header even before a flavor is chosen — never "от".
+    expect(screen.getByTestId('quick-price')).toHaveTextContent(/^690\s?₽$/);
+    expect(sheet).not.toHaveTextContent(/(^|\s)от\s/);
     expect(confirmBtn()).toBeDisabled();
     expect(confirmBtn()).toHaveTextContent('Выберите вкус');
     expect(lines()).toEqual([]);
   });
 
-  it('highlights the chosen flavor, shows its price and adds exactly that variant with the quantity', async () => {
-    const { onOpenChange } = open(make([v('a', 'Мята', null, 3), v('c', 'Черника', null, 8, 74000)]));
+  it('highlights the chosen flavor, keeps the product price and adds exactly that variant with the quantity', async () => {
+    const { onOpenChange } = open(make([v('a', 'Мята', null, 3), v('c', 'Черника', null, 8)]));
     await userEvent.click(screen.getByRole('radio', { name: /Черника/ }));
     expect(screen.getByRole('radio', { name: /Черника/ })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('radio', { name: /Мята/ })).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByTestId('quick-price')).toHaveTextContent('740');
+    expect(screen.getByTestId('quick-price')).toHaveTextContent(/^690\s?₽$/);
     await userEvent.click(screen.getByRole('button', { name: 'Увеличить' }));
     await userEvent.click(confirmBtn());
     expect(lines()).toEqual([
-      expect.objectContaining({ variantId: 'c', productId: 'p1', variantLabel: 'Черника', unitPriceMinor: 74000, quantity: 2 }),
+      expect.objectContaining({ variantId: 'c', productId: 'p1', variantLabel: 'Черника', unitPriceMinor: 69000, quantity: 2 }),
     ]);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
@@ -137,6 +140,60 @@ describe('QuickAddSheet', () => {
     await userEvent.click(within(colors).getByRole('radio', { name: /Чёрный/ }));
     await userEvent.click(confirmBtn());
     expect(lines()).toEqual([expect.objectContaining({ variantId: '1', variantLabel: 'Мята · Чёрный' })]);
+  });
+
+  it('one price for every flavor when variants have no own price; chips show stock only', async () => {
+    open(make([v('a', 'Мята', null, 4), v('c', 'Черника', null, 12)]));
+    const price = screen.getByTestId('quick-price');
+    expect(price).toHaveTextContent('690');
+    expect(price).not.toHaveTextContent('от');
+    expect(screen.getByRole('radio', { name: /Мята/ })).toHaveTextContent('ОСТАЛОСЬ: 4');
+    await userEvent.click(screen.getByRole('radio', { name: /Черника/ }));
+    expect(price).toHaveTextContent('690');
+    await userEvent.click(confirmBtn());
+    expect(lines()).toEqual([expect.objectContaining({ variantId: 'c', unitPriceMinor: 69000 })]);
+  });
+
+  it('Noir Salt with one price: shown once in the header, never changes with the flavor, cart gets that price', async () => {
+    const { sheet } = open(make([v('m', 'Манго-маракуйя', null, 12), v('c', 'Ледяная вишня', null, 8), v('b', 'Черника', null, 5)]));
+    const price = screen.getByTestId('quick-price');
+    // Exactly one price in the whole panel.
+    expect(within(sheet).getAllByText(/690/)).toHaveLength(1);
+    expect(price).toHaveTextContent(/^690\s?₽$/);
+    for (const name of [/Черника/, /Манго/, /вишня/]) {
+      await userEvent.click(screen.getByRole('radio', { name }));
+      expect(price).toHaveTextContent(/^690\s?₽$/);
+      expect(within(sheet).getAllByText(/690/)).toHaveLength(1);
+    }
+    expect(within(sheet).getAllByTestId('quick-option-stock').map((s) => s.textContent)).toEqual([
+      'ОСТАЛОСЬ: 12',
+      'ОСТАЛОСЬ: 8',
+      'ОСТАЛОСЬ: 5',
+    ]);
+    await userEvent.click(confirmBtn());
+    expect(lines()).toEqual([expect.objectContaining({ variantId: 'c', unitPriceMinor: 69000, quantity: 1 })]);
+  });
+
+  it('Aurum Pod with one price: switching the color keeps the price', async () => {
+    const pod = { ...make([v('g', null, 'Графит', 4), v('au', null, 'Золото', 2)]), name: 'Aurum Pod', basePriceMinor: 249000 };
+    open(pod);
+    const price = screen.getByTestId('quick-price');
+    expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
+    await userEvent.click(screen.getByRole('radio', { name: /Золото/ }));
+    expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
+    expect(screen.getByRole('radio', { name: /Золото/ })).toHaveTextContent('ОСТАЛОСЬ: 2');
+    await userEvent.click(screen.getByRole('radio', { name: /Графит/ }));
+    expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
+    await userEvent.click(confirmBtn());
+    expect(lines()).toEqual([expect.objectContaining({ variantId: 'g', unitPriceMinor: 249000 })]);
+  });
+
+  it('a flavor offered in several colors shows the stock that fits the current choice', async () => {
+    open(make([v('1', 'Мята', 'Чёрный', 2), v('2', 'Мята', 'Белый', 3), v('3', 'Вишня', 'Белый', 4)]));
+    expect(screen.getByRole('radio', { name: /Мята/ })).toHaveTextContent('ОСТАЛОСЬ: 5');
+    await userEvent.click(screen.getByRole('radio', { name: /Мята/ }));
+    const colors = screen.getByRole('radiogroup', { name: 'Цвет' });
+    expect(within(colors).getByRole('radio', { name: /Белый/ })).toHaveTextContent('ОСТАЛОСЬ: 3');
   });
 
   it('a product without options needs no empty flavor list: direct confirmation', async () => {

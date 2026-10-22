@@ -18,9 +18,20 @@ const product: ProductDetail = {
   categorySlug: 'liquids',
   images: [],
   variants: [
-    { id: 'a', flavor: 'Мята', color: null, price_override_minor: null, stock_quantity: 3, is_active: true, sort_order: 0 },
-    { id: 'b', flavor: 'Черника', color: null, price_override_minor: null, stock_quantity: 5, is_active: true, sort_order: 1 },
-    { id: 'c', flavor: 'Ледяная вишня', color: null, price_override_minor: null, stock_quantity: 0, is_active: true, sort_order: 2 },
+    { id: 'a', flavor: 'Мята', color: null, stock_quantity: 3, is_active: true, sort_order: 0 },
+    { id: 'b', flavor: 'Черника', color: null, stock_quantity: 5, is_active: true, sort_order: 1 },
+    { id: 'c', flavor: 'Ледяная вишня', color: null, stock_quantity: 0, is_active: true, sort_order: 2 },
+  ],
+};
+
+const aurumPod: ProductDetail = {
+  ...product,
+  id: 'p2',
+  name: 'Aurum Pod',
+  basePriceMinor: 249000,
+  variants: [
+    { id: 'g', flavor: null, color: 'Графит', stock_quantity: 4, is_active: true, sort_order: 0 },
+    { id: 'au', flavor: null, color: 'Золото', stock_quantity: 2, is_active: true, sort_order: 1 },
   ],
 };
 
@@ -48,6 +59,44 @@ function renderAt(entries: string[]) {
     </ShopContext.Provider>,
   );
 }
+
+describe('ProductPage: one price per product', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    cartStore._resetCache();
+    shown = product;
+  });
+
+  it('Noir Salt: the price stays 690 ₽ for every flavor, never "от"; stock follows the flavor', async () => {
+    renderAt(['/s/demo/product/p1']);
+    const price = screen.getByTestId('product-price');
+    expect(price).toHaveTextContent(/^690\s?₽$/);
+    expect(screen.getByRole('main')).not.toHaveTextContent(/(^|\s)от\s/);
+    expect(screen.getByTestId('product-stock')).toHaveTextContent('В наличии: 3 шт.');
+    await userEvent.click(screen.getByRole('radio', { name: 'Черника' }));
+    expect(price).toHaveTextContent(/^690\s?₽$/);
+    expect(screen.getByTestId('product-stock')).toHaveTextContent('В наличии: 5 шт.');
+    await userEvent.click(screen.getByRole('radio', { name: /Ледяная вишня/ }));
+    expect(price).toHaveTextContent(/^690\s?₽$/);
+    expect(screen.getByTestId('product-stock')).toHaveTextContent('Нет в наличии');
+    expect(screen.getByTestId('add-to-cart')).toBeDisabled();
+  });
+
+  it('Aurum Pod: switching the color keeps 2 490 ₽ and the cart gets that price for each color', async () => {
+    shown = aurumPod;
+    renderAt(['/s/demo/product/p2']);
+    const price = screen.getByTestId('product-price');
+    expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
+    await userEvent.click(screen.getByTestId('add-to-cart'));
+    await userEvent.click(screen.getByRole('radio', { name: 'Золото' }));
+    expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
+    await userEvent.click(screen.getByTestId('add-to-cart'));
+    expect(cartStore.getLines(shop.id).map((l) => [l.variantLabel, l.unitPriceMinor])).toEqual([
+      ['Графит', 249000],
+      ['Золото', 249000],
+    ]);
+  });
+});
 
 describe('ProductPage back button', () => {
   beforeEach(() => {

@@ -50,6 +50,33 @@ export function planSeed(config: TenantConfig, existing: ExistingSeedState): See
   };
 }
 
+type VariantConfig = TenantConfig['initialProducts'][number]['variants'][number];
+
+/**
+ * Row inserted by `tenant:seed` for a NEW variant. It never carries its own price: every variant sells at
+ * the product price (`products.base_price_minor`; `create_order` charges `coalesce(price_override_minor,
+ * base_price_minor)`). A variant added to an already seeded product therefore inherits the price the owner
+ * has set, instead of a price from the config.
+ */
+export function variantSeedRow(
+  ids: { shopId: string; productId: string; productKey: string },
+  variant: VariantConfig,
+  sortOrder: number,
+) {
+  return {
+    shop_id: ids.shopId,
+    product_id: ids.productId,
+    flavor: variant.flavor,
+    color: variant.color,
+    sku: variant.sku,
+    price_override_minor: null,
+    stock_quantity: variant.stock,
+    is_active: true,
+    sort_order: sortOrder,
+    seed_key: seedKeys.variant(ids.productKey, variant.key),
+  };
+}
+
 export interface ProductImagePlan {
   /** Indexes into the config `images` array that must be uploaded/attached, in order. */
   attach: number[];

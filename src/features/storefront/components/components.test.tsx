@@ -10,8 +10,8 @@ import { QuantityStepper } from './QuantityStepper';
 import { VariantPicker } from './VariantPicker';
 
 const variants: VariantLike[] = [
-  { id: 'a', flavor: 'Мята', color: 'Чёрный', stock_quantity: 3, is_active: true, price_override_minor: null },
-  { id: 'b', flavor: 'Вишня', color: 'Белый', stock_quantity: 0, is_active: true, price_override_minor: null },
+  { id: 'a', flavor: 'Мята', color: 'Чёрный', stock_quantity: 3, is_active: true },
+  { id: 'b', flavor: 'Вишня', color: 'Белый', stock_quantity: 0, is_active: true },
 ];
 
 function PickerHarness({ onSel }: { onSel?: (s: VariantSelection) => void }) {

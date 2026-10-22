@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { admin, cleanup, createOwner, createTestShop } from './helpers';
 
@@ -46,6 +48,48 @@ describe('tenant:seed is idempotent and preserves owner edits', () => {
       await admin.from('products').update({ name: product!.name, base_price_minor: product!.base_price_minor }).eq('id', product!.id);
       await admin.from('shops').update({ name: originalShopName }).eq('id', shop!.id);
     }
+  });
+
+  it('every local tenant config seeds variants without own price; a repeated seed keeps the same prices', async () => {
+    const slugs = readdirSync(join(process.cwd(), 'tenants'));
+    expect(slugs).toEqual(expect.arrayContaining(['noir-vapor', 'mint-lab', 'neon-district']));
+    const prices = async (slug: string) => {
+      const { data: shop } = await admin.from('shops').select('id').eq('slug', slug).single();
+      const { data } = await admin
+        .from('product_variants')
+        .select('seed_key, price_override_minor, products!inner(base_price_minor)')
+        .eq('shop_id', shop!.id)
+        .not('seed_key', 'is', null)
+        .order('seed_key');
+      return data!.map((v) => ({ key: v.seed_key, override: v.price_override_minor, price: v.price_override_minor ?? v.products.base_price_minor }));
+    };
+    for (const slug of slugs) {
+      expect(seed(slug), slug).toMatch(/Готово/);
+      const first = await prices(slug);
+      expect(first.length, slug).toBeGreaterThan(0);
+      expect(first.filter((v) => v.override !== null), slug).toEqual([]);
+      // Re-seed: nothing new, and not a single variant gets a different price.
+      expect(seed(slug), slug).toMatch(/\+0 вариантов/);
+      expect(await prices(slug), slug).toEqual(first);
+    }
+  });
+
+  it('seeded Noir Salt flavors and Aurum Pod colors all sell at their product price', async () => {
+    const { data: shop } = await admin.from('shops').select('id').eq('slug', 'noir-vapor').single();
+    const { data: salt } = await admin.from('products').select('id, base_price_minor').eq('shop_id', shop!.id).eq('seed_key', 'prod:noir-salt-30').single();
+    expect(salt!.base_price_minor).toBe(69000);
+    const { data: variants } = await admin.from('product_variants').select('flavor, price_override_minor').eq('product_id', salt!.id).order('sort_order');
+    // Every flavor of Noir Salt (Черника included, which used to have its own price) sells at 690 ₽.
+    expect(variants!.map((v) => v.flavor)).toEqual(expect.arrayContaining(['Манго-маракуйя', 'Ледяная вишня', 'Черника']));
+    expect(variants!.every((v) => v.price_override_minor === null)).toBe(true);
+    const { data: pod } = await admin
+      .from('products')
+      .select('base_price_minor, product_variants(color, price_override_minor)')
+      .eq('shop_id', shop!.id)
+      .eq('seed_key', 'prod:aurum-pod')
+      .single();
+    expect(pod!.base_price_minor).toBe(249000);
+    expect(pod!.product_variants.map((v) => v.price_override_minor)).toEqual([null, null, null]);
   });
 
   it('resumes images after an interrupted seed: the missing photo is uploaded and attached once', async () => {

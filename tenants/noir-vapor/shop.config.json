@@ -52,7 +52,7 @@
         { "key": "mango", "flavor": "Манго-маракуйя", "stock": 12 },
         { "key": "cherry", "flavor": "Ледяная вишня", "stock": 8 },
         { "key": "tobacco", "flavor": "Табак-ваниль", "stock": 0 },
-        { "key": "blueberry", "flavor": "Черника", "priceMinor": 74000, "stock": 5 }
+        { "key": "blueberry", "flavor": "Черника", "stock": 5 }
       ]
     },
     {
@@ -72,13 +72,13 @@
       "key": "aurum-pod",
       "category": "pods",
       "name": "Aurum Pod",
-      "description": "Компактная pod-система. Цена зависит от цвета корпуса. Демонстрационный товар.",
+      "description": "Компактная pod-система. Одна цена для всех цветов корпуса. Демонстрационный товар.",
       "priceMinor": 249000,
       "featured": true,
       "images": ["assets/aurum-pod-1.png", "assets/aurum-pod-2.png"],
       "variants": [
         { "key": "graphite", "color": "Графит", "stock": 4 },
-        { "key": "gold", "color": "Золото", "priceMinor": 269000, "stock": 2 },
+        { "key": "gold", "color": "Золото", "stock": 2 },
         { "key": "bordeaux", "color": "Бордо", "stock": 0 }
       ]
     },

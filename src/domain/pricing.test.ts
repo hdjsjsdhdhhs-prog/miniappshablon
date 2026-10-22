@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { formatMoney, minorToInput, parseMoneyInput } from './money';
-import { effectivePriceMinor, lineTotalMinor, orderTotalMinor, priceRange, totalQuantity } from './pricing';
+import { lineTotalMinor, orderTotalMinor, productPriceMinor, totalQuantity } from './pricing';
 
 describe('pricing', () => {
-  it('uses price_override_minor when present, otherwise the base price', () => {
-    expect(effectivePriceMinor(69000, { price_override_minor: null })).toBe(69000);
-    expect(effectivePriceMinor(69000, { price_override_minor: 74000 })).toBe(74000);
-    expect(effectivePriceMinor(69000, { price_override_minor: 0 })).toBe(0);
-    expect(effectivePriceMinor(69000, null)).toBe(69000);
+  it('one price per product: the product price, whatever variants it has', () => {
+    expect(productPriceMinor({ basePriceMinor: 69000 })).toBe(69000);
+    const noirSalt = { basePriceMinor: 69000, variants: [{ flavor: 'Манго' }, { flavor: 'Черника' }, { flavor: 'Ледяная вишня' }] };
+    expect(productPriceMinor(noirSalt)).toBe(69000);
+    const aurumPod = { basePriceMinor: 249000, variants: [{ color: 'Графит' }, { color: 'Золото' }] };
+    expect(productPriceMinor(aurumPod)).toBe(249000);
   });
 
   it('computes line and order totals in integer minor units', () => {
@@ -19,11 +20,6 @@ describe('pricing', () => {
     expect(orderTotalMinor(lines)).toBe(143970);
     expect(totalQuantity(lines)).toBe(5);
     expect(orderTotalMinor([])).toBe(0);
-  });
-
-  it('reports price range across variants', () => {
-    expect(priceRange(100, [])).toEqual({ min: 100, max: 100 });
-    expect(priceRange(100, [{ price_override_minor: null }, { price_override_minor: 150 }, { price_override_minor: 90 }])).toEqual({ min: 90, max: 150 });
   });
 });
 
