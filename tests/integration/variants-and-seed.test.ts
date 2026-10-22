@@ -47,4 +47,54 @@ describe('tenant:seed is idempotent and preserves owner edits', () => {
       await admin.from('shops').update({ name: originalShopName }).eq('id', shop!.id);
     }
   });
+
+  it('resumes images after an interrupted seed: the missing photo is uploaded and attached once', async () => {
+    seed('mint-lab');
+    const { data: shop } = await admin.from('shops').select('id').eq('slug', 'mint-lab').single();
+    const { data: product } = await admin
+      .from('products')
+      .select('id, created_at, updated_at')
+      .eq('shop_id', shop!.id)
+      .eq('seed_key', 'prod:lab-one')
+      .single();
+    // The seed only attaches images to products the owner has never edited.
+    expect(product!.created_at).toBe(product!.updated_at);
+    const images = async () =>
+      (await admin.from('product_images').select('id, seed_key, storage_path, is_primary, sort_order').eq('product_id', product!.id).order('sort_order'))
+        .data!;
+    const original = await images();
+    expect(original.map((i) => i.seed_key)).toEqual(['img:lab-one/0', 'img:lab-one/1']);
+    const [first, second] = original as [(typeof original)[0], (typeof original)[0]];
+    const { count: sharing } = await admin
+      .from('product_images')
+      .select('id', { count: 'exact', head: true })
+      .eq('storage_path', second.storage_path);
+    expect(sharing).toBe(1); // the object below belongs to this image only
+
+    // Simulate the hosted failure: image 0 attached, image 1 neither attached nor uploaded.
+    expect((await admin.from('product_images').delete().eq('id', second.id)).error).toBeNull();
+    expect((await admin.storage.from('shop-media').remove([second.storage_path])).error).toBeNull();
+    const objectExists = async () => {
+      const slash = second.storage_path.lastIndexOf('/');
+      const { data } = await admin.storage
+        .from('shop-media')
+        .list(second.storage_path.slice(0, slash), { search: second.storage_path.slice(slash + 1) });
+      return (data ?? []).some((o) => o.name === second.storage_path.slice(slash + 1));
+    };
+    expect(await objectExists()).toBe(false);
+
+    const out = seed('mint-lab');
+    expect(out).toMatch(/\+0 товаров, \+0 вариантов, \+1 фото/);
+    const resumed = await images();
+    expect(resumed.map((i) => [i.seed_key, i.storage_path, i.is_primary, i.sort_order])).toEqual([
+      ['img:lab-one/0', first.storage_path, true, 0],
+      ['img:lab-one/1', second.storage_path, false, 1],
+    ]);
+    expect(resumed[0]!.id).toBe(first.id); // the existing image was not re-created
+    expect(await objectExists()).toBe(true);
+
+    // A further re-seed is a no-op: no duplicate rows, nothing new attached.
+    expect(seed('mint-lab')).toMatch(/\+0 товаров, \+0 вариантов, \+0 фото/);
+    expect((await images()).map((i) => i.id)).toEqual(resumed.map((i) => i.id));
+  });
 });

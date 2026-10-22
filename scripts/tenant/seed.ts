@@ -3,25 +3,64 @@
 //  * the shop row is created once (in preview mode); afterwards its fields belong to the owner;
 //  * categories/products/variants are inserted only when their seed_key does not exist yet;
 //  * existing rows are never updated, so owner edits survive re-seeding;
-//  * images are uploaded to deterministic content-addressed paths (re-upload is a no-op).
+//  * images are uploaded to deterministic content-addressed paths; an object that already exists
+//    is not uploaded again, and each seed image is attached by its own seed_key, so a seed that was
+//    interrupted halfway through a product's photos resumes without duplicates.
 import { extname } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { seedKeys } from '../../src/domain/tenant-config.ts';
-import { planSeed } from '../../src/domain/seed-plan.ts';
+import { planProductImages, planSeed } from '../../src/domain/seed-plan.ts';
 import { log, parseArgs, requireString, run } from '../lib/cli.ts';
 import { serviceClient } from '../lib/supabase-env.ts';
 import { loadAsset, validateTenant } from '../lib/tenant-fs.ts';
 
 type Client = ReturnType<typeof serviceClient>;
 
+const BUCKET = 'shop-media';
+/** Bounded retry for transient network failures only (e.g. undici "fetch failed"). */
+const RETRY_DELAYS_MS = [1_000, 3_000];
+const TRANSIENT_RE = /fetch failed|network|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up/i;
+
+async function withRetry<T>(what: string, attempt: () => Promise<{ value: T } | { error: string }>): Promise<T> {
+  for (let i = 0; ; i += 1) {
+    let res: { value: T } | { error: string };
+    try {
+      res = await attempt();
+    } catch (err) {
+      res = { error: err instanceof Error ? err.message : String(err) };
+    }
+    if ('value' in res) return res.value;
+    const delay = RETRY_DELAYS_MS[i];
+    if (delay === undefined || !TRANSIENT_RE.test(res.error)) {
+      throw new Error(`${what} не удалась${i > 0 ? ` после ${i + 1} попыток` : ''}: ${res.error}`);
+    }
+    log.warn(`${what}: ${res.error}; повтор через ${delay / 1000} с`);
+    await sleep(delay);
+  }
+}
+
+async function objectExists(db: Client, path: string): Promise<boolean> {
+  const slash = path.lastIndexOf('/');
+  const dir = path.slice(0, slash);
+  const name = path.slice(slash + 1);
+  return withRetry<boolean>(`Проверка ${path}`, async () => {
+    const { data, error } = await db.storage.from(BUCKET).list(dir, { search: name, limit: 100 });
+    return error ? { error: error.message } : { value: (data ?? []).some((o) => o.name === name) };
+  });
+}
+
 async function uploadAsset(db: Client, slug: string, shopId: string, relPath: string): Promise<string> {
   const asset = loadAsset(slug, relPath);
+  // Content-addressed: an existing object at this path already holds exactly these bytes.
   const path = `${shopId}/seed/${asset.sha256.slice(0, 32)}${extname(relPath).toLowerCase()}`;
-  const { error } = await db.storage
-    .from('shop-media')
-    .upload(path, asset.buffer, { contentType: asset.info.mime, upsert: false, cacheControl: '31536000' });
-  if (error && !/exists|duplicate/i.test(error.message)) {
-    throw new Error(`Загрузка ${relPath} не удалась: ${error.message}`);
-  }
+  if (await objectExists(db, path)) return path;
+  await withRetry<void>(`Загрузка ${relPath}`, async () => {
+    const { error } = await db.storage
+      .from(BUCKET)
+      .upload(path, asset.buffer, { contentType: asset.info.mime, upsert: false, cacheControl: '31536000' });
+    // "exists": a previous attempt reached the server although its response was lost.
+    return error && !/exists|duplicate/i.test(error.message) ? { error: error.message } : { value: undefined };
+  });
   return path;
 }
 
@@ -121,6 +160,7 @@ run(async () => {
   // ---- products + images ---------------------------------------------------
   const productIdByKey = new Map<string, string>();
   const untouchedProducts = new Set<string>();
+  let attachedImages = 0;
   for (const r of prodRows) {
     if (!r.seed_key) continue;
     productIdByKey.set(r.seed_key, r.id);
@@ -158,15 +198,25 @@ run(async () => {
       }
     }
 
-    // Images are attached only to products that the owner has not edited yet (new or untouched),
-    // which also recovers from an interrupted previous seed without resurrecting deleted photos.
+    // Images are attached only to products that the owner has not edited yet (new or untouched).
+    // Each config image is checked by its own seed_key: a previous seed interrupted after image k
+    // is resumed from k + 1, already attached images are never duplicated, and products whose
+    // photos the owner manages (own images, gaps) are left alone. See planProductImages.
     const productId = productIdByKey.get(key);
     if (!productId || !untouchedProducts.has(key) || p.images.length === 0) continue;
-    const { count } = await db.from('product_images').select('id', { count: 'exact', head: true }).eq('product_id', productId);
-    if ((count ?? 0) > 0) continue;
-    for (const [i, rel] of p.images.entries()) {
+    const existingImages = must(
+      await db.from('product_images').select('seed_key').eq('product_id', productId),
+      `Фото ${p.key}`,
+    );
+    const imagePlan = planProductImages(p.key, p.images.length, existingImages.map((r) => ({ seedKey: r.seed_key })));
+    if (imagePlan.status === 'owner_managed') {
+      log.info(`${p.key}: фото управляются владельцем, seed их не меняет`);
+      continue;
+    }
+    for (const i of imagePlan.attach) {
+      const rel = p.images[i]!;
       const storage_path = await uploadAsset(db, slug, shopId, rel);
-      must(
+      const attached = must(
         await db
           .from('product_images')
           .upsert(
@@ -176,6 +226,7 @@ run(async () => {
           .select('id'),
         `Фото ${rel}`,
       );
+      attachedImages += attached.length;
     }
   }
 
@@ -224,7 +275,8 @@ run(async () => {
   }
 
   log.ok(
-    `Готово: +${plan.categories.length} категорий, +${plan.products.length} товаров, +${createdVariants} вариантов; ` +
+    `Готово: +${plan.categories.length} категорий, +${plan.products.length} товаров, +${createdVariants} вариантов, ` +
+      `+${attachedImages} фото; ` +
       `без изменений: ${plan.skipped.categories} кат., ${plan.skipped.products} тов., ${plan.skipped.variants} вар.`,
   );
   if (!existingShop) log.info(`Назначьте владельца: pnpm owner:add --slug ${slug} --email owner@example.com`);
