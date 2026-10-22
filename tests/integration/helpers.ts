@@ -175,8 +175,13 @@ function runLocalSql(sql: string): { ok: true; out: string } | { ok: false; out:
 export function localSql<T = Record<string, unknown>>(sql: string): T[] {
   const res = runLocalSql(sql);
   if (!res.ok) throw new Error(`local SQL failed: ${res.out}`);
-  const json = res.out.slice(res.out.indexOf('{'), res.out.lastIndexOf('}') + 1);
-  return (JSON.parse(json) as { rows: T[] }).rows;
+  // `supabase db query -o json` prints a bare array of rows normally, but wraps it as
+  // `{ boundary, rows, warning }` when it detects an AI agent environment (e.g. AI_AGENT is set).
+  // Accept both so the tests behave the same locally, under an agent and in CI.
+  const start = res.out.search(/[[{]/);
+  const end = Math.max(res.out.lastIndexOf(']'), res.out.lastIndexOf('}'));
+  const parsed = JSON.parse(res.out.slice(start, end + 1)) as T[] | { rows: T[] };
+  return Array.isArray(parsed) ? parsed : parsed.rows;
 }
 
 /**
