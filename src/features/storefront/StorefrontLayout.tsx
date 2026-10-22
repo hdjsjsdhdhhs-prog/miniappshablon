@@ -1,4 +1,4 @@
-import { Outlet, useParams } from 'react-router';
+import { Outlet, ScrollRestoration, useParams } from 'react-router';
 import { EmptyState, ErrorState, PageSpinner } from '@/components/state-views';
 import { DARK_PREMIUM_THEME } from '@/domain/theme';
 import { useCart } from '@/features/cart/useCart';
@@ -28,6 +28,8 @@ function ShopFrame({ shop }: { shop: Shop }) {
         </div>
       )}
       <Outlet />
+      {/* New pages open at the top; going back (product → catalog) restores the previous scroll position. */}
+      <ScrollRestoration />
       <BottomNav slug={shop.slug} cartCount={cart.count} />
       <AgeGate shopId={shop.id} age={shop.ageRestriction} legalNotice={shop.legalNotice} />
     </div>

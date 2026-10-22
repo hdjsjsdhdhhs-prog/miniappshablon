@@ -1,6 +1,6 @@
-import { CheckCircleIcon, ShoppingCartIcon } from '@phosphor-icons/react';
+import { ArrowLeftIcon, CheckCircleIcon, ShoppingCartIcon } from '@phosphor-icons/react';
 import { useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { EmptyState, ErrorState, PageSpinner, StaleDataNotice } from '@/components/state-views';
 import { Button } from '@/components/ui/button';
@@ -28,6 +28,7 @@ export function ProductPage() {
   const product = useProduct(shop.id, productId);
   const cart = useCart(shop.id);
   const navigate = useNavigate();
+  const location = useLocation();
   const [selection, setSelection] = useState<VariantSelection | null>(null);
   const [qty, setQty] = useState(1);
 
@@ -83,8 +84,26 @@ export function ProductPage() {
     });
   };
 
+  const back = () => {
+    // A previous in-app entry (usually the catalog) keeps its category/search in the URL and its scroll
+    // position (ScrollRestoration). A direct link has no such entry → open the shop catalog instead.
+    if (location.key !== 'default') navigate(-1);
+    else navigate(`/s/${shop.slug}/`, { replace: true });
+  };
+
   return (
     <main className="pb-6">
+      <div className="px-4 pt-3 pb-3">
+        <button
+          type="button"
+          onClick={back}
+          className="glass-panel glass-transition glass-press inline-flex h-10 items-center gap-1.5 rounded-full pr-4 pl-3 text-sm font-medium hover:border-(--glass-accent-edge)"
+          data-testid="product-back"
+        >
+          <ArrowLeftIcon aria-hidden weight="bold" className="size-4" />
+          Назад
+        </button>
+      </div>
       {product.isError && <StaleDataNotice onRetry={() => void product.refetch()} />}
       <Gallery images={p.images} name={p.name} />
       <div className="space-y-5 px-4 pt-4">
