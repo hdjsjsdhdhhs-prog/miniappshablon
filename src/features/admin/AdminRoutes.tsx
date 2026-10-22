@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router';
 import { PageSpinner } from '@/components/state-views';
 import { useSession } from './auth';
@@ -19,9 +20,18 @@ function RequireAuth() {
   return <Outlet />;
 }
 
+const ADMIN_THEME_CLASSES = ['admin-theme', 'dark'];
+
 export default function AdminRoutes() {
+  // Portalled UI (Radix dialogs/selects) and the global Toaster render outside this wrapper: scope the
+  // admin tokens on <body> too while the admin is mounted.
+  useEffect(() => {
+    document.body.classList.add(...ADMIN_THEME_CLASSES);
+    return () => document.body.classList.remove(...ADMIN_THEME_CLASSES);
+  }, []);
+
   return (
-    <div className="admin-theme min-h-dvh bg-background text-foreground">
+    <div className="admin-theme dark min-h-dvh bg-background text-foreground">
       <Routes>
         <Route index element={<LoginPage />} />
         <Route element={<RequireAuth />}>

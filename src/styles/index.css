@@ -38,28 +38,33 @@
   --bottom-nav-gap: 0.625rem;
 }
 
-/* Admin always uses a neutral, high-contrast light theme independent from tenants. */
+/*
+ * Admin always uses one neutral dark (graphite) theme, independent from tenants: it is not stored per shop,
+ * so every existing and every new shop gets it. AdminRoutes also puts `.admin-theme.dark` on <body>, so
+ * portalled dialogs / selects / toasts use the same tokens.
+ */
 .admin-theme {
-  --background: #f7f7f8;
-  --foreground: #0f0f12;
-  --card: #ffffff;
-  --card-foreground: #0f0f12;
-  --popover: #ffffff;
-  --popover-foreground: #0f0f12;
-  --primary: #18181b;
-  --primary-foreground: #ffffff;
-  --secondary: #efeff1;
-  --secondary-foreground: #18181b;
-  --muted: #f0f0f2;
-  --muted-foreground: #52525b;
-  --accent: #efeff1;
-  --accent-foreground: #18181b;
-  --destructive: #dc2626;
+  color-scheme: dark;
+  --background: #0f1013;
+  --foreground: #ececef;
+  --card: #17181c;
+  --card-foreground: #ececef;
+  --popover: #1c1d22;
+  --popover-foreground: #ececef;
+  --primary: #e6e6ea;
+  --primary-foreground: #151518;
+  --secondary: #24252b;
+  --secondary-foreground: #ececef;
+  --muted: #1f2025;
+  --muted-foreground: #a1a1ab;
+  --accent: #26272d;
+  --accent-foreground: #ececef;
+  --destructive: #ef4444;
   --destructive-foreground: #ffffff;
-  --success: #15803d;
-  --border: #e2e2e6;
-  --input: #d4d4d8;
-  --ring: #18181b;
+  --success: #4ade80;
+  --border: #2a2b31;
+  --input: #3a3b43;
+  --ring: #8b9cf7;
   --radius: 0.625rem;
 }
 
