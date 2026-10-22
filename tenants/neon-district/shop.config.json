@@ -1,0 +1,123 @@
+{
+  "slug": "neon-district",
+  "name": "Neon District",
+  "description": "Neon District — pod-системы, картриджи, жидкости и аксессуары для совершеннолетних покупателей. Заказ оформляется в Telegram и подтверждается магазином; оплата и получение согласуются отдельно.",
+  "logo": "assets/logo.png",
+  "cover": "assets/cover.png",
+  "theme": {
+    "mode": "dark",
+    "radius": 12,
+    "background": "#090610",
+    "foreground": "#f5f3ff",
+    "card": "#151020",
+    "cardForeground": "#f5f3ff",
+    "primary": "#a855f7",
+    "primaryForeground": "#090610",
+    "accent": "#2a1b3d",
+    "accentForeground": "#f5f3ff",
+    "muted": "#21152f",
+    "mutedForeground": "#b8afc9",
+    "border": "#372747"
+  },
+  "currency": "RUB",
+  "demo": false,
+  "ageRestriction": 18,
+  "legalNotice": "Продажа никотинсодержащей продукции лицам младше 18 лет запрещена. Заказ подтверждается магазином; оплата и получение согласуются отдельно.",
+  "shopInformation": {
+    "address": "",
+    "hours": "",
+    "delivery": "",
+    "payment": "",
+    "phone": "",
+    "telegram": "",
+    "telegramChannelUrl": "",
+    "telegramChannelLabel": ""
+  },
+  "settings": { "showFeatured": true, "showInfo": true, "showCategories": true },
+  "telegram": { "botUsername": null, "miniAppShortName": null },
+  "initialCategories": [
+    { "key": "pods", "name": "Pod-системы", "slug": "pods", "image": "assets/category-pods.png" },
+    { "key": "carts", "name": "Картриджи", "slug": "carts", "image": "assets/category-carts.png" },
+    { "key": "liquids", "name": "Жидкости", "slug": "liquids", "image": "assets/category-liquids.png" },
+    { "key": "accessories", "name": "Аксессуары", "slug": "accessories", "image": "assets/category-accessories.png" }
+  ],
+  "initialProducts": [
+    {
+      "key": "neon-core",
+      "category": "pods",
+      "name": "Neon Core",
+      "description": "Черновая карточка pod-системы. Модель, характеристики, комплектация и фото будут добавлены после подтверждения владельцем. Изображение — временная иллюстрация, не фото товара.",
+      "priceMinor": 250000,
+      "featured": true,
+      "images": ["assets/neon-core-1.png"],
+      "variants": [
+        { "key": "black", "color": "Чёрный", "stock": 0 },
+        { "key": "violet", "color": "Фиолетовый", "stock": 0 }
+      ]
+    },
+    {
+      "key": "district-pod",
+      "category": "pods",
+      "name": "District Pod",
+      "description": "Черновая карточка pod-системы. Модель, характеристики, комплектация и фото будут добавлены после подтверждения владельцем. Изображение — временная иллюстрация, не фото товара.",
+      "priceMinor": 200000,
+      "featured": true,
+      "images": ["assets/district-pod-1.png"],
+      "variants": [
+        { "key": "graphite", "color": "Графит", "stock": 0 },
+        { "key": "ultraviolet", "color": "Ультрафиолет", "stock": 0 }
+      ]
+    },
+    {
+      "key": "neon-core-cart",
+      "category": "carts",
+      "name": "Картридж Neon Core",
+      "description": "Черновая карточка сменного картриджа. Совместимость, сопротивление и количество в упаковке уточняются владельцем. Изображение — временная иллюстрация, не фото товара.",
+      "priceMinor": 40000,
+      "images": ["assets/neon-core-cart-1.png"],
+      "variants": [{ "key": "default", "stock": 0 }]
+    },
+    {
+      "key": "district-pod-cart",
+      "category": "carts",
+      "name": "Картридж District Pod",
+      "description": "Черновая карточка сменного картриджа. Совместимость, сопротивление и количество в упаковке уточняются владельцем. Изображение — временная иллюстрация, не фото товара.",
+      "priceMinor": 35000,
+      "images": ["assets/district-pod-cart-1.png"],
+      "variants": [{ "key": "default", "stock": 0 }]
+    },
+    {
+      "key": "violet-series",
+      "category": "liquids",
+      "name": "Violet Series",
+      "description": "Черновая карточка линейки жидкостей. Объём, вкусы, состав и крепость указываются только по данным владельца. Изображение — временная иллюстрация, не фото товара.",
+      "priceMinor": 60000,
+      "images": ["assets/violet-series-1.png"],
+      "variants": [
+        { "key": "flavor-1", "flavor": "Вкус 1 (уточняется)", "stock": 0 },
+        { "key": "flavor-2", "flavor": "Вкус 2 (уточняется)", "stock": 0 }
+      ]
+    },
+    {
+      "key": "ultraviolet-line",
+      "category": "liquids",
+      "name": "Ultraviolet Line",
+      "description": "Черновая карточка линейки жидкостей. Объём, вкусы, состав и крепость указываются только по данным владельца. Изображение — временная иллюстрация, не фото товара.",
+      "priceMinor": 65000,
+      "images": ["assets/ultraviolet-line-1.png"],
+      "variants": [
+        { "key": "flavor-1", "flavor": "Вкус 1 (уточняется)", "stock": 0 },
+        { "key": "flavor-2", "flavor": "Вкус 2 (уточняется)", "stock": 0 }
+      ]
+    },
+    {
+      "key": "district-cable",
+      "category": "accessories",
+      "name": "Кабель зарядки District",
+      "description": "Черновая карточка зарядного кабеля. Разъём, длина и совместимость уточняются владельцем. Изображение — временная иллюстрация, не фото товара.",
+      "priceMinor": 50000,
+      "images": ["assets/district-cable-1.png"],
+      "variants": [{ "key": "default", "stock": 0 }]
+    }
+  ]
+}
