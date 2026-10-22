@@ -15,6 +15,11 @@ export type Db = SupabaseClient<Database>;
 export const TEST_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? '123456789:LOCAL_TEST_TOKEN_NOT_A_SECRET';
 
 export const env = resolveSupabaseEnv();
+// Hard stop before any client is created: these suites write and delete data and must never reach a
+// hosted project (see also vitest.integration.config.ts).
+if (!env.isLocal || !/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(env.url)) {
+  throw new Error(`Integration tests run only against local Supabase, got ${env.url}`);
+}
 export const admin = serviceClient();
 
 export function anon(): Db {
