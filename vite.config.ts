@@ -16,7 +16,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.test.{ts,tsx}', 'supabase/functions/_shared/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'supabase/functions/_shared/**/*.test.ts', 'scripts/**/*.test.ts'],
     setupFiles: ['./src/test/setup.ts'],
     // Unit tests never call the network; these are inert placeholders for src/lib/env.ts.
     env: { VITE_SUPABASE_URL: 'http://127.0.0.1:54321', VITE_SUPABASE_ANON_KEY: 'unit-test-anon-key' },

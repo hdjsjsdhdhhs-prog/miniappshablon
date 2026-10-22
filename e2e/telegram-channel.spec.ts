@@ -9,8 +9,13 @@ const originals: Record<string, unknown> = {};
 
 async function openShop(page: Page, slug: string, path = '/') {
   await page.goto(`/s/${slug}${path}`);
-  const gate = page.getByRole('button', { name: /Да, мне есть 18/ });
-  if (await gate.isVisible({ timeout: 5000 }).catch(() => false)) await gate.click();
+  // The shop frame (bottom nav) and the age gate mount in the same render once the shop has loaded, and the
+  // gate decides synchronously (localStorage) whether to open. So once the nav is visible the dialog is
+  // either in the DOM or will not appear for this page load.
+  await expect(page.getByTestId('bottom-nav')).toBeVisible();
+  const ageDialog = page.getByRole('dialog', { name: /Вам исполнилось/ });
+  if ((await ageDialog.count()) > 0) await ageDialog.getByRole('button', { name: /Да, мне есть 18/ }).click();
+  await expect(ageDialog).toHaveCount(0);
 }
 
 test.beforeAll(async () => {
