@@ -303,11 +303,47 @@ isOneToOne: true
 "is_valid_theme":
 { Args: { "p": Json }; Returns: boolean
                            },
+"notify_claim":
+{ Args: { "p_limit": number,"p_order_id": string,"p_shop_id": string }; Returns: Json
+                           },
+"notify_complete":
+{ Args: { "p_error": string,"p_message_id": number,"p_notification_id": number,"p_ok": boolean }; Returns: undefined
+                           },
+"notify_delete_settings":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
+                           },
+"notify_get_credentials":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
+                           },
+"notify_get_settings":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
+                           },
+"notify_record_check":
+{ Args: { "p_actor": string,"p_error": string,"p_ok": boolean,"p_shop_id": string }; Returns: Json
+                           },
+"notify_requeue_failed":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: number
+                           },
+"notify_save_settings":
+{ Args: { "p_actor": string,"p_bot_token": string,"p_chat_id": string,"p_meta": Json,"p_shop_id": string }; Returns: Json
+                           },
+"notify_set_enabled":
+{ Args: { "p_actor": string,"p_enabled": boolean,"p_shop_id": string }; Returns: Json
+                           },
 "order_status_transition_allowed":
 { Args: { "p_from": string,"p_to": string }; Returns: boolean
                            },
 "order_to_json":
 { Args: { "p_order_id": string }; Returns: Json
+                           },
+"platform_find_user":
+{ Args: { "p_actor": string,"p_email": string }; Returns: Json
+                           },
+"platform_list_shops":
+{ Args: { "p_actor": string }; Returns: Json
+                           },
+"platform_transfer_shop":
+{ Args: { "p_actor": string,"p_new_owner": string,"p_shop_id": string }; Returns: Json
                            },
 "product_is_public":
 { Args: { "p_product_id": string }; Returns: boolean
