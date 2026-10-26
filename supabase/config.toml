@@ -391,12 +391,23 @@ deno_version = 2
 TELEGRAM_BOT_TOKEN = "env(TELEGRAM_BOT_TOKEN)"
 TELEGRAM_INITDATA_MAX_AGE_SEC = "env(TELEGRAM_INITDATA_MAX_AGE_SEC)"
 ALLOWED_ORIGINS = "env(ALLOWED_ORIGINS)"
+# Bot API base for order notifications. Locally scripts/supabase-start.ts points it at the mock Bot API
+# (scripts/telegram-mock.ts), so no real Telegram message can be sent from a local stack. Unset = api.telegram.org.
+TELEGRAM_API_BASE = "env(TELEGRAM_API_BASE)"
 
 # Buyer identity comes from Telegram initData verified inside the function, not from a Supabase JWT.
 [functions.checkout]
 verify_jwt = false
 
 [functions.my-orders]
+verify_jwt = false
+
+# Admin functions verify the caller's Supabase Auth access token themselves (auth.getUser) and pass only
+# that verified user id to service-role RPCs, which re-check shop ownership / platform admin rights.
+[functions.notification-settings]
+verify_jwt = false
+
+[functions.platform-admin]
 verify_jwt = false
 
 # [edge_runtime.secrets]

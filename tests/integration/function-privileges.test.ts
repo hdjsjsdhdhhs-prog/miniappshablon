@@ -44,7 +44,39 @@ const EXPECTED: Record<string, Roles> = {
   'public.create_order(text,bigint,jsonb,jsonb,uuid,text,text,text,text,text,bigint)': r(false, false, true),
   'public.get_customer_orders(text,bigint,uuid,integer)': r(false, false, true),
   'public.set_updated_at()': r(false, false, false),
+  // Telegram notifications and platform administration (20261025090000): Edge Functions only. The function
+  // verifies the caller's JWT and passes the verified user id; the SQL re-checks that actor's rights.
+  'public.notify_get_settings(uuid,uuid)': r(false, false, true),
+  'public.notify_save_settings(uuid,uuid,text,text,jsonb)': r(false, false, true),
+  'public.notify_get_credentials(uuid,uuid)': r(false, false, true),
+  'public.notify_record_check(uuid,uuid,boolean,text)': r(false, false, true),
+  'public.notify_set_enabled(uuid,uuid,boolean)': r(false, false, true),
+  'public.notify_delete_settings(uuid,uuid)': r(false, false, true),
+  'public.notify_claim(uuid,uuid,integer)': r(false, false, true),
+  'public.notify_complete(bigint,boolean,bigint,text)': r(false, false, true),
+  'public.notify_requeue_failed(uuid,uuid)': r(false, false, true),
+  'public.platform_list_shops(uuid)': r(false, false, true),
+  'public.platform_find_user(uuid,text)': r(false, false, true),
+  'public.platform_transfer_shop(uuid,uuid,uuid)': r(false, false, true),
 };
+
+/** Functions that existed on the hosted project when the hardening migration was written (17.10.2026). */
+const HARDENED_FUNCTIONS = [
+  'public.is_supported_currency(text)',
+  'public.is_valid_theme(jsonb)',
+  'public.set_updated_at()',
+  'public.is_platform_admin()',
+  'public.is_shop_member(uuid)',
+  'public.shop_is_public(uuid)',
+  'public.product_is_public(uuid)',
+  'public.storage_object_shop_id(text)',
+  'public.order_status_transition_allowed(text,text)',
+  'public.order_to_json(uuid)',
+  'public.create_order(text,bigint,jsonb,jsonb,uuid,text,text,text,text,text,bigint)',
+  'public.get_customer_orders(text,bigint,uuid,integer)',
+  'public.admin_set_order_status(uuid,text)',
+  'public.admin_set_variant_stock(uuid,integer)',
+];
 
 /** jsonb: { "<schema>.<name>(<argtypes>)": { anon, authenticated, service_role, public } } for public functions. */
 const MATRIX_SQL = `(
@@ -166,7 +198,7 @@ describe('EXECUTE privileges per PostgreSQL role', () => {
       alter default privileges for role postgres in schema public grant all on tables to anon, authenticated, service_role;
       alter default privileges for role postgres in schema public grant all on sequences to anon, authenticated, service_role;
       alter default privileges for role postgres grant execute on functions to public;
-      grant all on all functions in schema public to anon, authenticated, service_role;
+      grant all on function ${HARDENED_FUNCTIONS.join(', ')} to anon, authenticated, service_role;
       grant execute on function public.is_supported_currency(text), public.is_valid_theme(jsonb), public.set_updated_at(),
         public.order_status_transition_allowed(text, text) to public;
       result := jsonb_build_object('before', jsonb_build_object(

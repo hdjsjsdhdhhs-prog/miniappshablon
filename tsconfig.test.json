@@ -2,7 +2,8 @@
   "extends": "./tsconfig.app.json",
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
-    "types": ["vite/client", "node", "@testing-library/jest-dom/vitest"]
+    "types": ["vite/client", "node", "@testing-library/jest-dom/vitest"],
+    "allowImportingTsExtensions": true
   },
   "include": [
     "src/**/*.test.ts",
@@ -10,7 +11,13 @@
     "src/test",
     "src/vite-env.d.ts",
     "supabase/functions/_shared/telegram-init-data.ts",
-    "supabase/functions/_shared/telegram-init-data.test.ts"
+    "supabase/functions/_shared/telegram-init-data.test.ts",
+    "supabase/functions/_shared/telegram-bot-api.ts",
+    "supabase/functions/_shared/telegram-bot-api.test.ts",
+    "supabase/functions/_shared/order-notification.ts",
+    "supabase/functions/_shared/order-notification.test.ts",
+    "supabase/functions/_shared/notify-dispatch.ts",
+    "supabase/functions/_shared/notify-dispatch.test.ts"
   ],
   "exclude": []
 }

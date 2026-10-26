@@ -27,3 +27,5 @@ jobs:
       - run: pnpm exec supabase db push --password "$SUPABASE_DB_PASSWORD"
       - run: pnpm exec supabase functions deploy checkout --project-ref "$SUPABASE_PROJECT_REF"
       - run: pnpm exec supabase functions deploy my-orders --project-ref "$SUPABASE_PROJECT_REF"
+      - run: pnpm exec supabase functions deploy notification-settings --project-ref "$SUPABASE_PROJECT_REF"
+      - run: pnpm exec supabase functions deploy platform-admin --project-ref "$SUPABASE_PROJECT_REF"

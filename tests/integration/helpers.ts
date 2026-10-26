@@ -100,18 +100,85 @@ export async function createOwner(shopId: string): Promise<{ client: Db; userId:
   return { client, userId: data.user.id, email, password };
 }
 
+/** Local-only platform admin (row in public.platform_admins, written with the service role). */
+export async function createPlatformAdmin(): Promise<{ client: Db; userId: string; email: string }> {
+  const email = `platform-${randomBytes(4).toString('hex')}@it.local`;
+  const password = randomBytes(12).toString('base64url');
+  const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+  if (error) throw error;
+  created.users.add(data.user.id);
+  const { error: pe } = await admin.from('platform_admins').insert({ user_id: data.user.id });
+  if (pe) throw pe;
+  const client = anon();
+  const { error: se } = await client.auth.signInWithPassword({ email, password });
+  if (se) throw se;
+  return { client, userId: data.user.id, email };
+}
+
+/** Adds a member with the given role to a shop and signs them in. */
+export async function createMember(shopId: string, role: 'owner' | 'manager'): Promise<{ client: Db; userId: string; email: string }> {
+  const email = `${role}-${randomBytes(4).toString('hex')}@it.local`;
+  const password = randomBytes(12).toString('base64url');
+  const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+  if (error) throw error;
+  created.users.add(data.user.id);
+  const { error: me } = await admin.from('shop_memberships').insert({ shop_id: shopId, user_id: data.user.id, role });
+  if (me) throw me;
+  const client = anon();
+  const { error: se } = await client.auth.signInWithPassword({ email, password });
+  if (se) throw se;
+  return { client, userId: data.user.id, email };
+}
+
+/** Calls an admin Edge Function as the signed-in user of `client` (or with an explicit bearer / none). */
+export async function callAdminFunction(
+  name: 'notification-settings' | 'platform-admin',
+  as: Db | { bearer: string } | null,
+  body: unknown,
+) {
+  let bearer: string | null = null;
+  if (as && 'bearer' in as) bearer = as.bearer;
+  else if (as) bearer = (await as.auth.getSession()).data.session?.access_token ?? null;
+  const res = await fetch(`${env.url}/functions/v1/${name}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: env.anonKey, ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  return { status: res.status, body: json, text: JSON.stringify(json) };
+}
+
+/** Fake BotFather-format token; the local mock decides behaviour from the secret part. Never valid in Telegram. */
+export function fakeBotToken(prefix = 'FAKE'): string {
+  const id = 100_000_000 + Math.floor(Math.random() * 800_000_000);
+  return `${id}:${prefix}_${randomBytes(18).toString('hex')}`;
+}
+
+export async function waitFor<T>(fn: () => Promise<T>, ok: (v: T) => boolean, timeoutMs = 15_000): Promise<T> {
+  const until = Date.now() + timeoutMs;
+  let last = await fn();
+  while (!ok(last) && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 250));
+    last = await fn();
+  }
+  return last;
+}
+
 let tgCounter = 0;
 export function newTelegramUserId(): number {
   tgCounter += 1;
   return 7_000_000_000 + Math.floor(Math.random() * 1_000_000) * 100 + tgCounter;
 }
 
-export async function initDataFor(userId: number, opts: { authDate?: number; token?: string } = {}): Promise<string> {
+export async function initDataFor(
+  userId: number,
+  opts: { authDate?: number; token?: string; user?: Record<string, unknown> } = {},
+): Promise<string> {
   return signInitData(
     {
       auth_date: String(opts.authDate ?? Math.floor(Date.now() / 1000)),
       query_id: `Q${userId}`,
-      user: JSON.stringify({ id: userId, first_name: 'Tester', username: `u${userId}` }),
+      user: JSON.stringify(opts.user ? { id: userId, ...opts.user } : { id: userId, first_name: 'Tester', username: `u${userId}` }),
     },
     opts.token ?? TEST_BOT_TOKEN,
   );

@@ -18,6 +18,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/integration/**/*.test.ts'],
+    // Starts (or reuses) the local mock Telegram Bot API and checks the local Edge Runtime points at it.
+    globalSetup: ['tests/integration/global-setup.ts'],
     testTimeout: 60_000,
     hookTimeout: 120_000,
     // Suites create isolated tenants, but run files sequentially to keep the local stack calm.

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { FullConfig } from '@playwright/test';
 import { assertDevServerUsesSupabase, assertLocalSupabaseEnv, assertResolvedLocal } from '../scripts/lib/local-supabase-guard.ts';
 import { resolveSupabaseEnv, serviceClient, type SupabaseEnv } from '../scripts/lib/supabase-env.ts';
+import { assertEdgeRuntimeUsesMock, assertTelegramMockDockerNetwork, ensureTelegramMock } from '../scripts/lib/telegram-mock.ts';
 
 export const AUTH_DIR = join(process.cwd(), 'e2e', '.auth');
 
@@ -18,14 +19,20 @@ function pnpm(args: string[], local: SupabaseEnv) {
 }
 
 /** Ensures both demo tenants exist and are live, and creates one fresh owner per tenant. */
-export default async function globalSetup(config: FullConfig): Promise<void> {
+export default async function globalSetup(config: FullConfig): Promise<() => Promise<void>> {
   // Every check runs before the first seed, publish or user creation.
   assertLocalSupabaseEnv();
   const local = resolveSupabaseEnv();
   assertResolvedLocal(local);
+  if (process.platform !== 'win32') {
+    assertTelegramMockDockerNetwork();
+  }
   const baseURL = config.projects[0]?.use.baseURL;
   if (!baseURL) throw new Error('E2E: baseURL is not configured');
   await assertDevServerUsesSupabase(baseURL, local.url);
+  // Orders created by E2E trigger Telegram notifications: only ever to the local mock Bot API.
+  assertEdgeRuntimeUsesMock();
+  const mock = await ensureTelegramMock();
 
   for (const slug of ['noir-vapor', 'mint-lab']) {
     pnpm(['tenant:seed', '--slug', slug], local);
@@ -45,4 +52,8 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
   }
   mkdirSync(AUTH_DIR, { recursive: true });
   writeFileSync(join(AUTH_DIR, 'owners.json'), JSON.stringify(owners, null, 2));
+  // Returned function = extra global teardown: stops the mock only if this run started it.
+  return async () => {
+    await mock.close();
+  };
 }

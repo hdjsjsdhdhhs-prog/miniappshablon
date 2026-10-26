@@ -15,6 +15,8 @@ export default tseslint.config(
       // Deno code is checked by the Deno runtime (different module resolution).
       'supabase/functions/checkout',
       'supabase/functions/my-orders',
+      'supabase/functions/notification-settings',
+      'supabase/functions/platform-admin',
     ],
   },
   {

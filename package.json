@@ -34,7 +34,9 @@
     "tenant:publish": "tsx scripts/tenant/publish.ts",
     "tenant:verify": "tsx scripts/tenant/verify.ts",
     "owner:add": "tsx scripts/owner-add.ts",
-    "dev:tg-link": "tsx scripts/dev-telegram-link.ts"
+    "dev:tg-link": "tsx scripts/dev-telegram-link.ts",
+    "telegram:mock": "tsx scripts/telegram-mock.ts",
+    "dev:demo-accounts": "tsx scripts/dev-demo-accounts.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

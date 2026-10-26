@@ -13,8 +13,16 @@ pnpm db:start        # = supabase start + локальные секреты Edge
 
 `pnpm db:start` передаёт в Edge Runtime **локальный** `TELEGRAM_BOT_TOKEN=123456789:LOCAL_TEST_TOKEN_NOT_A_SECRET`.
 С этим токеном тесты подписывают initData, а функции честно его проверяют. В Telegram этот токен недействителен.
-Чтобы проверить настоящий запуск из Telegram локально (через туннель), запустите `TELEGRAM_BOT_TOKEN=<реальный> pnpm db:start`.
+Локальный `pnpm db:start` всегда использует этот placeholder; реальный токен задаётся отдельно только в hosted Supabase.
 
+Уведомления о заказах в Telegram локально уходят **только в mock Bot API**: `pnpm db:start` передаёт в Edge Runtime
+`TELEGRAM_API_BASE` с локальным адресом mock, а mock запускается командой `pnpm telegram:mock`
+(integration- и E2E-тесты поднимают его сами и отказываются работать, если Edge Runtime смотрит не на mock).
+Отправленные сообщения видны на http://127.0.0.1:54390/__mock/messages. Стек, запущенный до появления этой
+переменной, перезапустите: `pnpm db:stop && pnpm db:start` (данные сохраняются).
+Для доступа Edge Runtime к mock-серверу `pnpm db:start` создаёт в Linux отдельную bridge-сеть с gateway
+`172.30.0.1` и запускает Supabase в ней. Mock слушает на всех интерфейсах. В Windows Docker Desktop используется
+встроенный `host.docker.internal`.
 Скрипты (`tenant:*`, `owner:add`, тесты) берут URL и ключи локального стека из `supabase status`.
 Для удалённого проекта задайте в shell `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` и не храните их в Git.
 
@@ -35,6 +43,8 @@ pnpm db:start        # = supabase start + локальные секреты Edge
    pnpm exec supabase db push                 # supabase/migrations/*
    pnpm exec supabase functions deploy checkout
    pnpm exec supabase functions deploy my-orders
+   pnpm exec supabase functions deploy notification-settings
+   pnpm exec supabase functions deploy platform-admin
    ```
    То же самое делает ручной workflow `.github/workflows/supabase-deploy.yml`
    (secrets `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, variable `SUPABASE_PROJECT_REF`).
@@ -48,6 +58,12 @@ pnpm db:start        # = supabase start + локальные секреты Edge
    Владельцев создаёт администратор: `pnpm owner:add --slug <slug> --email <email>`
    (пароль берётся из `OWNER_PASSWORD` или генерируется и печатается один раз).
 5. В Auth → URL Configuration укажите Site URL и redirect `https://<домен>/admin`.
+6. Администратор платформы (раздел «Все магазины платформы», передача магазинов клиентам) назначается только
+   оператором: `pnpm owner:add --email <email> --platform-admin`. Права проверяются на сервере по таблице
+   `platform_admins`; email, метаданные пользователя или данные из браузера роль не дают.
+7. Уведомления о заказах: токены ботов владельцы вводят в админке магазина («Уведомления»), сервер хранит их
+   в Supabase Vault (миграция `20261025090000_*`). Для hosted `TELEGRAM_API_BASE` **не задаётся** (по умолчанию
+   `https://api.telegram.org`). Расширение `supabase_vault` в hosted-проектах включено по умолчанию.
 
 ### Правило для будущих миграций
 
