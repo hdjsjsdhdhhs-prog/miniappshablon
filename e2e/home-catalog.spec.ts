@@ -25,7 +25,6 @@ test.afterAll(async () => {
 
 async function openShop(page: Page) {
   await page.goto(SHOP);
-  await page.getByRole('button', { name: /Да, мне есть 18/ }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Noir Vapor' })).toBeVisible();
 }
 

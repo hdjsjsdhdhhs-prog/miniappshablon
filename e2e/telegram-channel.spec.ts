@@ -9,13 +9,9 @@ const originals: Record<string, unknown> = {};
 
 async function openShop(page: Page, slug: string, path = '/') {
   await page.goto(`/s/${slug}${path}`);
-  // The shop frame (bottom nav) and the age gate mount in the same render once the shop has loaded, and the
-  // gate decides synchronously (localStorage) whether to open. So once the nav is visible the dialog is
-  // either in the DOM or will not appear for this page load.
+  // The storefront has no age gate: once the shop frame (bottom nav) is visible, nothing covers it.
   await expect(page.getByTestId('bottom-nav')).toBeVisible();
-  const ageDialog = page.getByRole('dialog', { name: /Вам исполнилось/ });
-  if ((await ageDialog.count()) > 0) await ageDialog.getByRole('button', { name: /Да, мне есть 18/ }).click();
-  await expect(ageDialog).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 }
 
 test.beforeAll(async () => {
@@ -70,10 +66,8 @@ test('owner sets the Telegram channel button in the admin → only their storefr
   await expect(link).toHaveAttribute('href', 'https://t.me/mint_lab_news');
   // Directly under the shop name in the brand header.
   await expect(page.locator('header h1 + [data-testid="telegram-channel-link"]')).toHaveCount(1);
-  // Outside Telegram it is a regular new-tab link.
-  const [popup] = await Promise.all([page.waitForEvent('popup'), link.click()]);
-  expect(popup.url()).toMatch(/^https:\/\/t\.me\/mint_lab_news/);
-  await popup.close();
+  // Outside Telegram it is a regular new-tab link; do not make this test depend on t.me being reachable.
+  await expect(link).toHaveAttribute('target', '_blank');
 
   // Other tenants are unaffected.
   await openShop(page, 'noir-vapor');

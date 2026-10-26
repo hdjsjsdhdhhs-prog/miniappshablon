@@ -145,6 +145,26 @@ describe('HomePage catalog', () => {
     expect(screen.queryByRole('heading', { name: 'О магазине' })).not.toBeInTheDocument();
   });
 
+  it('brand header: shop name in the Benzin display face (EN and RU), no age notice at the bottom', () => {
+    const notice = 'Продажа никотинсодержащей продукции лицам младше 18 лет запрещена.';
+    const { unmount } = renderHome('/s/demo/', { ...shop, legalNotice: notice, ageRestriction: 18 });
+    expect(screen.getByRole('heading', { level: 1, name: 'Demo Shop' })).toHaveClass('font-brand', 'font-semibold');
+    expect(screen.queryByText(notice)).not.toBeInTheDocument();
+    expect(screen.queryByText('18+')).not.toBeInTheDocument();
+    unmount();
+    renderHome('/s/demo/', { ...shop, name: 'Мятная лавка' });
+    expect(screen.getByRole('heading', { level: 1, name: 'Мятная лавка' })).toHaveClass('font-brand');
+  });
+
+  it('channel button is a compact Telegram-blue chip (edge, icon and glow), not the theme accent', () => {
+    renderHome('/s/demo/', { ...shop, info: { ...shop.info, telegramChannelUrl: 'https://t.me/noir_vapor_channel' } });
+    const link = screen.getByTestId('telegram-channel-link');
+    expect(link).toHaveClass('h-7', 'border-(--telegram-edge)', 'bg-(--telegram-fill)');
+    expect(link.className).toContain('var(--telegram-glow)');
+    expect(link.className).not.toMatch(/glass-accent|border-primary/);
+    expect(link.querySelector('svg')).toHaveClass('text-(--telegram-blue)');
+  });
+
   it('uses the default button text and hides the button for unsafe or non-Telegram links', () => {
     const { unmount } = renderHome('/s/demo/', { ...shop, info: { ...shop.info, telegramChannelUrl: 'https://t.me/+AbCdEfGhIj12' } });
     expect(screen.getByRole('link', { name: 'Наш канал в Телеграме' })).toHaveAttribute('href', 'https://t.me/+AbCdEfGhIj12');

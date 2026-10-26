@@ -83,7 +83,7 @@ describe('QuickAddSheet', () => {
     expect(within(group).queryByText('Вишня')).not.toBeInTheDocument();
     for (const r of within(group).getAllByRole('radio')) expect(r).toHaveAttribute('aria-checked', 'false');
     // Chips carry only the name and the remaining stock — never a price (the price is shown once, in the header).
-    expect(within(group).getAllByTestId('quick-option-stock').map((s) => s.textContent)).toEqual(['ОСТАЛОСЬ: 3', 'ОСТАЛОСЬ: 8']);
+    expect(within(group).getAllByTestId('quick-option-stock').map((s) => s.textContent)).toEqual(['Осталось: 3', 'Осталось: 8']);
     for (const r of within(group).getAllByRole('radio')) expect(r.textContent).not.toMatch(/₽|\d\s?\d{3}/);
     // One fixed product price in the header even before a flavor is chosen — never "от".
     expect(screen.getByTestId('quick-price')).toHaveTextContent(/^690\s?₽$/);
@@ -147,7 +147,7 @@ describe('QuickAddSheet', () => {
     const price = screen.getByTestId('quick-price');
     expect(price).toHaveTextContent('690');
     expect(price).not.toHaveTextContent('от');
-    expect(screen.getByRole('radio', { name: /Мята/ })).toHaveTextContent('ОСТАЛОСЬ: 4');
+    expect(screen.getByRole('radio', { name: /Мята/ })).toHaveTextContent('Осталось: 4');
     await userEvent.click(screen.getByRole('radio', { name: /Черника/ }));
     expect(price).toHaveTextContent('690');
     await userEvent.click(confirmBtn());
@@ -166,9 +166,9 @@ describe('QuickAddSheet', () => {
       expect(within(sheet).getAllByText(/690/)).toHaveLength(1);
     }
     expect(within(sheet).getAllByTestId('quick-option-stock').map((s) => s.textContent)).toEqual([
-      'ОСТАЛОСЬ: 12',
-      'ОСТАЛОСЬ: 8',
-      'ОСТАЛОСЬ: 5',
+      'Осталось: 12',
+      'Осталось: 8',
+      'Осталось: 5',
     ]);
     await userEvent.click(confirmBtn());
     expect(lines()).toEqual([expect.objectContaining({ variantId: 'c', unitPriceMinor: 69000, quantity: 1 })]);
@@ -181,7 +181,7 @@ describe('QuickAddSheet', () => {
     expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
     await userEvent.click(screen.getByRole('radio', { name: /Золото/ }));
     expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
-    expect(screen.getByRole('radio', { name: /Золото/ })).toHaveTextContent('ОСТАЛОСЬ: 2');
+    expect(screen.getByRole('radio', { name: /Золото/ })).toHaveTextContent('Осталось: 2');
     await userEvent.click(screen.getByRole('radio', { name: /Графит/ }));
     expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
     await userEvent.click(confirmBtn());
@@ -190,10 +190,10 @@ describe('QuickAddSheet', () => {
 
   it('a flavor offered in several colors shows the stock that fits the current choice', async () => {
     open(make([v('1', 'Мята', 'Чёрный', 2), v('2', 'Мята', 'Белый', 3), v('3', 'Вишня', 'Белый', 4)]));
-    expect(screen.getByRole('radio', { name: /Мята/ })).toHaveTextContent('ОСТАЛОСЬ: 5');
+    expect(screen.getByRole('radio', { name: /Мята/ })).toHaveTextContent('Осталось: 5');
     await userEvent.click(screen.getByRole('radio', { name: /Мята/ }));
     const colors = screen.getByRole('radiogroup', { name: 'Цвет' });
-    expect(within(colors).getByRole('radio', { name: /Белый/ })).toHaveTextContent('ОСТАЛОСЬ: 3');
+    expect(within(colors).getByRole('radio', { name: /Белый/ })).toHaveTextContent('Осталось: 3');
   });
 
   it('a product without options needs no empty flavor list: direct confirmation', async () => {

@@ -124,7 +124,7 @@ export function ProductPage() {
               <span className="text-muted-foreground">Выберите вариант</span>
             ) : stock > 0 ? (
               <span className="inline-flex items-center gap-1 text-success">
-                <CheckCircleIcon aria-hidden weight="fill" /> В наличии: {stock} шт.
+                <CheckCircleIcon aria-hidden weight="fill" /> Осталось: {stock}
               </span>
             ) : (
               <span className="text-destructive">Нет в наличии</span>

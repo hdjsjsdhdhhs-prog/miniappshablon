@@ -72,10 +72,10 @@ describe('ProductPage: one price per product', () => {
     const price = screen.getByTestId('product-price');
     expect(price).toHaveTextContent(/^690\s?₽$/);
     expect(screen.getByRole('main')).not.toHaveTextContent(/(^|\s)от\s/);
-    expect(screen.getByTestId('product-stock')).toHaveTextContent('В наличии: 3 шт.');
+    expect(screen.getByTestId('product-stock')).toHaveTextContent(/^Осталось: 3$/);
     await userEvent.click(screen.getByRole('radio', { name: 'Черника' }));
     expect(price).toHaveTextContent(/^690\s?₽$/);
-    expect(screen.getByTestId('product-stock')).toHaveTextContent('В наличии: 5 шт.');
+    expect(screen.getByTestId('product-stock')).toHaveTextContent(/^Осталось: 5$/);
     await userEvent.click(screen.getByRole('radio', { name: /Ледяная вишня/ }));
     expect(price).toHaveTextContent(/^690\s?₽$/);
     expect(screen.getByTestId('product-stock')).toHaveTextContent('Нет в наличии');

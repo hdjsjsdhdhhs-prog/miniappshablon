@@ -53,7 +53,6 @@ test('owner changes name, palette and logo in the admin → storefront updates w
   expect(after!.logo_path).toMatch(new RegExp(`^${after!.id}/logo/.+\\.webp$`));
 
   await page.goto('/s/mint-lab/');
-  await page.getByRole('button', { name: /Да, мне есть 18/ }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Mint Lab Renamed' })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Логотип Mint Lab Renamed' })).toHaveAttribute('src', new RegExp(after!.logo_path!));
   const primary = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary').trim());

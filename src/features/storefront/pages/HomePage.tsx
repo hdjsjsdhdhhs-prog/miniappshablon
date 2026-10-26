@@ -112,15 +112,17 @@ export function HomePage() {
         {/* Brand panel: real glass over the cover (or over the scene light when there is no cover). */}
         <div className={cover ? 'relative -mt-16 px-4' : 'px-4 pt-5'}>
           <div className="glass-panel rounded-2xl p-4">
-            <div className="flex items-center gap-3.5">
+            <div className="flex items-center gap-3.5 sm:gap-4">
               <ShopLogo
                 name={shop.name}
                 path={shop.logoPath}
-                className="size-16 shrink-0 rounded-2xl shadow-(--glass-shadow) ring-1 ring-(--glass-edge-strong)"
+                className="size-16 shrink-0 rounded-2xl shadow-(--glass-shadow) ring-1 ring-(--glass-edge-strong) max-[359px]:size-14 sm:size-20"
               />
-              {/* Title + channel link stack next to the logo; without a link the title stays centred on it. */}
+              {/* Title + channel link stack next to the logo; without a link the title stays centred on it.
+                  Benzin is a wide display face (~0.67 em per letter): the size follows the viewport so that a
+                  one-word name still fits the column on a 320 px phone, and is capped on wide screens. */}
               <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
-                <h1 className="line-clamp-2 max-w-full text-[1.375rem] leading-tight font-semibold tracking-tight break-words">
+                <h1 className="font-brand line-clamp-2 max-w-full text-[clamp(1.25rem,6.4vw,2rem)] leading-[1.1] font-semibold text-balance break-words">
                   {shop.name}
                 </h1>
                 <TelegramChannelButton url={info.telegramChannelUrl} label={info.telegramChannelLabel} />
@@ -242,8 +244,8 @@ export function HomePage() {
         </section>
       )}
 
-      {shop.legalNotice && <p className="px-4 text-xs text-muted-foreground">{shop.legalNotice}</p>}
-
+      {/* shop.legalNotice / ageRestriction stay in the data and the admin; the storefront does not show an age
+          notice or an age gate. */}
       {quickAdd && (
         <QuickAddSheet key={quickAdd.seq} product={quickAdd.product} open={quickAddOpen} onOpenChange={setQuickAddOpen} />
       )}

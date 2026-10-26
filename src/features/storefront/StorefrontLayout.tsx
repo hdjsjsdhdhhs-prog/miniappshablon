@@ -5,8 +5,8 @@ import { useCart } from '@/features/cart/useCart';
 import { useTelegramBackButton } from '@/features/telegram/useTelegramBackButton';
 import { ThemeScope } from '@/features/theme/ThemeScope';
 import { NotFoundError, type Shop } from './api';
-import { AgeGate } from './components/AgeGate';
 import { BottomNav } from './components/BottomNav';
+import { DemoBannerText } from './components/DemoBannerText';
 import { useShopQuery } from './hooks';
 import { ShopContext } from './shop-context';
 
@@ -20,18 +20,13 @@ function ShopFrame({ shop }: { shop: Shop }) {
           data-testid="demo-banner"
         >
           <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary shadow-[0_0_0_3px_var(--glass-accent-glow)]" />
-          <span>
-            {shop.mode === 'preview'
-              ? 'Предпросмотр: магазин не опубликован, заказы отключены'
-              : 'DEMO-витрина: товары вымышлены, заказы тестовые'}
-          </span>
+          {shop.mode === 'preview' ? <span>Предпросмотр: магазин не опубликован, заказы отключены</span> : <DemoBannerText />}
         </div>
       )}
       <Outlet />
       {/* New pages open at the top; going back (product → catalog) restores the previous scroll position. */}
       <ScrollRestoration />
       <BottomNav slug={shop.slug} cartCount={cart.count} />
-      <AgeGate shopId={shop.id} age={shop.ageRestriction} legalNotice={shop.legalNotice} />
     </div>
   );
 }

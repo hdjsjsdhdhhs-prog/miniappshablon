@@ -22,10 +22,11 @@ export function TelegramChannelButton({ url, label }: { url: string; label: stri
         if (openTelegramUrl(href)) e.preventDefault();
       }}
       data-testid="telegram-channel-link"
-      // Accent-tinted glass chip: same tokens as the selected category tile, no solid "Telegram blue".
-      className="glass-card glass-transition glass-press inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border-[color:var(--glass-accent-edge)] bg-[color:var(--glass-accent-fill)] py-0 pr-3 pl-2 text-xs font-medium text-foreground shadow-[inset_0_1px_0_var(--glass-highlight)] hover:border-primary hover:shadow-[inset_0_1px_0_var(--glass-highlight),0_8px_22px_-12px_var(--glass-accent-glow)] focus-visible:shadow-[inset_0_1px_0_var(--glass-highlight),0_0_0_3px_var(--glass-focus)]"
+      // Compact Telegram-blue chip (edge, icon and glow use the Telegram tokens, identical in every tenant theme).
+      // It is 28 px tall; the invisible ::after extends the tap area to 44 px without moving the layout.
+      className="glass-transition glass-press relative inline-flex h-7 max-w-full items-center gap-1 rounded-full border border-(--telegram-edge) bg-(--telegram-fill) py-0 pr-2.5 pl-1.5 text-xs leading-none font-medium text-foreground shadow-[0_0_14px_-6px_var(--telegram-glow)] after:absolute after:inset-x-0 after:-inset-y-2 after:content-[''] hover:border-(--telegram-blue) hover:shadow-[0_0_18px_-4px_var(--telegram-glow)] focus-visible:outline-(--telegram-blue)"
     >
-      <TelegramLogoIcon aria-hidden weight="fill" className="size-4 shrink-0 text-primary" />
+      <TelegramLogoIcon aria-hidden weight="fill" className="size-4 shrink-0 text-(--telegram-blue)" />
       <span className="min-w-0 truncate">{text}</span>
     </a>
   );

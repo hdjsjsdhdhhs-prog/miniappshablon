@@ -43,9 +43,9 @@ test('buyer orders a flavor variant → owner sees the order → stock change ap
 
   // 1. Open demo tenant inside a Telegram-like launch.
   await openAsTelegramUser(page, '/s/noir-vapor/', buyer);
-  await page.getByRole('button', { name: /Да, мне есть 18/ }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Noir Vapor' })).toBeVisible();
-  await expect(page.getByTestId('demo-banner')).toContainText('DEMO');
+  await expect(page.getByTestId('demo-banner')).toContainText('DEMO-режим');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // 2. Category → 3. product
   // The category filters the home page in place (no separate catalog screen).
@@ -59,7 +59,7 @@ test('buyer orders a flavor variant → owner sees the order → stock change ap
   await expect(page.getByTestId('product-price')).toHaveText(/^690\s?₽$/);
   await page.getByRole('radio', { name: 'Черника' }).click();
   await expect(page.getByTestId('product-price')).toHaveText(/^690\s?₽$/);
-  await expect(page.getByTestId('product-stock')).toContainText(`В наличии: ${originalStock} шт.`);
+  await expect(page.getByTestId('product-stock')).toHaveText(`Осталось: ${originalStock}`);
 
   // 5. Add to cart
   await page.getByTestId('add-to-cart').click();
@@ -90,6 +90,8 @@ test('buyer orders a flavor variant → owner sees the order → stock change ap
   // Buyer profile shows only own orders
   await page.getByRole('link', { name: 'Мои заказы' }).click();
   await expect(page.getByTestId('my-order').filter({ hasText: `Заказ №${orderNumber}` })).toBeVisible();
+  // A verified Telegram session of a demo shop gets the real profile, never the client-side mock-up.
+  await expect(page.getByTestId('demo-profile')).toHaveCount(0);
 
   // 8–9. Owner logs into the admin and sees the new order
   const adminCtx = await browser.newContext({ locale: 'ru-RU' });
@@ -114,7 +116,7 @@ test('buyer orders a flavor variant → owner sees the order → stock change ap
   // 11. Catalog reflects the change without any rebuild
   await page.goto(`/s/noir-vapor/product/${(await db.from('product_variants').select('product_id').eq('id', variantId).single()).data!.product_id}`);
   await page.getByRole('radio', { name: 'Черника' }).click();
-  await expect(page.getByTestId('product-stock')).toContainText('В наличии: 42 шт.');
+  await expect(page.getByTestId('product-stock')).toHaveText('Осталось: 42');
 
   // 12. Owner of the second tenant sees neither the order nor can edit the product
   const otherCtx = await browser.newContext({ locale: 'ru-RU' });

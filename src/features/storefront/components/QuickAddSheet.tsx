@@ -87,7 +87,7 @@ function OptionGroup({
             >
               <span className="line-clamp-2 leading-snug break-words">{value}</span>
               <span className="mt-0.5 text-xs font-normal text-muted-foreground tabular-nums" data-testid="quick-option-stock">
-                ОСТАЛОСЬ: {stock}
+                Осталось: {stock}
               </span>
               {active && (
                 <CheckIcon aria-hidden weight="bold" className="absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-primary" />

@@ -4,6 +4,19 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
+ * Brand display face for the shop name (Latin + Cyrillic). Only the semibold cut exists, so it is declared
+ * as weight 600 and used with font-semibold (no synthetic bold). The browser downloads it only on pages that
+ * actually render `font-brand`; until then (font-display: swap) the system sans stack is shown.
+ */
+@font-face {
+  font-family: 'Benzin';
+  src: url('../assets/fonts/Benzin-Semibold.otf') format('opentype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
  * Default tokens = platform "Dark Premium" palette.
  * Every storefront overrides these variables at runtime from shops.theme_config
  * (see src/features/theme/apply-theme.ts). No tenant colors are hardcoded in components.
@@ -71,6 +84,8 @@
 @theme inline {
   --font-sans:
     system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-brand:
+    'Benzin', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -178,6 +193,13 @@
   --scene-haze: transparent;
   --scene-lift: var(--background);
   --ease-glass: cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* Telegram brand blue for Telegram links (channel button, DEMO contact) — the same in every tenant theme.
+     --telegram-link is the text colour: on light themes it is Telegram's darker link blue for contrast. */
+  --telegram-blue: #2aabee;
+  --telegram-link: #4cb8f5;
+  --telegram-fill: rgb(42 171 238 / 0.12);
+  --telegram-edge: rgb(42 171 238 / 0.55);
+  --telegram-glow: rgb(42 171 238 / 0.35);
 
   position: relative;
   isolation: isolate;
@@ -197,6 +219,10 @@
   --glass-pill-edge: rgb(0 0 0 / 0.12);
   --glass-pill-shadow: 0 1px 2px rgb(15 23 20 / 0.06), 0 6px 14px -8px rgb(15 23 20 / 0.22);
   --scene-haze: rgb(255 255 255 / 0.7);
+  --telegram-link: #168acd;
+  --telegram-fill: rgb(42 171 238 / 0.1);
+  --telegram-edge: rgb(42 171 238 / 0.7);
+  --telegram-glow: rgb(42 171 238 / 0.28);
 }
 
 @supports (color: color-mix(in oklab, red, red)) {
