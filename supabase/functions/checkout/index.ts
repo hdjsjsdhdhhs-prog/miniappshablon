@@ -3,8 +3,10 @@
 // The client sends only variant ids and quantities; prices, ownership and stock are resolved
 // in PostgreSQL inside one transaction.
 import { z } from 'npm:zod@4.6.7';
+import { telegramApiBase } from '../_shared/admin-auth.ts';
 import { serviceClient, verifyTelegramRequest } from '../_shared/auth.ts';
 import { corsHeaders, errorResponse, json, parseDbErrorDetails } from '../_shared/http.ts';
+import { dispatchNotifications } from '../_shared/notify-dispatch.ts';
 
 const bodySchema = z.object({
   shopSlug: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/),
@@ -89,6 +91,24 @@ Deno.serve(async (req) => {
     return errorResponse(req, 500, 'internal_error');
   }
 
-  const result = data as { replayed: boolean; order: unknown };
+  const result = data as { replayed: boolean; order: { id: string; shop_id: string } };
+  if (!result.replayed) scheduleNotifications(result.order.id, result.order.shop_id);
   return json(req, result.replayed ? 200 : 201, result);
 });
+
+/**
+ * Telegram notification of the new order (outbox row written by create_order's transaction) plus any due
+ * retries of the same shop. Runs after the response when the runtime supports it; a failure is recorded on
+ * the outbox row and never affects the order or the response. A replayed checkout enqueues nothing new.
+ */
+function scheduleNotifications(orderId: string, shopId: string) {
+  const db = serviceClient();
+  const rpc = (fn: string, args: Record<string, unknown>) => db.rpc(fn, args);
+  const apiBase = telegramApiBase();
+  const task = (async () => {
+    await dispatchNotifications(rpc, { orderId, apiBase });
+    await dispatchNotifications(rpc, { shopId, limit: 3, apiBase });
+  })().catch(() => console.warn('order notification dispatch failed'));
+  const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+  if (runtime?.waitUntil) runtime.waitUntil(task);
+}
