@@ -50,16 +50,7 @@ jobs:
         run: |
           set -o pipefail
           pnpm exec supabase db push --dry-run --db-url "$SUPABASE_DB_URL" 2>&1 | tee "$RUNNER_TEMP/supabase-db-push-dry-run.log"
-          node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs';
-          const output = readFileSync(`${process.env.RUNNER_TEMP}/supabase-db-push-dry-run.log`, 'utf8');
-          const versions = [...new Set(output.match(/\b\d{14}\b/g) ?? [])].sort();
-          const expected = ['20261025090000', '20261025090100'];
-          if (JSON.stringify(versions) !== JSON.stringify(expected)) {
-            throw new Error(`Unexpected migration plan; expected ${expected.join(', ')}, got ${versions.join(', ') || 'none'}`);
-          }
-          console.log('Dry-run contains exactly the two reviewed production migrations.');
-          NODE
+          pnpm exec tsx scripts/check-production-migration-plan.ts "$RUNNER_TEMP/supabase-db-push-dry-run.log"
       - name: Apply migrations
         run: pnpm exec supabase db push --db-url "$SUPABASE_DB_URL"
       - run: pnpm exec supabase functions deploy checkout --project-ref "$SUPABASE_PROJECT_REF"
