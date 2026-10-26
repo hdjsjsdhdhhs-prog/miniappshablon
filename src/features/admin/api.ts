@@ -29,18 +29,21 @@ function checkMaybe<T>(res: { data: T; error: { message: string } | null }): T {
   return res.data;
 }
 
+/**
+ * "Мои магазины": shops the signed-in user is a member of (owner / manager), for platform admins too.
+ * Platform admins see every shop in the separate platform section (platformApi.list), so a shop handed
+ * over to a client leaves its previous owner's list but stays in the platform list.
+ */
 export async function fetchMyShops(): Promise<Array<{ role: string; shop: AdminShop }>> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return [];
-  const admin = checkMaybe(await supabase.from('platform_admins').select('user_id').eq('user_id', auth.user.id).maybeSingle());
-  if (admin) {
-    const shops = check(await supabase.from('shops').select('*').order('name'));
-    return shops.map((shop) => ({ role: 'platform_admin', shop }));
-  }
   const rows = check(
     await supabase.from('shop_memberships').select('role, shops(*)').eq('user_id', auth.user.id),
   ) as unknown as Array<{ role: string; shops: AdminShop | null }>;
-  return rows.filter((r) => r.shops).map((r) => ({ role: r.role, shop: r.shops! }));
+  return rows
+    .filter((r) => r.shops)
+    .map((r) => ({ role: r.role, shop: r.shops! }))
+    .sort((a, b) => a.shop.name.localeCompare(b.shop.name, 'ru'));
 }
 
 /** Resolves a shop by slug AND verifies membership on the server (is_shop_member RPC). */

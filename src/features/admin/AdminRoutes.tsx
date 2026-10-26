@@ -6,7 +6,9 @@ import { AdminShopLayout } from './AdminShopLayout';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
+import { NotificationsPage } from './pages/NotificationsPage';
 import { OrdersPage } from './pages/OrdersPage';
+import { PlatformShopsPage } from './pages/PlatformShopsPage';
 import { ProductEditPage } from './pages/ProductEditPage';
 import { ProductsPage } from './pages/ProductsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -43,7 +45,9 @@ export default function AdminRoutes() {
             <Route path="categories" element={<CategoriesPage />} />
             <Route path="orders" element={<OrdersPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="notifications" element={<NotificationsPage />} />
           </Route>
+          <Route path="platform" element={<PlatformShopsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

@@ -16,6 +16,7 @@ const NAV = [
   { to: 'categories', label: 'Категории' },
   { to: 'orders', label: 'Заказы' },
   { to: 'settings', label: 'Оформление' },
+  { to: 'notifications', label: 'Уведомления' },
 ];
 
 export function AdminShopLayout() {
