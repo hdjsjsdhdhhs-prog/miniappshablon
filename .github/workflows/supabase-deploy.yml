@@ -46,6 +46,8 @@ jobs:
           NODE
       - name: Show pending migrations
         run: pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL"
+      # The dry-run must list exactly EXPECTED_PRODUCTION_MIGRATIONS (scripts/lib/migration-plan.ts), in order —
+      # for this release 20261026090000, 20261026100000. Anything else stops the job before db push.
       - name: Preview and validate migration plan
         run: |
           set -o pipefail
