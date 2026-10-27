@@ -45,17 +45,32 @@ jobs:
           console.log('Session Pooler target format and project ref validated.');
           NODE
       - name: Show pending migrations
-        run: pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL"
-      # The dry-run must list exactly EXPECTED_PRODUCTION_MIGRATIONS (scripts/lib/migration-plan.ts), in order —
-      # for this release 20261026090000, 20261026100000. Anything else stops the job before db push.
-      - name: Preview and validate migration plan
+        run: pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no
+      # Gate (scripts/lib/migration-plan.ts): remote history AND dry-run, both as JSON, must agree on one state:
+      #   apply — 20261026090000, 20261026100000 pending, nothing else pending, dry-run plans exactly them in order;
+      #   skip  — both confirmed applied in history, nothing pending, dry-run up to date (repeat run).
+      # Anything else (partial, extra, out of order, inconsistent history, CLI error) stops before db push.
+      - name: Read migration history and dry-run plan
         run: |
-          set -o pipefail
-          pnpm exec supabase db push --dry-run --db-url "$SUPABASE_DB_URL" 2>&1 | tee "$RUNNER_TEMP/supabase-db-push-dry-run.log"
-          pnpm exec tsx scripts/check-production-migration-plan.ts "$RUNNER_TEMP/supabase-db-push-dry-run.log"
+          pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no --output-format json \
+            > "$RUNNER_TEMP/migration-list.json" || { cat "$RUNNER_TEMP/migration-list.json"; exit 1; }
+          pnpm exec supabase db push --dry-run --db-url "$SUPABASE_DB_URL" --agent no --output-format json \
+            > "$RUNNER_TEMP/db-push-dry-run.json" || { cat "$RUNNER_TEMP/db-push-dry-run.json"; exit 1; }
+          cat "$RUNNER_TEMP/db-push-dry-run.json"
+      - name: Validate migration plan
+        id: plan
+        run: pnpm exec tsx scripts/check-production-migration-plan.ts plan "$RUNNER_TEMP/migration-list.json" "$RUNNER_TEMP/db-push-dry-run.json"
       - name: Apply migrations
+        if: steps.plan.outputs.mode == 'apply'
         run: pnpm exec supabase db push --db-url "$SUPABASE_DB_URL"
+      - name: Verify migration history after push
+        run: |
+          pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no --output-format json \
+            > "$RUNNER_TEMP/migration-list-after.json" || { cat "$RUNNER_TEMP/migration-list-after.json"; exit 1; }
+          pnpm exec tsx scripts/check-production-migration-plan.ts verify-applied "$RUNNER_TEMP/migration-list-after.json"
       - run: pnpm exec supabase functions deploy checkout --project-ref "$SUPABASE_PROJECT_REF"
       - run: pnpm exec supabase functions deploy my-orders --project-ref "$SUPABASE_PROJECT_REF"
       - run: pnpm exec supabase functions deploy notification-settings --project-ref "$SUPABASE_PROJECT_REF"
       - run: pnpm exec supabase functions deploy platform-admin --project-ref "$SUPABASE_PROJECT_REF"
+      - name: List deployed Edge Functions
+        run: pnpm exec supabase functions list --project-ref "$SUPABASE_PROJECT_REF" --agent no
