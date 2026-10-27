@@ -1,4 +1,4 @@
-import { ArrowSquareOutIcon } from '@phosphor-icons/react';
+import { ArrowSquareOutIcon, PlusIcon } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
@@ -11,8 +11,11 @@ import { useSession } from '../auth';
 import { AdminTopBar } from '../components/AdminTopBar';
 import { ShopModeBadge } from '../components/ShopQuickLinks';
 import { ShopSearchInput } from '../components/ShopSearchInput';
+import { CopyLinkButton } from '../components/CopyLinkButton';
+import { CreateDemoDialog } from '../components/CreateDemoDialog';
+import { HandoverDialog } from '../components/HandoverDialog';
 import { TransferShopDialog } from '../components/TransferShopDialog';
-import { AdminApiError, platformApi, type PlatformShop } from '../functions-api';
+import { AdminApiError, platformApi, publicShopUrl, type PlatformShop } from '../functions-api';
 import { matchesShopSearch, storefrontPath } from '../shop-search';
 import { useIsPlatformAdmin } from '../use-platform-admin';
 
@@ -36,6 +39,8 @@ export function PlatformShopsPage() {
   });
   const [query, setQuery] = useState('');
   const [transferring, setTransferring] = useState<PlatformShop | null>(null);
+  const [handingOver, setHandingOver] = useState<PlatformShop | null>(null);
+  const [creating, setCreating] = useState(false);
   const visible = useMemo(
     () => (shops.data ?? []).filter((s) => matchesShopSearch(query, s.name, s.slug, ...s.members.map((m) => m.email))),
     [shops.data, query],
@@ -51,11 +56,16 @@ export function PlatformShopsPage() {
           {shops.data && (
             <p className="text-sm text-muted-foreground" data-testid="platform-summary">
               Всего: {shops.data.length} · live: {shops.data.filter((s) => s.mode === 'live').length} · preview:{' '}
-              {shops.data.filter((s) => s.mode === 'preview').length}
+              {shops.data.filter((s) => s.mode === 'preview').length} · DEMO: {shops.data.filter((s) => s.is_demo).length}
             </p>
           )}
         </div>
         <ShopSearchInput value={query} onChange={setQuery} placeholder="Название, slug или email владельца" />
+        {shops.data && (
+          <Button onClick={() => setCreating(true)} data-testid="platform-create-demo">
+            <PlusIcon aria-hidden /> Создать DEMO-магазин
+          </Button>
+        )}
       </div>
 
       {denied ? (
@@ -81,7 +91,9 @@ export function PlatformShopsPage() {
                       {s.is_demo && <Badge variant="outline">DEMO</Badge>}
                       {s.status !== 'active' && <Badge variant="destructive">{s.status}</Badge>}
                     </p>
-                    <p className="truncate font-mono text-xs text-muted-foreground">{storefrontPath(s.slug)}</p>
+                    <p className="truncate font-mono text-xs text-muted-foreground" data-testid="platform-shop-url">
+                      {publicShopUrl(s.slug)}
+                    </p>
                     <p className="text-sm" data-testid="platform-shop-owner">
                       Владелец:{' '}
                       {owners.length ? owners.map((o) => o.email ?? o.user_id).join(', ') : <span className="text-muted-foreground">не назначен</span>}
@@ -90,9 +102,13 @@ export function PlatformShopsPage() {
                       Создан {date(s.created_at)}
                       {s.last_transfer_at && ` · передан ${date(s.last_transfer_at)}`} · уведомления: <NotificationBadge n={s.notifications} />
                     </p>
+                    {!s.delivery_enabled && !s.pickup_enabled && (
+                      <p className="text-xs text-destructive">Способы получения выключены — заказы не принимаются.</p>
+                    )}
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-1.5">
+                  <CopyLinkButton url={publicShopUrl(s.slug)} label="Ссылка" testId="platform-copy-link" />
                   <Button asChild size="sm" variant="ghost">
                     <a href={storefrontPath(s.slug)} target="_blank" rel="noreferrer">
                       Витрина <ArrowSquareOutIcon aria-hidden />
@@ -101,9 +117,15 @@ export function PlatformShopsPage() {
                   <Button asChild size="sm" variant="outline">
                     <Link to={`/admin/shops/${s.slug}`}>Админка</Link>
                   </Button>
-                  <Button size="sm" onClick={() => setTransferring(s)} data-testid="platform-transfer">
-                    Передать
-                  </Button>
+                  {s.is_demo ? (
+                    <Button size="sm" onClick={() => setHandingOver(s)} data-testid="platform-handover">
+                      Передать клиенту
+                    </Button>
+                  ) : (
+                    <Button size="sm" onClick={() => setTransferring(s)} data-testid="platform-transfer">
+                      Передать
+                    </Button>
+                  )}
                 </div>
               </li>
             );
@@ -111,6 +133,8 @@ export function PlatformShopsPage() {
         </ul>
       )}
       {transferring && <TransferShopDialog shop={transferring} open onOpenChange={(o) => !o && setTransferring(null)} />}
+      {handingOver && <HandoverDialog shop={handingOver} open onOpenChange={(o) => !o && setHandingOver(null)} />}
+      {creating && shops.data && <CreateDemoDialog shops={shops.data} open onOpenChange={setCreating} />}
     </main>
   );
 }

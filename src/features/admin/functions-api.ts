@@ -125,9 +125,12 @@ export interface PlatformShop {
   status: 'active' | 'suspended';
   is_demo: boolean;
   logo_path: string | null;
+  delivery_enabled: boolean;
+  pickup_enabled: boolean;
   created_at: string;
   published_at: string | null;
   last_transfer_at: string | null;
+  last_handover_at: string | null;
   members: PlatformMember[];
   notifications: { enabled: boolean; status: NotificationStatus } | null;
 }
@@ -147,12 +150,49 @@ export interface TransferResult {
   transferred_at: string;
 }
 
+export interface CreatedDemoShop {
+  shop: { id: string; slug: string; name: string; mode: 'live' | 'preview'; is_demo: boolean };
+  media: { copied: number; missing: number };
+}
+
+/** Codes of private.shop_handover_problems. */
+export type HandoverProblem = 'shop_suspended' | 'not_demo' | 'age_restriction' | 'no_fulfillment' | 'no_categories' | 'no_products';
+
+export interface HandoverCheck {
+  ready: boolean;
+  problems: HandoverProblem[];
+  shop: { id: string; slug: string; name: string; mode: string; is_demo: boolean };
+}
+
+export interface HandoverResult {
+  handover: TransferResult & { shop: { id: string; slug: string; name: string; mode: string; is_demo: boolean }; invitation: string; legacy_test_orders: number };
+  /** sent: e-mail invitation sent; link: e-mail could not be sent, pass this one-time link securely; existing: no e-mail needed. */
+  invitation: { status: 'sent' | 'link' | 'existing'; link: string | null };
+}
+
 export const platformApi = {
   list: () => callAdminFunction<{ shops: PlatformShop[] }>('platform-admin', { action: 'list' }).then((r) => r.shops),
   findUser: (email: string) => callAdminFunction<{ user: PlatformUser | null }>('platform-admin', { action: 'find-user', email }).then((r) => r.user),
   transfer: (shopId: string, userId: string) =>
     callAdminFunction<{ transfer: TransferResult }>('platform-admin', { action: 'transfer', shopId, userId }).then((r) => r.transfer),
+  createDemo: (input: { templateId: string; slug: string; name: string }) =>
+    callAdminFunction<CreatedDemoShop>('platform-admin', { action: 'create-demo', ...input }),
+  handoverCheck: (shopId: string) =>
+    callAdminFunction<{ check: HandoverCheck }>('platform-admin', { action: 'handover-check', shopId }).then((r) => r.check),
+  /** The invitation leads the client to /admin/set-password on this same app. */
+  handover: (shopId: string, email: string) =>
+    callAdminFunction<HandoverResult>('platform-admin', {
+      action: 'handover',
+      shopId,
+      email,
+      redirectTo: `${window.location.origin}/admin/set-password`,
+    }),
 };
+
+/** Public storefront link of a shop on the current deployment (https://miniappdemo.pages.dev/s/<slug>/ in production). */
+export function publicShopUrl(slug: string, origin: string = window.location.origin): string {
+  return `${origin.replace(/\/+$/, '')}/s/${slug}/`;
+}
 
 /**
  * Whether to SHOW the platform section. Purely cosmetic: RLS lets a user read only their own

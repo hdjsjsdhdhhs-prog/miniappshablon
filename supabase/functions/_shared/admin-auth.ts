@@ -40,4 +40,11 @@ export const RPC_ERRORS: Record<string, number> = {
   shop_not_found: 404,
   user_not_found: 404,
   transfer_verification_failed: 409,
+  invalid_slug: 400,
+  invalid_name: 400,
+  invalid_invitation: 400,
+  template_not_found: 404,
+  slug_taken: 409,
+  shop_not_ready: 409,
+  owner_is_platform_admin: 409,
 };

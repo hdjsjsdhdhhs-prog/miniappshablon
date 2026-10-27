@@ -8,7 +8,14 @@ import type { PlatformShop } from '../functions-api';
 import { PlatformShopsPage } from './PlatformShopsPage';
 import { ShopsPage } from './ShopsPage';
 
-const platform = vi.hoisted(() => ({ list: vi.fn(), findUser: vi.fn(), transfer: vi.fn() }));
+const platform = vi.hoisted(() => ({
+  list: vi.fn(),
+  findUser: vi.fn(),
+  transfer: vi.fn(),
+  createDemo: vi.fn(),
+  handoverCheck: vi.fn(),
+  handover: vi.fn(),
+}));
 const role = vi.hoisted(() => ({ isAdmin: true }));
 const myShops = vi.hoisted(() => vi.fn());
 
@@ -32,9 +39,12 @@ const shop = (slug: string, name: string, owner: string | null, extra: Partial<P
   status: 'active',
   is_demo: false,
   logo_path: null,
+  delivery_enabled: true,
+  pickup_enabled: true,
   created_at: '2026-10-01T10:00:00Z',
   published_at: null,
   last_transfer_at: null,
+  last_handover_at: null,
   members: owner ? [{ user_id: `u-${owner}`, email: owner, role: 'owner', since: '2026-10-01T10:00:00Z' }] : [],
   notifications: null,
   ...extra,
@@ -119,6 +129,107 @@ describe('Все магазины платформы', () => {
     expect(result).toHaveTextContent('Магазин передан. Владелец: client@local.test');
     expect(result).toHaveTextContent('Доступ снят: creator@local.test');
     expect(result).toHaveTextContent('остаётся в разделе «Все магазины платформы»');
+  });
+
+  it('every row shows its public link with a copy button; DEMO rows offer "Передать клиенту" instead of "Передать"', async () => {
+    platform.list.mockResolvedValue([shop('noir-vapor', 'Noir Vapor', null, { is_demo: true }), shop('neon', 'Neon', 'o@local.test')]);
+    renderAt(<PlatformShopsPage />);
+    const rows = await screen.findAllByTestId('platform-shop');
+    expect(within(rows[0]!).getByTestId('platform-shop-url')).toHaveTextContent(`${window.location.origin}/s/noir-vapor/`);
+    expect(within(rows[0]!).getByTestId('platform-copy-link')).toBeInTheDocument();
+    expect(within(rows[0]!).getByTestId('platform-handover')).toHaveTextContent('Передать клиенту');
+    expect(within(rows[0]!).queryByTestId('platform-transfer')).not.toBeInTheDocument();
+    expect(within(rows[1]!).getByTestId('platform-transfer')).toBeInTheDocument();
+    expect(within(rows[1]!).queryByTestId('platform-handover')).not.toBeInTheDocument();
+  });
+
+  it('create DEMO: slug from the name, taken slug blocked, server call with the DEMO template, link shown with copy', async () => {
+    platform.list.mockResolvedValue([
+      shop('mint-lab', 'Mint Lab', null, { is_demo: true, created_at: '2026-10-02T10:00:00Z' }),
+      shop('noir-vapor', 'Noir Vapor', null, { is_demo: true, created_at: '2026-10-01T09:00:00Z' }),
+      shop('real-shop', 'Real', 'o@local.test', { created_at: '2026-09-01T10:00:00Z' }),
+    ]);
+    platform.createDemo.mockResolvedValue({
+      shop: { id: 'new-id', slug: 'myatnaya-lavka', name: 'Мятная лавка', mode: 'live', is_demo: true },
+      media: { copied: 12, missing: 0 },
+    });
+    renderAt(<PlatformShopsPage />);
+    await userEvent.click(await screen.findByTestId('platform-create-demo'));
+    const dialog = screen.getByTestId('create-demo-dialog');
+    const submit = within(dialog).getByTestId('create-demo-submit');
+    expect(submit).toBeDisabled();
+
+    await userEvent.type(within(dialog).getByTestId('create-demo-name'), 'Мятная лавка');
+    expect(within(dialog).getByTestId('create-demo-slug')).toHaveValue('myatnaya-lavka');
+    // The default template is the original (oldest active) DEMO storefront, not the first one in the list;
+    // an older non-DEMO shop is never a template.
+    expect(within(dialog).getByTestId('create-demo-template')).toHaveTextContent('Noir Vapor (noir-vapor)');
+
+    await userEvent.clear(within(dialog).getByTestId('create-demo-slug'));
+    await userEvent.type(within(dialog).getByTestId('create-demo-slug'), 'real-shop');
+    expect(dialog).toHaveTextContent('Этот slug уже занят.');
+    expect(submit).toBeDisabled();
+    await userEvent.clear(within(dialog).getByTestId('create-demo-slug'));
+    await userEvent.type(within(dialog).getByTestId('create-demo-slug'), '-bad');
+    expect(submit).toBeDisabled();
+
+    await userEvent.clear(within(dialog).getByTestId('create-demo-slug'));
+    await userEvent.type(within(dialog).getByTestId('create-demo-slug'), 'myatnaya-lavka');
+    await userEvent.click(submit);
+    expect(platform.createDemo).toHaveBeenCalledWith({ templateId: 'id-noir-vapor', slug: 'myatnaya-lavka', name: 'Мятная лавка' });
+    const result = await within(dialog).findByTestId('create-demo-result');
+    expect(within(result).getByTestId('create-demo-url')).toHaveValue(`${window.location.origin}/s/myatnaya-lavka/`);
+    expect(within(result).getByTestId('create-demo-copy')).toBeInTheDocument();
+  });
+
+  it('create DEMO: a server-side slug conflict is shown and nothing is reported as created', async () => {
+    const { AdminApiError } = await vi.importActual<typeof FunctionsApi>('../functions-api');
+    platform.list.mockResolvedValue([shop('noir-vapor', 'Noir Vapor', null, { is_demo: true })]);
+    platform.createDemo.mockRejectedValue(new AdminApiError(409, 'slug_taken', null));
+    renderAt(<PlatformShopsPage />);
+    await userEvent.click(await screen.findByTestId('platform-create-demo'));
+    const dialog = screen.getByTestId('create-demo-dialog');
+    await userEvent.type(within(dialog).getByTestId('create-demo-name'), 'Race');
+    await userEvent.click(within(dialog).getByTestId('create-demo-submit'));
+    expect(await within(dialog).findByTestId('create-demo-error')).toHaveTextContent('уже занят');
+    expect(within(dialog).queryByTestId('create-demo-result')).not.toBeInTheDocument();
+  });
+
+  it('hand-over to a client: blocked when not ready; otherwise e-mail + payment confirmation → invitation result', async () => {
+    platform.list.mockResolvedValue([shop('demo-a', 'Demo A', null, { is_demo: true })]);
+    platform.handoverCheck.mockResolvedValueOnce({ ready: false, problems: ['no_fulfillment'], shop: {} });
+    renderAt(<PlatformShopsPage />);
+    await userEvent.click(await screen.findByTestId('platform-handover'));
+    let dialog = screen.getByTestId('handover-dialog');
+    expect(await within(dialog).findByTestId('handover-not-ready')).toHaveTextContent('Не включён ни один способ получения');
+    expect(within(dialog).getByTestId('handover-confirm')).toBeDisabled();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }));
+
+    platform.handoverCheck.mockResolvedValue({ ready: true, problems: [], shop: {} });
+    platform.handover.mockResolvedValue({
+      handover: {
+        shop: { id: 'id-demo-a', slug: 'demo-a', name: 'Demo A', mode: 'live', is_demo: false },
+        owner: { user_id: 'u-c', email: 'client@local.test' },
+        removed: [],
+        members: [],
+        invitation: 'sent',
+        legacy_test_orders: 0,
+        transferred_at: '2026-10-26T10:00:00Z',
+      },
+      invitation: { status: 'sent', link: null },
+    });
+    await userEvent.click(screen.getByTestId('platform-handover'));
+    dialog = screen.getByTestId('handover-dialog');
+    const confirm = await within(dialog).findByTestId('handover-confirm');
+    await userEvent.type(await within(dialog).findByTestId('handover-email'), 'client@local.test');
+    expect(confirm).toBeDisabled(); // payment not confirmed yet
+    await userEvent.click(within(dialog).getByTestId('handover-paid'));
+    expect(confirm).toBeEnabled();
+    await userEvent.click(confirm);
+    expect(platform.handover).toHaveBeenCalledWith('id-demo-a', 'client@local.test');
+    const result = await within(dialog).findByTestId('handover-result');
+    expect(result).toHaveTextContent('владелец client@local.test, режим live, DEMO выключен');
+    expect(within(result).getByTestId('handover-invitation')).toHaveTextContent('Письмо-приглашение отправлено на client@local.test');
   });
 });
 

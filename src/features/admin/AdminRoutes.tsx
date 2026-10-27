@@ -11,6 +11,7 @@ import { OrdersPage } from './pages/OrdersPage';
 import { PlatformShopsPage } from './pages/PlatformShopsPage';
 import { ProductEditPage } from './pages/ProductEditPage';
 import { ProductsPage } from './pages/ProductsPage';
+import { SetPasswordPage } from './pages/SetPasswordPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ShopsPage } from './pages/ShopsPage';
 
@@ -36,6 +37,7 @@ export default function AdminRoutes() {
     <div className="admin-theme dark min-h-dvh bg-background text-foreground">
       <Routes>
         <Route index element={<LoginPage />} />
+        <Route path="set-password" element={<SetPasswordPage />} />
         <Route element={<RequireAuth />}>
           <Route path="shops" element={<ShopsPage />} />
           <Route path="shops/:slug" element={<AdminShopLayout />}>
