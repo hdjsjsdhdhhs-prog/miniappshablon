@@ -18,6 +18,8 @@ export interface NotificationOrder {
   contact_name?: string | null;
   contact_phone?: string | null;
   comment?: string | null;
+  fulfillment_method?: 'delivery' | 'pickup' | null;
+  delivery_address?: string | null;
   is_test?: boolean;
   created_at: string;
   items: NotificationOrderItem[];
@@ -85,6 +87,12 @@ export function formatOrderNotification(input: OrderNotificationInput): string {
   lines.push(`<b>Покупатель:</b> ${e(describeCustomer(input.customerTgId, input.customer))}`);
   const contact = [order.contact_name?.trim(), order.contact_phone?.trim()].filter(Boolean).join(', ');
   if (contact) lines.push(`<b>Контакт из формы:</b> ${e(contact)}`);
+  if (order.fulfillment_method === 'delivery') {
+    lines.push(`<b>Получение:</b> доставка`);
+    if (order.delivery_address?.trim()) lines.push(`<b>Адрес доставки:</b> ${e(order.delivery_address.trim())}`);
+  } else if (order.fulfillment_method === 'pickup') {
+    lines.push(`<b>Получение:</b> самовывоз`);
+  }
   if (order.comment?.trim()) lines.push(`<b>Комментарий:</b> ${e(order.comment.trim())}`);
   lines.push('');
   lines.push('<b>Товары:</b>');

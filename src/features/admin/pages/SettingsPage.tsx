@@ -61,7 +61,12 @@ export function SettingsPage() {
   const qc = useQueryClient();
   const [name, setName] = useState(shop.name);
   const [description, setDescription] = useState(shop.description);
-  const [legal, setLegal] = useState(shop.legal_notice);
+  const [fulfillment, setFulfillment] = useState({
+    delivery_enabled: shop.delivery_enabled,
+    pickup_enabled: shop.pickup_enabled,
+    pickup_instructions: shop.pickup_instructions,
+  });
+  const noFulfillment = !fulfillment.delivery_enabled && !fulfillment.pickup_enabled;
   const [theme, setTheme] = useState<ShopTheme>(() => parseTheme(shop.theme_config));
   const [info, setInfo] = useState(() => shopInformationSchema.parse(shopInformationSchema.safeParse(shop.info).data ?? {}));
   const [settings, setSettings] = useState(() => shopSettingsSchema.parse(shopSettingsSchema.safeParse(shop.settings).data ?? {}));
@@ -90,7 +95,17 @@ export function SettingsPage() {
         // Default text is stored as '' so a future change of the platform default reaches untouched shops.
         telegramChannelLabel: label === DEFAULT_TELEGRAM_CHANNEL_LABEL ? '' : label,
       };
-      return updateShopSettings(shop.id, { name: name.trim(), description, legal_notice: legal, theme_config: t.data, info: nextInfo, settings });
+      const pickupInstructions = fulfillment.pickup_instructions.trim();
+      if (pickupInstructions.length > 1000) throw new Error('Инструкция по самовывозу: не длиннее 1000 символов');
+      return updateShopSettings(shop.id, {
+        name: name.trim(),
+        description,
+        theme_config: t.data,
+        info: nextInfo,
+        settings,
+        ...fulfillment,
+        pickup_instructions: pickupInstructions,
+      });
     },
     onSuccess: async (saved) => {
       // Show the canonical link (e.g. "@channel" → "https://t.me/channel") that was actually stored.
@@ -238,9 +253,52 @@ export function SettingsPage() {
                 </label>
               ))}
             </div>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="settings-fulfillment">
+          <CardHeader><CardTitle>Способы получения</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Что покупатель может выбрать при оформлении заказа. Сервер принимает только включённые способы.
+            </p>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={fulfillment.delivery_enabled}
+                  onCheckedChange={(v) => setFulfillment({ ...fulfillment, delivery_enabled: v })}
+                  data-testid="settings-delivery"
+                />
+                Доставка (покупатель указывает адрес)
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={fulfillment.pickup_enabled}
+                  onCheckedChange={(v) => setFulfillment({ ...fulfillment, pickup_enabled: v })}
+                  data-testid="settings-pickup"
+                />
+                Самовывоз
+              </label>
+            </div>
+            {noFulfillment && (
+              <Alert variant="destructive" data-testid="settings-fulfillment-warning">
+                <AlertDescription>
+                  Оба способа выключены — покупатели не смогут оформить заказ. Включите доставку или самовывоз.
+                </AlertDescription>
+              </Alert>
+            )}
             <div className="space-y-1.5">
-              <Label htmlFor="s-legal">Юридическое уведомление</Label>
-              <Textarea id="s-legal" value={legal} maxLength={2000} onChange={(e) => setLegal(e.target.value)} />
+              <Label htmlFor="s-pickup">Инструкция по самовывозу</Label>
+              <Textarea
+                id="s-pickup"
+                value={fulfillment.pickup_instructions}
+                maxLength={1000}
+                rows={3}
+                placeholder="Например: ул. Ленина, 1, ежедневно 10:00–20:00. Назовите номер заказа."
+                onChange={(e) => setFulfillment({ ...fulfillment, pickup_instructions: e.target.value })}
+                data-testid="settings-pickup-instructions"
+              />
+              <p className="text-xs text-muted-foreground">Показывается покупателю, когда он выбирает самовывоз.</p>
             </div>
           </CardContent>
         </Card>

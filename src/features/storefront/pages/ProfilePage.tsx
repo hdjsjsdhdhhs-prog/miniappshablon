@@ -9,6 +9,7 @@ import { formatMoney } from '@/domain/money';
 import { isOrderStatus, ORDER_STATUS_LABELS } from '@/domain/order-status';
 import { queryKeys } from '@/domain/query-keys';
 import { ApiError, fetchMyOrders } from '@/features/cart/checkout-api';
+import { FULFILLMENT_LABELS } from '@/features/cart/checkout-schema';
 import { unverifiedTelegramUser } from '@/features/telegram/init-data-user';
 import { getTelegramEnv } from '@/features/telegram/telegram';
 import { ShopLogo } from '../components/ShopLogo';
@@ -84,9 +85,9 @@ function OrderCard({
 }
 
 /**
- * DEMO shop opened by a plain link (no Telegram initData): a visual mock-up of the signed-in profile with the
- * current shop's logo and name and one in-memory "Тестовый заказ". It performs no sign-in and sends no write,
- * checkout or my-orders request — the only data it reads is the public catalog listing of this shop.
+ * DEMO shop (plain link or inside Telegram): a visual mock-up of the signed-in profile with the current shop's
+ * logo and name and one in-memory "Тестовый заказ". It performs no sign-in and sends no write, checkout or
+ * my-orders request — the only data it reads is the public catalog listing of this shop.
  */
 function DemoProfile() {
   const shop = useShop();
@@ -136,8 +137,7 @@ function DemoProfile() {
 
 export function ProfilePage() {
   const shop = useShop();
-  const tg = getTelegramEnv();
-  return shouldShowDemoProfile(shop, tg) ? <DemoProfile /> : <TelegramProfile />;
+  return shouldShowDemoProfile(shop) ? <DemoProfile /> : <TelegramProfile />;
 }
 
 /** Real buyer profile: orders come from the my-orders Edge Function, which verifies the Telegram initData. */
@@ -213,7 +213,7 @@ function TelegramProfile() {
                 meta={
                   <>
                     {new Date(o.created_at).toLocaleString('ru-RU')}
-                    {o.is_test && ' · тестовый'}
+                    {o.fulfillment_method && ` · ${FULFILLMENT_LABELS[o.fulfillment_method]}`}
                   </>
                 }
                 lines={o.items.map((i) => ({

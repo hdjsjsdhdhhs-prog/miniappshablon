@@ -17,20 +17,26 @@ const bodySchema = z.object({
     .array(z.object({ variantId: z.uuid(), quantity: z.number().int().min(1).max(99) }))
     .min(1)
     .max(50),
-  contact: z.object({
-    name: z.string().trim().min(1).max(80),
-    phone: z.string().trim().max(32).optional().default(''),
-    comment: z.string().trim().max(500).optional().default(''),
-  }),
+  // Name/phone are not collected: the buyer is the verified Telegram user. The method is re-checked against the
+  // shop's current settings in create_order; a pickup request carries no address at all (unknown keys are dropped).
+  fulfillment: z.discriminatedUnion('method', [
+    z.object({ method: z.literal('delivery'), address: z.string().trim().min(1).max(300) }),
+    z.object({ method: z.literal('pickup') }),
+  ]),
+  comment: z.string().trim().max(500).optional().default(''),
 });
 
 const DB_ERRORS: Record<string, number> = {
   invalid_customer: 400,
   invalid_items: 400,
   invalid_quantity: 400,
-  invalid_contact: 400,
+  invalid_fulfillment: 400,
+  invalid_address: 400,
+  invalid_comment: 400,
   invalid_idempotency_key: 400,
+  fulfillment_unavailable: 409,
   shop_unavailable: 404,
+  shop_demo: 403,
   shop_preview: 403,
   currency_mismatch: 409,
   item_unavailable: 409,
@@ -62,8 +68,9 @@ Deno.serve(async (req) => {
   const canonicalItems = [...body.items]
     .map((i) => [i.variantId, i.quantity] as const)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const address = body.fulfillment.method === 'delivery' ? body.fulfillment.address : null;
   const requestHash = await sha256Hex(
-    JSON.stringify({ s: body.shopSlug, i: canonicalItems, c: body.contact, cur: body.currency }),
+    JSON.stringify({ s: body.shopSlug, i: canonicalItems, f: body.fulfillment.method, a: address, c: body.comment, cur: body.currency }),
   );
 
   const { data, error } = await serviceClient().rpc('create_order', {
@@ -77,9 +84,9 @@ Deno.serve(async (req) => {
     p_items: body.items.map((i) => ({ variant_id: i.variantId, quantity: i.quantity })),
     p_idempotency_key: body.idempotencyKey,
     p_request_hash: requestHash,
-    p_contact_name: body.contact.name,
-    p_contact_phone: body.contact.phone,
-    p_comment: body.contact.comment,
+    p_fulfillment_method: body.fulfillment.method,
+    p_delivery_address: address,
+    p_comment: body.comment,
     p_expected_currency: body.currency,
     p_expected_total_minor: body.expectedTotalMinor ?? null,
   });

@@ -30,13 +30,22 @@ vi.mock('../hooks', () => ({
   useProduct: () => ({ data: noirSalt, isPending: false, isError: false, error: null, refetch: vi.fn() }),
 }));
 
-const shop = { id: 'shop-cart', slug: 'demo', name: 'Demo', currency: 'RUB', mode: 'live', theme: DARK_PREMIUM_THEME } as Shop;
+const shop = {
+  id: 'shop-cart',
+  slug: 'demo',
+  name: 'Demo',
+  currency: 'RUB',
+  mode: 'live',
+  isDemo: false,
+  theme: DARK_PREMIUM_THEME,
+  fulfillment: { delivery: true, pickup: true, pickupInstructions: '' },
+} as Shop;
 
-function renderShop(entry: string) {
+function renderShop(entry: string, value: Shop = shop) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <ShopContext.Provider value={shop}>
+      <ShopContext.Provider value={value}>
         <MemoryRouter initialEntries={[entry]}>
           <Routes>
             <Route path="/s/:slug/product/:productId" element={<ProductPage />} />
@@ -72,5 +81,35 @@ describe('CartPage: one price per product', () => {
     expect(screen.getByTestId('cart-total')).toHaveTextContent(/^2\s?070\s?₽$/);
     expect(cartStore.getLines(shop.id).map((l) => l.unitPriceMinor)).toEqual([69000, 69000]);
     expect(screen.getByRole('main')).not.toHaveTextContent(/(^|\s)от\s\d/);
+  });
+});
+
+describe('CartPage: DEMO checkout is local only', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    cartStore._resetCache();
+  });
+
+  it('places a "Тестовый заказ" without any request, clears the cart and says it is a demonstration', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const demo = { ...shop, id: 'shop-demo', isDemo: true } as Shop;
+    renderShop('/s/demo/product/p1', demo);
+    await userEvent.click(screen.getByTestId('add-to-cart'));
+    await userEvent.click(screen.getByRole('link', { name: 'Перейти в корзину' }));
+    expect(screen.getByTestId('demo-checkout-note')).toHaveTextContent('Это демонстрация');
+    // Outside Telegram the demo order is still possible (nothing is verified or stored).
+    expect(screen.queryByText(/Оформление доступно в Telegram/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Имя')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Телефон/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('fulfillment-pickup'));
+    await userEvent.click(screen.getByTestId('checkout-submit'));
+    const placed = await screen.findByTestId('demo-order-placed');
+    expect(placed).toHaveTextContent('Тестовый заказ оформлен');
+    expect(placed).toHaveTextContent('Это демонстрация');
+    expect(placed).toHaveTextContent('самовывоз');
+    expect(cartStore.getLines(demo.id)).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });

@@ -19,7 +19,8 @@ export interface Shop {
   mode: 'preview' | 'live';
   isDemo: boolean;
   ageRestriction: number;
-  legalNotice: string;
+  /** Which ways of receiving an order the shop offers; create_order re-checks the same columns. */
+  fulfillment: { delivery: boolean; pickup: boolean; pickupInstructions: string };
   info: ReturnType<typeof shopInformationSchema.parse>;
   settings: ReturnType<typeof shopSettingsSchema.parse>;
   telegram: { botUsername: string | null; miniAppShortName: string | null };
@@ -68,7 +69,7 @@ export interface ProductDetail extends ProductSummary {
 export const PAGE_SIZE = 20;
 
 const SHOP_COLUMNS =
-  'id, slug, name, description, logo_path, cover_path, theme_config, currency, mode, status, is_demo, age_restriction, legal_notice, info, settings, telegram';
+  'id, slug, name, description, logo_path, cover_path, theme_config, currency, mode, status, is_demo, age_restriction, delivery_enabled, pickup_enabled, pickup_instructions, info, settings, telegram';
 
 const PRODUCT_COLUMNS =
   'id, name, base_price_minor, category_id, description, ' +
@@ -103,7 +104,7 @@ export async function fetchShopBySlug(slug: string): Promise<Shop> {
     mode: data.mode === 'live' ? 'live' : 'preview',
     isDemo: data.is_demo,
     ageRestriction: data.age_restriction,
-    legalNotice: data.legal_notice,
+    fulfillment: { delivery: data.delivery_enabled, pickup: data.pickup_enabled, pickupInstructions: data.pickup_instructions },
     info: info.success ? info.data : shopInformationSchema.parse({}),
     settings: settings.success ? settings.data : shopSettingsSchema.parse({}),
     telegram: { botUsername: tg.botUsername ?? null, miniAppShortName: tg.miniAppShortName ?? null },

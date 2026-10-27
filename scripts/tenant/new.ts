@@ -30,8 +30,7 @@ run(async () => {
     currency: 'RUB',
     demo: false,
     ageRestriction: 18,
-    legalNotice:
-      'Продажа никотинсодержащей продукции лицам младше 18 лет запрещена. Заказ подтверждается магазином; оплата и получение согласуются отдельно.',
+    fulfillment: { delivery: true, pickup: true, pickupInstructions: '' },
     shopInformation: { address: '', hours: '', delivery: '', payment: '', phone: '', telegram: '', telegramChannelUrl: '', telegramChannelLabel: '' },
     settings: { showFeatured: true, showInfo: true, showCategories: true },
     telegram: { botUsername: null, miniAppShortName: null },

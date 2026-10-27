@@ -84,7 +84,7 @@ const baseShop: Shop = {
   mode: 'live',
   isDemo: true,
   ageRestriction: 18,
-  legalNotice: 'notice',
+  fulfillment: { delivery: true, pickup: true, pickupInstructions: '' },
   info: { address: '', hours: '', delivery: '', payment: '', phone: '', telegram: '', telegramChannelUrl: '', telegramChannelLabel: '' },
   settings: { showFeatured: true, showInfo: true, showCategories: true },
   telegram: { botUsername: null, miniAppShortName: null },
@@ -192,22 +192,33 @@ describe('ProfilePage — existing behaviour is kept', () => {
     expectNoAuthNoWrites();
   });
 
-  it('a Telegram session of a demo shop loads the real orders through the verified my-orders call', async () => {
+  it('a DEMO shop opened inside Telegram still shows the demo profile and never calls my-orders', () => {
+    tgEnv = { inTelegram: true, rawInitData: 'user=%7B%22id%22%3A42%7D&hash=abc', startParam: null, platform: 'android' };
+    render(ui(baseShop));
+    expect(screen.getByTestId('demo-profile')).toBeInTheDocument();
+    expect(screen.getByTestId('demo-order')).toHaveTextContent('Тестовый заказ');
+    expect(screen.queryByTestId('my-order')).not.toBeInTheDocument();
+    expectNoAuthNoWrites();
+  });
+
+  it('a Telegram session of a regular shop (e.g. after the hand-over) loads the real orders through the verified my-orders call', async () => {
     tgEnv = { inTelegram: true, rawInitData: 'user=%7B%22id%22%3A42%7D&hash=abc', startParam: null, platform: 'android' };
     api.fetchMyOrders.mockResolvedValue({
       user: { id: 42, first_name: 'Ирина', username: 'irina' },
       orders: [
         {
           id: 'o1', shop_id: 'shop-noir', order_number: 7, status: 'new', currency: 'RUB', total_minor: 69_000,
-          contact_name: 'Ирина', contact_phone: null, comment: null, is_test: true, created_at: '2026-10-01T10:00:00Z',
+          contact_name: null, contact_phone: null, comment: null, fulfillment_method: 'delivery', delivery_address: 'ул. Ленина, 1',
+          is_test: false, created_at: '2026-10-01T10:00:00Z',
           items: [{ id: 'i1', product_id: 'n1', variant_id: 'n1-v', product_name: 'Noir Salt 30 мл', variant_label: 'Черника', flavor: 'Черника', color: null, unit_price_minor: 69_000, quantity: 1, line_total_minor: 69_000 }],
         },
       ],
     });
-    render(ui(baseShop));
+    render(ui({ ...baseShop, isDemo: false }));
     expect(await screen.findByRole('heading', { level: 1, name: 'Ирина' })).toBeInTheDocument();
     expect(screen.getByText('@irina')).toBeInTheDocument();
     expect(screen.getByTestId('my-order')).toHaveTextContent('Заказ №7');
+    expect(screen.getByTestId('my-order')).toHaveTextContent('Доставка');
     expect(screen.getByTestId('my-order')).toHaveTextContent('Noir Salt 30 мл · Черника × 1');
     expect(api.fetchMyOrders).toHaveBeenCalledWith(tgEnv.rawInitData, 'noir-vapor');
     expect(screen.queryByTestId('demo-profile')).not.toBeInTheDocument();

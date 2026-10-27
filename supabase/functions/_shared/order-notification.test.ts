@@ -44,6 +44,22 @@ describe('formatOrderNotification', () => {
     expect(text).not.toMatch(/<script>|<Shop>/);
   });
 
+  it('shows the fulfillment: delivery with the escaped address, pickup without any address; no empty contact line', () => {
+    const base = { ...order, contact_name: null, contact_phone: null };
+    const delivery = formatOrderNotification({
+      shopName: 'S',
+      order: { ...base, fulfillment_method: 'delivery', delivery_address: 'ул. <Ленина> & 1' },
+      customerTgId: 1,
+      customer: { username: 'buyer' },
+    });
+    expect(delivery).toContain('<b>Получение:</b> доставка');
+    expect(delivery).toContain('<b>Адрес доставки:</b> ул. &lt;Ленина&gt; &amp; 1');
+    expect(delivery).not.toContain('Контакт из формы');
+    const pickup = formatOrderNotification({ shopName: 'S', order: { ...base, fulfillment_method: 'pickup', delivery_address: null }, customerTgId: 1, customer: null });
+    expect(pickup).toContain('<b>Получение:</b> самовывоз');
+    expect(pickup).not.toContain('Адрес доставки');
+  });
+
   it('marks DEMO test orders', () => {
     expect(formatOrderNotification({ shopName: 'S', order: { ...order, is_test: true }, customerTgId: 1, customer: null })).toContain(
       'Тестовый заказ (DEMO-магазин)',

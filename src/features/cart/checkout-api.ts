@@ -1,6 +1,7 @@
 import { functionsUrl } from '@/lib/supabase';
 import { env } from '@/lib/env';
 import type { CartLine } from './cart-store';
+import type { CheckoutFulfillment } from './checkout-schema';
 
 export interface OrderItemDto {
   id: string;
@@ -22,9 +23,12 @@ export interface OrderDto {
   status: string;
   currency: string;
   total_minor: number;
-  contact_name: string;
+  /** Legacy orders only (the form no longer asks for a name/phone). */
+  contact_name: string | null;
   contact_phone: string | null;
   comment: string | null;
+  fulfillment_method: 'delivery' | 'pickup' | null;
+  delivery_address: string | null;
   is_test: boolean;
   created_at: string;
   items: OrderItemDto[];
@@ -67,7 +71,8 @@ export interface CheckoutInput {
   idempotencyKey: string;
   lines: readonly CartLine[];
   expectedTotalMinor: number;
-  contact: { name: string; phone: string; comment: string };
+  fulfillment: CheckoutFulfillment;
+  comment: string;
 }
 
 export function submitCheckout(initData: string, input: CheckoutInput) {
@@ -77,7 +82,8 @@ export function submitCheckout(initData: string, input: CheckoutInput) {
     idempotencyKey: input.idempotencyKey,
     expectedTotalMinor: input.expectedTotalMinor,
     items: input.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
-    contact: input.contact,
+    fulfillment: input.fulfillment,
+    comment: input.comment,
   });
 }
 
@@ -96,15 +102,15 @@ export function fetchMyOrders(initData: string, shopSlug: string) {
 export function checkoutKeyFor(
   shopId: string,
   lines: readonly CartLine[],
-  contact: CheckoutInput['contact'],
+  order: Pick<CheckoutInput, 'fulfillment' | 'comment'>,
 ): string {
-  // Must cover everything the server hashes (items + contact), otherwise a retry with an edited
-  // phone/comment would reuse the key and be rejected as idempotency_conflict.
+  // Must cover everything the server hashes (items + fulfillment + comment), otherwise a retry with an edited
+  // address/comment would reuse the key and be rejected as idempotency_conflict.
   const fingerprint = JSON.stringify([
     [...lines].map((l) => `${l.variantId}:${l.quantity}`).sort(),
-    contact.name.trim(),
-    contact.phone.trim(),
-    contact.comment.trim(),
+    order.fulfillment.method,
+    order.fulfillment.method === 'delivery' ? order.fulfillment.address.trim() : null,
+    order.comment.trim(),
   ]);
   const storageKey = `tma-checkout-key:${shopId}`;
   try {

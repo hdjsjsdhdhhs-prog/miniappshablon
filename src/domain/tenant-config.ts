@@ -79,6 +79,13 @@ export const shopSettingsSchema = z.strictObject({
   showCategories: z.boolean().default(true),
 });
 
+/** How a buyer receives the order. At least one method must stay enabled for checkout to work. */
+export const fulfillmentConfigSchema = z.strictObject({
+  delivery: z.boolean().default(true),
+  pickup: z.boolean().default(true),
+  pickupInstructions: z.string().max(1000).default(''),
+});
+
 export const tenantConfigSchema = z
   .strictObject({
     $schema: z.string().optional(),
@@ -91,8 +98,8 @@ export const tenantConfigSchema = z
     currency: z.enum(SUPPORTED_CURRENCIES),
     demo: z.boolean().default(false),
     ageRestriction: z.number().int().min(0).max(21),
-    legalNotice: z.string().trim().min(1, 'legalNotice обязателен').max(2000),
     shopInformation: shopInformationSchema,
+    fulfillment: fulfillmentConfigSchema.default({ delivery: true, pickup: true, pickupInstructions: '' }),
     settings: shopSettingsSchema.default({ showFeatured: true, showInfo: true, showCategories: true }),
     telegram: z
       .strictObject({
@@ -104,6 +111,9 @@ export const tenantConfigSchema = z
     initialProducts: z.array(productConfigSchema).max(500).default([]),
   })
   .superRefine((cfg, ctx) => {
+    if (!cfg.fulfillment.delivery && !cfg.fulfillment.pickup) {
+      ctx.addIssue({ code: 'custom', message: 'Включите хотя бы один способ получения: доставку или самовывоз', path: ['fulfillment'] });
+    }
     const channel = cfg.shopInformation.telegramChannelUrl;
     if (channel.trim() && !normalizeTelegramChannelUrl(channel)) {
       ctx.addIssue({ code: 'custom', message: 'Ссылка на канал: https://t.me/<канал> или https://t.me/+<приглашение>', path: ['shopInformation', 'telegramChannelUrl'] });

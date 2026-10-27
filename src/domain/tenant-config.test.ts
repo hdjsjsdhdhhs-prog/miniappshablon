@@ -40,11 +40,22 @@ describe('tenant config schema', () => {
     expect(tenantConfigSchema.safeParse(withLink('https://example.com/mint')).success).toBe(false);
   });
 
+  it('the retired legalNotice field is gone; fulfillment defaults to both methods and needs at least one', () => {
+    const base = load('mint-lab');
+    expect(base).not.toHaveProperty('legalNotice');
+    // Strict schema: an old config that still carries the field must be cleaned up instead of silently ignored.
+    expect(tenantConfigSchema.safeParse({ ...base, legalNotice: 'old text' }).success).toBe(false);
+    expect(tenantConfigSchema.parse(base).fulfillment).toEqual({ delivery: true, pickup: true, pickupInstructions: '' });
+    expect(tenantConfigSchema.safeParse({ ...base, fulfillment: { delivery: false, pickup: true, pickupInstructions: 'ул. Мира, 1' } }).success).toBe(true);
+    const none = tenantConfigSchema.safeParse({ ...base, fulfillment: { delivery: false, pickup: false } });
+    expect(none.success).toBe(false);
+    expect(none.error?.issues[0]?.path).toEqual(['fulfillment']);
+  });
+
   it('rejects bad slugs, unknown categories, duplicate combos and path traversal', () => {
     const base = load('mint-lab');
     expect(tenantConfigSchema.safeParse({ ...base, slug: 'Bad Slug' }).success).toBe(false);
     expect(tenantConfigSchema.safeParse({ ...base, logo: 'assets/../../secret.png' }).success).toBe(false);
-    expect(tenantConfigSchema.safeParse({ ...base, legalNotice: '' }).success).toBe(false);
     const products = base.initialProducts as Array<Record<string, unknown>>;
     expect(
       tenantConfigSchema.safeParse({ ...base, initialProducts: [{ ...products[0], category: 'nope' }] }).success,

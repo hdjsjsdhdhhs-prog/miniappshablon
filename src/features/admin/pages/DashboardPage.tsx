@@ -47,7 +47,8 @@ export function DashboardPage() {
                 {s.recent.map((o) => (
                   <li key={o.id} className="flex items-center justify-between gap-2 py-2 text-sm">
                     <span>
-                      №{o.order_number} · {o.contact_name}
+                      №{o.order_number} · {o.contact_name ?? (o.customer_snapshot as { first_name?: string | null }).first_name ?? 'Покупатель'}
+                      {o.fulfillment_method && ` · ${o.fulfillment_method === 'delivery' ? 'доставка' : 'самовывоз'}`}
                       {o.is_test && <Badge variant="outline" className="ml-2">тест</Badge>}
                     </span>
                     <span className="flex items-center gap-2">

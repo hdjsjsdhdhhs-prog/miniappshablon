@@ -1,17 +1,18 @@
 import type { OrderStatus } from '@/domain/order-status';
 import { lineTotalMinor, orderTotalMinor, productPriceMinor } from '@/domain/pricing';
 import { variantLabel } from '@/domain/variants';
-import type { TelegramEnv } from '@/features/telegram/telegram';
 import type { ProductSummary, Shop } from './api';
 
 /**
- * Client-only showcase of the buyer profile for DEMO shops opened outside Telegram.
+ * Client-only showcase of the buyer profile and checkout for DEMO shops — in a browser and inside Telegram.
  *
  * Nothing here talks to the backend: no auth, no user, no order, no checkout/RPC call. The "order" is built
  * in memory from the shop's public catalog listing (already loaded by the home page) and is never stored.
+ * The server enforces the same rule: create_order rejects DEMO shops (shop_demo).
  */
 
 export const DEMO_ORDER_TITLE = 'Тестовый заказ';
+export const DEMO_NOTICE = 'Это демонстрация';
 
 export interface DemoOrderLine {
   key: string;
@@ -31,12 +32,13 @@ export interface DemoOrder {
 }
 
 /**
- * The demo profile replaces the "open in Telegram" screen only for a DEMO shop and only when the page has no
- * Telegram initData to be verified. A Telegram launch (initData present) keeps the real, server-verified flow —
- * even in a demo shop — and a regular shop never gets a mock-up.
+ * A DEMO shop always shows the demo profile and the demo checkout, also when opened inside Telegram: a DEMO shop
+ * never stores orders (the server rejects them), so a "real" profile there could only ever be empty. A regular
+ * shop — including a former DEMO shop after its hand-over — never gets the mock-up and uses the verified
+ * Telegram identity. The Telegram environment deliberately plays no role.
  */
-export function shouldShowDemoProfile(shop: Pick<Shop, 'isDemo'>, tg: Pick<TelegramEnv, 'inTelegram' | 'rawInitData'>): boolean {
-  return shop.isDemo && !(tg.inTelegram && tg.rawInitData);
+export function shouldShowDemoProfile(shop: Pick<Shop, 'isDemo'>): boolean {
+  return shop.isDemo;
 }
 
 const QUANTITIES = [2, 1, 1] as const;

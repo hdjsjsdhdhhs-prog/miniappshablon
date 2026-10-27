@@ -42,12 +42,23 @@ function OrderCard({ order, onChange }: { order: AdminOrder; onChange: (s: Order
         {order.is_test && <Badge variant="outline">тестовый</Badge>}
         <span className="ml-auto text-sm text-muted-foreground">{new Date(order.created_at).toLocaleString('ru-RU')}</span>
       </div>
-      <div className="text-sm">
+      <div className="space-y-1 text-sm">
         <p>
-          {order.contact_name}
+          {/* New orders: verified Telegram name only; legacy orders also carry the typed name/phone. */}
+          {order.contact_name ?? snapshot.first_name ?? 'Покупатель'}
           {order.contact_phone && <> · <a className="underline" href={`tel:${order.contact_phone}`}>{order.contact_phone}</a></>}
           {snapshot.username && <> · <a className="underline" href={`https://t.me/${snapshot.username}`} target="_blank" rel="noreferrer">@{snapshot.username}</a></>}
         </p>
+        {order.fulfillment_method === 'delivery' && (
+          <p data-testid="admin-order-fulfillment">
+            <span className="text-muted-foreground">Доставка:</span> <span className="break-words">{order.delivery_address}</span>
+          </p>
+        )}
+        {order.fulfillment_method === 'pickup' && (
+          <p data-testid="admin-order-fulfillment">
+            <span className="text-muted-foreground">Получение:</span> самовывоз
+          </p>
+        )}
         {order.comment && <p className="text-muted-foreground">«{order.comment}»</p>}
       </div>
       <ul className="divide-y rounded-md border text-sm">

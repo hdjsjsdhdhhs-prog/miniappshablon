@@ -14,7 +14,7 @@ run(async () => {
   const db = serviceClient();
   const { data: shop, error } = await db
     .from('shops')
-    .select('id, mode, status, name, legal_notice, age_restriction, logo_path, is_demo')
+    .select('id, mode, status, name, age_restriction, logo_path, is_demo, delivery_enabled, pickup_enabled')
     .eq('slug', slug)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -33,7 +33,7 @@ run(async () => {
   report.errors.forEach((e) => problems.push(`конфиг: ${e}`));
 
   if (shop.status !== 'active') problems.push(`status=${shop.status}`);
-  if (!shop.legal_notice.trim()) problems.push('нет юридического уведомления (legal_notice)');
+  if (!shop.delivery_enabled && !shop.pickup_enabled) problems.push('не включён ни один способ получения (доставка / самовывоз)');
   if (shop.age_restriction < 18) problems.push('для вейп-продукции ageRestriction должен быть ≥ 18');
   if (!shop.logo_path) log.warn('нет логотипа');
 
@@ -64,7 +64,7 @@ run(async () => {
     .update({ mode: 'live', published_at: new Date().toISOString() })
     .eq('id', shop.id);
   if (ue) throw new Error(ue.message);
-  log.ok(`${slug}: опубликован (mode=live)${shop.is_demo ? ' — DEMO, заказы помечаются тестовыми' : ''}`);
+  log.ok(`${slug}: опубликован (mode=live)${shop.is_demo ? ' — DEMO: заказы только демонстрационные, в БД не сохраняются' : ''}`);
   log.info(`Проверьте: pnpm tenant:verify --slug ${slug}`);
   return 0;
 });

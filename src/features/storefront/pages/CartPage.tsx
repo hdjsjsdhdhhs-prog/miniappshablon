@@ -8,15 +8,23 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { formatMoney } from '@/domain/money';
 import { lineTotalMinor } from '@/domain/pricing';
-import { unverifiedTelegramUser } from '@/features/telegram/init-data-user';
-import { checkoutKeyFor, clearCheckoutKey, submitCheckout, type OrderDto } from '@/features/cart/checkout-api';
+import { queryKeys } from '@/domain/query-keys';
+import { ApiError, checkoutKeyFor, clearCheckoutKey, submitCheckout, type OrderDto } from '@/features/cart/checkout-api';
 import { describeCheckoutError } from '@/features/cart/checkout-errors';
 import { CheckoutForm } from '@/features/cart/CheckoutForm';
-import type { CheckoutFormValues } from '@/features/cart/checkout-schema';
+import { FULFILLMENT_LABELS, toFulfillment, type CheckoutFormValues, type FulfillmentMethod } from '@/features/cart/checkout-schema';
 import { useCart } from '@/features/cart/useCart';
 import { getTelegramEnv } from '@/features/telegram/telegram';
 import { QuantityStepper } from '../components/QuantityStepper';
+import { DEMO_NOTICE, DEMO_ORDER_TITLE } from '../demo-profile';
 import { useShop } from '../shop-context';
+
+/** Result of the client-only DEMO checkout: never sent anywhere, never stored. */
+interface DemoPlaced {
+  totalMinor: number;
+  currency: string;
+  method: FulfillmentMethod;
+}
 
 export function CartPage() {
   const shop = useShop();
@@ -25,17 +33,18 @@ export function CartPage() {
   const tg = getTelegramEnv();
   const [error, setError] = useState<string | null>(null);
   const [placed, setPlaced] = useState<OrderDto | null>(null);
+  const [demoPlaced, setDemoPlaced] = useState<DemoPlaced | null>(null);
 
   const checkout = useMutation({
-    mutationFn: (contact: CheckoutFormValues) => {
-      const contactFull = { name: contact.name, phone: contact.phone, comment: contact.comment };
+    mutationFn: (values: CheckoutFormValues) => {
+      const order = { fulfillment: toFulfillment(values), comment: values.comment };
       return submitCheckout(tg.rawInitData ?? '', {
         shopSlug: shop.slug,
         currency: shop.currency,
-        idempotencyKey: checkoutKeyFor(shop.id, cart.lines, contactFull),
+        idempotencyKey: checkoutKeyFor(shop.id, cart.lines, order),
         lines: cart.lines,
         expectedTotalMinor: cart.totalMinor,
-        contact: contactFull,
+        ...order,
       });
     },
     onSuccess: (res) => {
@@ -51,8 +60,43 @@ export function CartPage() {
       if (view.reconcile) cart.reconcile(view.reconcile);
       view.removeVariantIds?.forEach((id) => cart.remove(id));
       if (view.resetIdempotencyKey) clearCheckoutKey(shop.id);
+      // The owner changed the delivery/pickup settings meanwhile: reload them so the form shows what is offered now.
+      if (err instanceof ApiError && err.code === 'fulfillment_unavailable') void queryClient.invalidateQueries({ queryKey: queryKeys.shop(shop.slug) });
     },
   });
+
+  const submit = (values: CheckoutFormValues) => {
+    if (shop.isDemo) {
+      // DEMO: a local "Тестовый заказ" only — no request, no order row, no stock change, nothing in any history.
+      setDemoPlaced({ totalMinor: cart.totalMinor, currency: shop.currency, method: values.method });
+      setError(null);
+      cart.clear();
+      return;
+    }
+    checkout.mutate(values);
+  };
+
+  if (demoPlaced) {
+    return (
+      <main className="px-4 py-10" data-testid="demo-order-placed">
+        <EmptyState
+          icon={<CheckCircleIcon weight="fill" className="text-success" />}
+          title={`${DEMO_ORDER_TITLE} оформлен`}
+          description={`${DEMO_NOTICE}: заказ на ${formatMoney(demoPlaced.totalMinor, demoPlaced.currency)} (${FULFILLMENT_LABELS[demoPlaced.method].toLowerCase()}) никуда не отправлен, остатки не изменились, в истории заказов магазина его нет.`}
+          action={
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button asChild>
+                <Link to={`/s/${shop.slug}/profile`}>Демо-профиль</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link to={`/s/${shop.slug}/`}>Продолжить покупки</Link>
+              </Button>
+            </div>
+          }
+        />
+      </main>
+    );
+  }
 
   if (placed) {
     return (
@@ -93,7 +137,8 @@ export function CartPage() {
     );
   }
 
-  const canOrder = tg.inTelegram && !!tg.rawInitData && shop.mode === 'live';
+  // DEMO shops simulate the order locally (in a browser and in Telegram); real orders need verified initData.
+  const canOrder = shop.isDemo || (tg.inTelegram && !!tg.rawInitData && shop.mode === 'live');
 
   return (
     <main className="space-y-5 px-4 pt-4 pb-6">
@@ -152,27 +197,37 @@ export function CartPage() {
         </Alert>
       )}
 
-      {!tg.inTelegram && (
-        <Alert>
-          <AlertDescription>Оформление доступно в Telegram: откройте магазин через бота, чтобы подтвердить аккаунт.</AlertDescription>
+      {shop.isDemo ? (
+        <Alert data-testid="demo-checkout-note">
+          <AlertDescription>{DEMO_NOTICE}: заказ будет тестовым — он не отправляется в магазин и не меняет остатки.</AlertDescription>
         </Alert>
-      )}
-      {shop.mode !== 'live' && (
-        <Alert>
-          <AlertDescription>Магазин в режиме предпросмотра — заказы отключены.</AlertDescription>
-        </Alert>
+      ) : (
+        <>
+          {!tg.inTelegram && (
+            <Alert>
+              <AlertDescription>Оформление доступно в Telegram: откройте магазин через бота, чтобы подтвердить аккаунт.</AlertDescription>
+            </Alert>
+          )}
+          {shop.mode !== 'live' && (
+            <Alert>
+              <AlertDescription>Магазин в режиме предпросмотра — заказы отключены.</AlertDescription>
+            </Alert>
+          )}
+        </>
       )}
 
       <section aria-labelledby="checkout-title" className="space-y-3">
         <h2 id="checkout-title" className="font-semibold">
-          Контакты для связи
+          Получение заказа
         </h2>
         <CheckoutForm
-          defaultName={unverifiedTelegramUser(tg.rawInitData).firstName}
+          // Remount when the owner's settings change, so the default method follows what is offered.
+          key={`${shop.fulfillment.delivery}-${shop.fulfillment.pickup}`}
+          fulfillment={shop.fulfillment}
           disabled={!canOrder}
           submitting={checkout.isPending}
-          submitLabel={`Оформить заказ · ${formatMoney(cart.totalMinor, shop.currency)}`}
-          onSubmit={(v) => checkout.mutate(v)}
+          submitLabel={`${shop.isDemo ? 'Оформить тестовый заказ' : 'Оформить заказ'} · ${formatMoney(cart.totalMinor, shop.currency)}`}
+          onSubmit={submit}
         />
       </section>
     </main>

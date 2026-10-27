@@ -56,7 +56,9 @@ export async function fetchAdminShop(slug: string): Promise<AdminShop | null> {
 
 export async function updateShopSettings(
   shopId: string,
-  patch: Partial<Pick<AdminShop, 'name' | 'description' | 'logo_path' | 'cover_path' | 'legal_notice'>> & {
+  patch: Partial<
+    Pick<AdminShop, 'name' | 'description' | 'logo_path' | 'cover_path' | 'delivery_enabled' | 'pickup_enabled' | 'pickup_instructions'>
+  > & {
     theme_config?: ShopTheme;
     info?: Record<string, string>;
     settings?: Record<string, boolean>;

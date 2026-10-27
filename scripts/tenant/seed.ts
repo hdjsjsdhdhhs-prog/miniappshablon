@@ -101,8 +101,10 @@ run(async () => {
           is_demo: cfg.demo,
           mode: 'preview',
           age_restriction: cfg.ageRestriction,
-          legal_notice: cfg.legalNotice,
           info: cfg.shopInformation,
+          delivery_enabled: cfg.fulfillment.delivery,
+          pickup_enabled: cfg.fulfillment.pickup,
+          pickup_instructions: cfg.fulfillment.pickupInstructions,
           settings: cfg.settings,
           telegram: cfg.telegram,
         })

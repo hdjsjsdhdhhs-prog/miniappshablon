@@ -52,14 +52,17 @@ describe('cart store', () => {
 });
 
 describe('checkout idempotency key', () => {
-  const contact = { name: 'Ann', phone: '', comment: '' };
-  it('is stable for the same cart+contact (retries) and changes when the request changes', () => {
+  const order = { fulfillment: { method: 'delivery', address: 'ул. Ленина, 1' } as const, comment: '' };
+  it('is stable for the same cart+order (retries) and changes when the request changes', () => {
     const lines = [{ ...line('v1'), quantity: 1 }];
-    const k1 = checkoutKeyFor('s', lines, contact);
-    expect(checkoutKeyFor('s', lines, contact)).toBe(k1);
-    expect(checkoutKeyFor('s', [{ ...line('v1'), quantity: 2 }], contact)).not.toBe(k1);
-    const k3 = checkoutKeyFor('s', lines, { ...contact, phone: '+7900' });
+    const k1 = checkoutKeyFor('s', lines, order);
+    expect(checkoutKeyFor('s', lines, order)).toBe(k1);
+    expect(checkoutKeyFor('s', [{ ...line('v1'), quantity: 2 }], order)).not.toBe(k1);
+    const k3 = checkoutKeyFor('s', lines, { ...order, fulfillment: { method: 'delivery', address: 'ул. Мира, 2' } });
     expect(k3).not.toBe(k1);
+    const k4 = checkoutKeyFor('s', lines, { ...order, fulfillment: { method: 'pickup' } });
+    expect(k4).not.toBe(k3);
+    expect(checkoutKeyFor('s', lines, { ...order, fulfillment: { method: 'pickup' }, comment: 'позвоните' })).not.toBe(k4);
   });
 });
 

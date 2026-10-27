@@ -20,23 +20,12 @@ const v = (id: string, flavor: string | null, color: string | null, stock: numbe
 });
 
 describe('shouldShowDemoProfile', () => {
-  const browser = { inTelegram: false, rawInitData: null };
-  const telegram = { inTelegram: true, rawInitData: 'query_id=1&user=%7B%7D&hash=x' };
-
-  it('only a demo shop without Telegram initData gets the mock-up', () => {
-    expect(shouldShowDemoProfile({ isDemo: true }, browser)).toBe(true);
-    // Telegram-like launch without initData: nothing to verify → still the mock-up.
-    expect(shouldShowDemoProfile({ isDemo: true }, { inTelegram: true, rawInitData: null })).toBe(true);
-    expect(shouldShowDemoProfile({ isDemo: true }, { inTelegram: true, rawInitData: '' })).toBe(true);
+  it('a DEMO shop always gets the mock-up — in a browser and inside Telegram (it never stores orders)', () => {
+    expect(shouldShowDemoProfile({ isDemo: true })).toBe(true);
   });
 
-  it('a Telegram session (initData to verify) keeps the real profile, also in a demo shop', () => {
-    expect(shouldShowDemoProfile({ isDemo: true }, telegram)).toBe(false);
-  });
-
-  it('a regular shop never gets the mock-up', () => {
-    expect(shouldShowDemoProfile({ isDemo: false }, browser)).toBe(false);
-    expect(shouldShowDemoProfile({ isDemo: false }, telegram)).toBe(false);
+  it('a regular shop (also a former DEMO after hand-over) never gets the mock-up', () => {
+    expect(shouldShowDemoProfile({ isDemo: false })).toBe(false);
   });
 });
 

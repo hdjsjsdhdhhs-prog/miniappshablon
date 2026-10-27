@@ -19,6 +19,14 @@ export function describeCheckoutError(err: unknown): CheckoutErrorView {
       return { message: 'Не удалось подтвердить ваш Telegram-аккаунт. Закройте и снова откройте магазин в Telegram.' };
     case 'shop_preview':
       return { message: 'Магазин в режиме предпросмотра — заказы пока не принимаются.' };
+    case 'shop_demo':
+      return { message: 'Это демонстрационный магазин: настоящие заказы в нём не оформляются.' };
+    case 'fulfillment_unavailable':
+      return { message: 'Выбранный способ получения больше недоступен. Обновите страницу и выберите другой.', resetIdempotencyKey: true };
+    case 'invalid_address':
+      return { message: 'Укажите адрес доставки.' };
+    case 'invalid_fulfillment':
+      return { message: 'Выберите способ получения.' };
     case 'shop_unavailable':
       return { message: 'Магазин временно не принимает заказы.' };
     case 'insufficient_stock': {
@@ -45,7 +53,7 @@ export function describeCheckoutError(err: unknown): CheckoutErrorView {
     case 'idempotency_conflict':
       return { message: 'Данные заказа изменились. Нажмите «Оформить» ещё раз.', resetIdempotencyKey: true };
     case 'invalid_body':
-    case 'invalid_contact':
+    case 'invalid_comment':
       return { message: 'Проверьте поля формы.' };
     default:
       return { message: 'Не удалось оформить заказ. Попробуйте позже.' };
