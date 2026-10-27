@@ -30,7 +30,7 @@ const shop: Shop = {
   mode: 'live',
   isDemo: true,
   ageRestriction: 18,
-  legalNotice: 'Продажа лицам младше 18 лет запрещена.',
+  fulfillment: { delivery: true, pickup: true, pickupInstructions: '' },
   info: { address: '', hours: '', delivery: '', payment: '', phone: '', telegram: '', telegramChannelUrl: '', telegramChannelLabel: '' },
   settings: { showFeatured: true, showInfo: true, showCategories: true },
   telegram: { botUsername: null, miniAppShortName: null },
@@ -54,21 +54,32 @@ describe('StorefrontLayout', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.queryByText(/Вам исполнилось/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /мне есть/ })).not.toBeInTheDocument();
-    expect(screen.queryByText(shop.legalNotice)).not.toBeInTheDocument();
+    expect(screen.queryByText(/младше 18 лет/)).not.toBeInTheDocument();
     expect(localStorage.getItem(`tma-age-ok:${shop.id}`)).toBeNull();
   });
 
-  it('demo banner offers full access from @caseypsd with a Telegram link', () => {
+  it('demo banner: "DEMO-режим: приобрести полный доступ - [Telegram logo] caseypsd", one line, link to t.me/caseypsd', () => {
     renderLayout(shop);
     const banner = screen.getByTestId('demo-banner');
-    expect(banner).toHaveTextContent('DEMO-режим: полный доступ можете приобрести у @caseypsd');
-    expect(banner).not.toHaveTextContent('DEMO-витрина');
-    const link = within(banner).getByRole('link', { name: '@caseypsd' });
+    expect(banner).toHaveTextContent(/^DEMO-режим: приобрести полный доступ - caseypsd$/);
+    expect(banner).not.toHaveTextContent('@');
+    expect(banner).not.toHaveTextContent('можете приобрести у');
+    // Fixed height, no wrapping: the text can never grow the bar.
+    expect(banner).toHaveClass('h-8', 'whitespace-nowrap', 'overflow-hidden');
+    expect(screen.getByTestId('demo-banner-text')).toHaveClass('whitespace-nowrap');
+    // The reddish dot comes first, before the text.
+    const dot = screen.getByTestId('demo-banner-dot');
+    expect(banner.firstElementChild).toBe(dot);
+    expect(dot.className).toContain('bg-[#ff5a5f]');
+    const link = within(banner).getByRole('link', { name: 'caseypsd' });
     expect(link).toHaveAttribute('href', 'https://t.me/caseypsd');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-    // The handle never wraps inside itself on narrow screens.
-    expect(link).toHaveClass('whitespace-nowrap');
+    expect(link).toHaveClass('whitespace-nowrap', 'text-(--telegram-link)');
+    // The Telegram logo replaces "@" and is part of the same link.
+    const icon = within(link).getByTestId('demo-contact-icon');
+    expect(icon).toHaveClass('text-(--telegram-blue)');
+    expect(link.firstElementChild).toBe(icon);
     link.click();
     expect(tg.openTelegramUrl).toHaveBeenCalledWith('https://t.me/caseypsd');
   });

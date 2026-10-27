@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { VariantLike, VariantSelection } from '@/domain/variants';
 import { BottomNav } from './BottomNav';
 import { CategoryTiles } from './CategoryTiles';
@@ -74,6 +74,48 @@ describe('BottomNav', () => {
 
     await userEvent.click(screen.getByRole('link', { name: /Каталог/ }));
     expect(indicator.style.getPropertyValue('--nav-index')).toBe('0');
+  });
+
+  it('steps aside while typing on a touch screen and comes back only after the tap that closed the keyboard', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q === '(pointer: coarse)', media: q, addEventListener() {}, removeEventListener() {} }));
+    try {
+      render(
+        <MemoryRouter initialEntries={['/s/demo/cart']}>
+          <textarea aria-label="Адрес" />
+          <button type="button">Оформить</button>
+          <BottomNav slug="demo" cartCount={1} />
+        </MemoryRouter>,
+      );
+      const nav = screen.getByTestId('bottom-nav');
+      const field = screen.getByLabelText('Адрес');
+      const submit = screen.getByRole('button', { name: 'Оформить' });
+      act(() => field.focus());
+      expect(nav).toHaveAttribute('inert');
+
+      // Press on the button: the field blurs, but the nav must not slide back under the finger yet.
+      fireEvent.pointerDown(submit);
+      act(() => submit.focus());
+      act(() => vi.advanceTimersByTime(1000));
+      expect(nav).toHaveAttribute('inert');
+
+      fireEvent.pointerUp(submit);
+      fireEvent.click(submit);
+      expect(nav).toHaveAttribute('inert');
+      act(() => vi.runOnlyPendingTimers());
+      expect(nav).not.toHaveAttribute('inert');
+
+      // Back into the field and out without a tap (e.g. keyboard): released by the fallback timer.
+      act(() => field.focus());
+      expect(nav).toHaveAttribute('inert');
+      act(() => field.blur());
+      expect(nav).toHaveAttribute('inert');
+      act(() => vi.advanceTimersByTime(300));
+      expect(nav).not.toHaveAttribute('inert');
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 
   it('no tab highlighted on a product page', () => {

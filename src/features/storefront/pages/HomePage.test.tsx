@@ -80,7 +80,7 @@ const shop: Shop = {
   mode: 'live',
   isDemo: true,
   ageRestriction: 18,
-  legalNotice: '18+',
+  fulfillment: { delivery: true, pickup: true, pickupInstructions: '' },
   info: { address: '', hours: '', delivery: '', payment: '', phone: '', telegram: '', telegramChannelUrl: '', telegramChannelLabel: '' },
   settings: { showFeatured: true, showInfo: true, showCategories: true },
   telegram: { botUsername: null, miniAppShortName: null },
@@ -145,11 +145,14 @@ describe('HomePage catalog', () => {
     expect(screen.queryByRole('heading', { name: 'О магазине' })).not.toBeInTheDocument();
   });
 
-  it('brand header: shop name in the Benzin display face (EN and RU), no age notice at the bottom', () => {
-    const notice = 'Продажа никотинсодержащей продукции лицам младше 18 лет запрещена.';
-    const { unmount } = renderHome('/s/demo/', { ...shop, legalNotice: notice, ageRestriction: 18 });
-    expect(screen.getByRole('heading', { level: 1, name: 'Demo Shop' })).toHaveClass('font-brand', 'font-semibold');
-    expect(screen.queryByText(notice)).not.toBeInTheDocument();
+  it('brand header: shop name in the Benzin display face (EN and RU), no age/legal notice at the bottom', () => {
+    const { unmount } = renderHome('/s/demo/', { ...shop, ageRestriction: 18 });
+    const h1 = screen.getByRole('heading', { level: 1, name: 'Demo Shop' });
+    expect(h1).toHaveClass('font-brand', 'font-semibold');
+    // 20 % smaller than the former clamp(1.25rem, 6.4vw, 2rem) on every bound.
+    expect(h1).toHaveClass('text-[clamp(1rem,5.12vw,1.6rem)]');
+    expect(h1.className).not.toContain('clamp(1.25rem,6.4vw,2rem)');
+    expect(screen.queryByText(/младше 18 лет/)).not.toBeInTheDocument();
     expect(screen.queryByText('18+')).not.toBeInTheDocument();
     unmount();
     renderHome('/s/demo/', { ...shop, name: 'Мятная лавка' });

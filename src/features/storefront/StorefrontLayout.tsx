@@ -15,12 +15,27 @@ function ShopFrame({ shop }: { shop: Shop }) {
   return (
     <div className="pb-nav mx-auto min-h-dvh max-w-3xl">
       {(shop.isDemo || shop.mode === 'preview') && (
+        // Fixed 32 px, one line, never wider than the screen: the text can not grow the bar or the page.
         <div
-          className="glass-bar sticky top-0 z-30 flex items-center justify-center gap-2 border-x-0 border-t-0 border-b-[color:var(--glass-accent-edge)] px-4 py-1.5 text-center text-xs font-medium text-foreground"
+          className="glass-bar sticky top-0 z-30 flex h-8 items-center justify-center gap-1.5 overflow-hidden border-x-0 border-t-0 border-b-[color:var(--glass-accent-edge)] px-2 text-xs font-medium whitespace-nowrap text-foreground"
           data-testid="demo-banner"
         >
-          <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary shadow-[0_0_0_3px_var(--glass-accent-glow)]" />
-          {shop.mode === 'preview' ? <span>Предпросмотр: магазин не опубликован, заказы отключены</span> : <DemoBannerText />}
+          {shop.mode === 'preview' ? (
+            <>
+              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary shadow-[0_0_0_3px_var(--glass-accent-glow)]" />
+              <span className="min-w-0 truncate">Предпросмотр: магазин не опубликован, заказы отключены</span>
+            </>
+          ) : (
+            <>
+              {/* Reddish glowing "live" dot, left of the text start. */}
+              <span
+                aria-hidden
+                data-testid="demo-banner-dot"
+                className="size-1.5 shrink-0 rounded-full bg-[#ff5a5f] shadow-[0_0_6px_1px_rgba(255,90,95,0.85),0_0_0_3px_rgba(255,90,95,0.18)]"
+              />
+              <DemoBannerText />
+            </>
+          )}
         </div>
       )}
       <Outlet />

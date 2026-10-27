@@ -120,9 +120,10 @@ export function HomePage() {
               />
               {/* Title + channel link stack next to the logo; without a link the title stays centred on it.
                   Benzin is a wide display face (~0.67 em per letter): the size follows the viewport so that a
-                  one-word name still fits the column on a 320 px phone, and is capped on wide screens. */}
+                  one-word name still fits the column on a 320 px phone, and is capped on wide screens.
+                  Every bound is 80 % of the previous clamp(1.25rem, 6.4vw, 2rem). */}
               <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
-                <h1 className="font-brand line-clamp-2 max-w-full text-[clamp(1.25rem,6.4vw,2rem)] leading-[1.1] font-semibold text-balance break-words">
+                <h1 className="font-brand line-clamp-2 max-w-full text-[clamp(1rem,5.12vw,1.6rem)] leading-[1.1] font-semibold text-balance break-words" data-testid="shop-title">
                   {shop.name}
                 </h1>
                 <TelegramChannelButton url={info.telegramChannelUrl} label={info.telegramChannelLabel} />
@@ -244,8 +245,8 @@ export function HomePage() {
         </section>
       )}
 
-      {/* shop.legalNotice / ageRestriction stay in the data and the admin; the storefront does not show an age
-          notice or an age gate. */}
+      {/* shop.ageRestriction stays in the data (and is required for publishing / hand-over); the storefront
+          does not show an age notice or an age gate. */}
       {quickAdd && (
         <QuickAddSheet key={quickAdd.seq} product={quickAdd.product} open={quickAddOpen} onOpenChange={setQuickAddOpen} />
       )}

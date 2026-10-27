@@ -15,7 +15,14 @@ function isTextEntry(el: EventTarget | null): boolean {
  * True while a text field is focused on a touch device, i.e. while the on-screen keyboard is up.
  * The floating nav steps aside then: on Android the WebView shrinks and a fixed nav would ride on top
  * of the keyboard, covering the field being typed into (checkout form, search).
+ *
+ * The nav comes back only once the tap that closed the keyboard is over (after its `click`, or shortly after
+ * the finger is lifted if there is no click). Bringing it back on blur would slide it under the finger: a tap on
+ * a button low on the screen (e.g. "Оформить заказ" right after typing the address) would be released on a nav
+ * link and lost.
  */
+const NAV_RETURN_FALLBACK_MS = 300;
+
 function useSoftKeyboardOpen(): boolean {
   const [field, setField] = useState<HTMLElement | null>(null);
   // Re-render on navigation: a focused field removed with the old page fires no focusout, and the
@@ -23,15 +30,61 @@ function useSoftKeyboardOpen(): boolean {
   useLocation();
   useEffect(() => {
     const coarse = window.matchMedia?.('(pointer: coarse)');
-    const onFocusIn = (e: FocusEvent) => setField(coarse?.matches && isTextEntry(e.target) ? (e.target as HTMLElement) : null);
+    let pressed = false;
+    let pending = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cancel = () => {
+      pending = false;
+      clearTimeout(timer);
+    };
+    const releaseSoon = (ms: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!pending) return;
+        pending = false;
+        setField(null);
+      }, ms);
+    };
+    const scheduleRelease = () => {
+      if (pending) return;
+      pending = true;
+      if (!pressed) releaseSoon(NAV_RETURN_FALLBACK_MS);
+    };
+    const onFocusIn = (e: FocusEvent) => {
+      if (coarse?.matches && isTextEntry(e.target)) {
+        cancel();
+        setField(e.target as HTMLElement);
+      } else scheduleRelease();
+    };
     const onFocusOut = (e: FocusEvent) => {
-      if (!isTextEntry(e.relatedTarget)) setField(null);
+      if (!isTextEntry(e.relatedTarget)) scheduleRelease();
+    };
+    const onPointerDown = () => {
+      pressed = true;
+      clearTimeout(timer);
+    };
+    const onPointerUp = () => {
+      pressed = false;
+      if (pending) releaseSoon(NAV_RETURN_FALLBACK_MS);
+    };
+    // The tap has been delivered to its real target: the nav may come back now.
+    const onClick = () => {
+      if (pending && !pressed) releaseSoon(0);
     };
     document.addEventListener('focusin', onFocusIn);
     document.addEventListener('focusout', onFocusOut);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('pointerup', onPointerUp, true);
+    document.addEventListener('pointercancel', onPointerUp, true);
+    document.addEventListener('click', onClick, true);
     return () => {
+      clearTimeout(timer);
       document.removeEventListener('focusin', onFocusIn);
       document.removeEventListener('focusout', onFocusOut);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('pointerup', onPointerUp, true);
+      document.removeEventListener('pointercancel', onPointerUp, true);
+      document.removeEventListener('click', onClick, true);
     };
   }, []);
   return !!field?.isConnected;
