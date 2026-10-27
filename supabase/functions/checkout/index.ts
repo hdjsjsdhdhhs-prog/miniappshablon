@@ -1,14 +1,19 @@
 // POST /functions/v1/checkout
-// Creates an order atomically via public.create_order after verifying Telegram initData.
-// The client sends only variant ids and quantities; prices, ownership and stock are resolved
-// in PostgreSQL inside one transaction.
+// Creates an order atomically after verifying Telegram initData. The client sends only variant ids and
+// quantities; prices, ownership and stock are resolved in PostgreSQL inside one transaction.
+//
+// Two body formats (release stage 1, see 20261026090000):
+//   * { fulfillment, comment }        → public.create_order_v2 (current storefront: delivery / pickup)
+//   * { contact: { name, phone, comment } } → public.create_order (storefront published before 20261026090000;
+//     kept unchanged until a follow-up release removes the old contract)
+// A body with both or neither is rejected. Both paths share identity (initData only), validation and errors.
 import { z } from 'npm:zod@4.6.7';
 import { telegramApiBase } from '../_shared/admin-auth.ts';
 import { serviceClient, verifyTelegramRequest } from '../_shared/auth.ts';
 import { corsHeaders, errorResponse, json, parseDbErrorDetails } from '../_shared/http.ts';
 import { dispatchNotifications } from '../_shared/notify-dispatch.ts';
 
-const bodySchema = z.object({
+const baseShape = {
   shopSlug: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/),
   idempotencyKey: z.uuid(),
   currency: z.string().regex(/^[A-Z]{3}$/),
@@ -17,8 +22,12 @@ const bodySchema = z.object({
     .array(z.object({ variantId: z.uuid(), quantity: z.number().int().min(1).max(99) }))
     .min(1)
     .max(50),
+};
+
+const fulfillmentBodySchema = z.object({
+  ...baseShape,
   // Name/phone are not collected: the buyer is the verified Telegram user. The method is re-checked against the
-  // shop's current settings in create_order; a pickup request carries no address at all (unknown keys are dropped).
+  // shop's current settings in create_order_v2; a pickup request carries no address at all (unknown keys are dropped).
   fulfillment: z.discriminatedUnion('method', [
     z.object({ method: z.literal('delivery'), address: z.string().trim().min(1).max(300) }),
     z.object({ method: z.literal('pickup') }),
@@ -26,10 +35,38 @@ const bodySchema = z.object({
   comment: z.string().trim().max(500).optional().default(''),
 });
 
+/** The pre-20261026090000 contract, byte-for-byte the old schema (its parsed `contact` feeds the request hash). */
+const legacyBodySchema = z.object({
+  ...baseShape,
+  contact: z.object({
+    name: z.string().trim().min(1).max(80),
+    phone: z.string().trim().max(32).optional().default(''),
+    comment: z.string().trim().max(500).optional().default(''),
+  }),
+});
+
+type FulfillmentBody = z.infer<typeof fulfillmentBodySchema>;
+type LegacyBody = z.infer<typeof legacyBodySchema>;
+type ParsedBody = { kind: 'fulfillment'; body: FulfillmentBody } | { kind: 'legacy'; body: LegacyBody };
+
+/**
+ * Picks the contract by its top-level key. `contact` alone → legacy; otherwise the current schema (which rejects a
+ * body without `fulfillment`). Both keys at once is ambiguous → null (invalid body). Throws ZodError on bad input.
+ */
+function parseBody(raw: unknown): ParsedBody | null {
+  const obj = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const hasFulfillment = obj.fulfillment !== undefined;
+  const hasContact = obj.contact !== undefined;
+  if (hasContact && hasFulfillment) return null;
+  if (hasContact) return { kind: 'legacy', body: legacyBodySchema.parse(raw) };
+  return { kind: 'fulfillment', body: fulfillmentBodySchema.parse(raw) };
+}
+
 const DB_ERRORS: Record<string, number> = {
   invalid_customer: 400,
   invalid_items: 400,
   invalid_quantity: 400,
+  invalid_contact: 400,
   invalid_fulfillment: 400,
   invalid_address: 400,
   invalid_comment: 400,
@@ -57,23 +94,20 @@ Deno.serve(async (req) => {
   const auth = await verifyTelegramRequest(req);
   if (!auth.ok) return auth.response;
 
-  let body: z.infer<typeof bodySchema>;
+  let parsed: ParsedBody | null;
   try {
-    body = bodySchema.parse(await req.json());
+    parsed = parseBody(await req.json());
   } catch (err) {
     return errorResponse(req, 400, 'invalid_body', err instanceof z.ZodError ? z.flattenError(err) : null);
   }
+  if (!parsed) return errorResponse(req, 400, 'invalid_body', { formErrors: ['Send either fulfillment or contact, not both'], fieldErrors: {} });
 
   const user = auth.data.user;
+  const { body } = parsed;
   const canonicalItems = [...body.items]
     .map((i) => [i.variantId, i.quantity] as const)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  const address = body.fulfillment.method === 'delivery' ? body.fulfillment.address : null;
-  const requestHash = await sha256Hex(
-    JSON.stringify({ s: body.shopSlug, i: canonicalItems, f: body.fulfillment.method, a: address, c: body.comment, cur: body.currency }),
-  );
-
-  const { data, error } = await serviceClient().rpc('create_order', {
+  const common = {
     p_shop_slug: body.shopSlug,
     p_customer_tg_id: user.id,
     p_customer_snapshot: {
@@ -83,18 +117,34 @@ Deno.serve(async (req) => {
     },
     p_items: body.items.map((i) => ({ variant_id: i.variantId, quantity: i.quantity })),
     p_idempotency_key: body.idempotencyKey,
-    p_request_hash: requestHash,
-    p_fulfillment_method: body.fulfillment.method,
-    p_delivery_address: address,
-    p_comment: body.comment,
     p_expected_currency: body.currency,
     p_expected_total_minor: body.expectedTotalMinor ?? null,
-  });
+  };
+
+  let rpcName: 'create_order' | 'create_order_v2';
+  let args: Record<string, unknown>;
+  if (parsed.kind === 'legacy') {
+    const b = parsed.body;
+    // Same hash as before the fulfillment release, so a retry of an order placed before the deploy still replays.
+    const requestHash = await sha256Hex(JSON.stringify({ s: b.shopSlug, i: canonicalItems, c: b.contact, cur: b.currency }));
+    rpcName = 'create_order';
+    args = { ...common, p_request_hash: requestHash, p_contact_name: b.contact.name, p_contact_phone: b.contact.phone, p_comment: b.contact.comment };
+  } else {
+    const b = parsed.body;
+    const address = b.fulfillment.method === 'delivery' ? b.fulfillment.address : null;
+    const requestHash = await sha256Hex(
+      JSON.stringify({ s: b.shopSlug, i: canonicalItems, f: b.fulfillment.method, a: address, c: b.comment, cur: b.currency }),
+    );
+    rpcName = 'create_order_v2';
+    args = { ...common, p_request_hash: requestHash, p_fulfillment_method: b.fulfillment.method, p_delivery_address: address, p_comment: b.comment };
+  }
+
+  const { data, error } = await serviceClient().rpc(rpcName, args);
 
   if (error) {
     const status = DB_ERRORS[error.message];
     if (status) return errorResponse(req, status, error.message, parseDbErrorDetails(error.details));
-    console.error('create_order failed', error);
+    console.error(`${rpcName} failed`, error);
     return errorResponse(req, 500, 'internal_error');
   }
 
