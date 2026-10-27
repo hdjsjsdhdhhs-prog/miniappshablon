@@ -17,6 +17,15 @@
 --   * Storage files are not touched in SQL. Each function returns `unused_media`: paths of the deleted rows that no
 --     row of the shop references any more (product images, category images, shop logo / cover). The admin removes
 --     exactly those objects through the Storage API, where the shop-media member policies apply again.
+--
+-- Production compatibility (release stage 1): additive for the live frontend. The old admin has no DELETE grant on
+-- products / product_variants / categories, so no existing flow deletes catalog rows; shops with orders can not be
+-- deleted either (orders.shop_id is ON DELETE RESTRICT). Re-creating the two FKs validates existing order lines,
+-- which already satisfy them (product_id / variant_id are either NULL or reference an existing row).
+
+-- Fail fast instead of queueing behind a long transaction (the FK swap locks order_items, products and
+-- product_variants briefly). On timeout the migration rolls back as a whole and the deploy stops.
+select set_config('lock_timeout', '5s', true);
 
 -- ---------------------------------------------------------------------------
 -- 1. Order lines can never lose their catalog link through a delete

@@ -46,6 +46,8 @@ const EXPECTED: Record<string, Roles> = {
   'public.order_status_transition_allowed(text,text)': r(false, false, true),
   'public.order_to_json(uuid)': r(false, false, true),
   'public.create_order(text,bigint,jsonb,jsonb,uuid,text,text,text,text,text,bigint)': r(false, false, true),
+  // Fulfillment checkout (20261026090000), next to the unchanged create_order of the old contract.
+  'public.create_order_v2(text,bigint,jsonb,jsonb,uuid,text,text,text,text,text,bigint)': r(false, false, true),
   'public.get_customer_orders(text,bigint,uuid,integer)': r(false, false, true),
   'public.set_updated_at()': r(false, false, false),
   // Telegram notifications and platform administration (20261025090000): Edge Functions only. The function
@@ -172,20 +174,24 @@ beforeAll(async () => {
 
 afterAll(cleanup);
 
-function forgedCreateOrderArgs(tgId: number) {
-  return {
+/** Forged direct calls of both checkout RPCs: the old contract (create_order) and the new one (create_order_v2). */
+const CREATE_ORDER_RPCS = ['create_order', 'create_order_v2'] as const;
+
+function forgedCreateOrderArgs(tgId: number, fn: (typeof CREATE_ORDER_RPCS)[number] = 'create_order_v2') {
+  const common = {
     p_shop_slug: S.slug,
     p_customer_tg_id: tgId,
     p_customer_snapshot: { first_name: 'Forged' },
     p_items: [{ variant_id: S.variants[0]!.id, quantity: 1 }],
     p_idempotency_key: randomUUID(),
     p_request_hash: 'forged',
-    p_fulfillment_method: 'pickup',
-    p_delivery_address: '',
     p_comment: '',
     p_expected_currency: 'RUB',
     p_expected_total_minor: 50000,
   };
+  return fn === 'create_order'
+    ? { ...common, p_contact_name: 'Forged', p_contact_phone: '' }
+    : { ...common, p_fulfillment_method: 'pickup', p_delivery_address: '' };
 }
 
 async function ordersOf(tgId: number) {
@@ -244,10 +250,10 @@ describe('EXECUTE privileges per PostgreSQL role', () => {
 });
 
 describe('anon through PostgREST', () => {
-  it('cannot call create_order directly with a forged Telegram ID', async () => {
+  it.each(CREATE_ORDER_RPCS)('cannot call %s directly with a forged Telegram ID', async (fn) => {
     const forged = newTelegramUserId();
     const before = await stockOf(S.variants[0]!.id);
-    const res = await anon().rpc('create_order', forgedCreateOrderArgs(forged));
+    const res = await anon().rpc(fn as never, forgedCreateOrderArgs(forged, fn) as never);
     expect(res.error?.message).toMatch(/permission denied/i);
     expect(res.data).toBeNull();
     expect(await ordersOf(forged)).toEqual([]);
@@ -289,7 +295,9 @@ describe('anon through PostgREST', () => {
 describe('authenticated owners', () => {
   it('another shop owner cannot create orders, read buyers or touch shop S', async () => {
     const forged = newTelegramUserId();
-    expect((await ownerT.rpc('create_order', forgedCreateOrderArgs(forged))).error?.message).toMatch(/permission denied/i);
+    for (const fn of CREATE_ORDER_RPCS) {
+      expect((await ownerT.rpc(fn as never, forgedCreateOrderArgs(forged, fn) as never)).error?.message, fn).toMatch(/permission denied/i);
+    }
     expect(await ordersOf(forged)).toEqual([]);
     const list = await ownerT.rpc('get_customer_orders', { p_shop_slug: S.slug, p_customer_tg_id: victimTgId, p_limit: 30 });
     expect(list.error?.message).toMatch(/permission denied/i);

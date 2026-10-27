@@ -66,11 +66,14 @@ describe('public (anon) access', () => {
     expect(ins.error).not.toBeNull();
     const upd = await db.from('shops').update({ name: 'hacked' }).eq('id', A.id).select('id');
     expect(upd.error !== null || upd.data!.length === 0).toBe(true);
-    const rpc = await db.rpc('create_order', {
+    const common = {
       p_shop_slug: A.slug, p_customer_tg_id: 1, p_customer_snapshot: {}, p_items: [], p_idempotency_key: randomUUID(),
-      p_request_hash: 'x', p_fulfillment_method: 'pickup', p_delivery_address: '', p_comment: '', p_expected_currency: 'RUB', p_expected_total_minor: 0,
-    });
+      p_request_hash: 'x', p_comment: '', p_expected_currency: 'RUB', p_expected_total_minor: 0,
+    };
+    const rpc = await db.rpc('create_order_v2', { ...common, p_fulfillment_method: 'pickup', p_delivery_address: '' });
     expect(rpc.error?.message).toMatch(/permission denied/i);
+    const legacy = await db.rpc('create_order', { ...common, p_contact_name: 'x', p_contact_phone: '' });
+    expect(legacy.error?.message).toMatch(/permission denied/i);
     const stock = await db.rpc('admin_set_variant_stock', { p_variant_id: A.variants[0]!.id, p_quantity: 999 });
     expect(stock.error).not.toBeNull();
     expect((await admin.from('product_variants').select('stock_quantity').eq('id', A.variants[0]!.id).single()).data!.stock_quantity).not.toBe(999);

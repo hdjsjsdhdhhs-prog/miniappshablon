@@ -1,15 +1,28 @@
--- Fulfillment methods (delivery / pickup) for checkout, DEMO-shop lifecycle managed from the platform admin
--- (create from a template, hand over to a paying client) and retirement of the unused legal_notice field.
+-- Fulfillment methods (delivery / pickup) for checkout and the DEMO-shop lifecycle managed from the platform admin
+-- (create from a template, hand over to a paying client).
+--
+-- Release stage 1 of 2 — ADDITIVE ONLY. The storefront/admin that is live when this migration is applied still
+-- talks the old contract, and the new frontend is published only after this migration and the new Edge Functions:
+--   * public.create_order(... p_contact_name, p_contact_phone ...) is NOT changed or dropped: the old checkout
+--     body ({ contact: { name, phone, comment } }) keeps working, including DEMO test orders (is_test).
+--   * The new contract ({ fulfillment, comment }) uses a NEW function, public.create_order_v2.
+--   * legal_notice stays writable by owners (the old admin saves it with every settings update).
+-- Stage 2 (a later, separate migration, only once the old frontend is no longer in use) may drop the old
+-- create_order and revoke UPDATE (legal_notice).
 --
 -- Security model (unchanged): every new function is EXECUTE-able by service_role only. The platform-admin
 -- Edge Function verifies the caller's Supabase Auth JWT and passes the verified user id as p_actor; each
 -- function re-checks that the actor is a platform admin (public.platform_admins) itself.
 --
--- DEMO orders. A DEMO shop never accepts an order on the server any more (create_order raises shop_demo):
--- the storefront shows a client-side "Тестовый заказ" instead, so a demo order can not change stock, create a
--- row in public.orders or reach the owner's order history. Orders flagged is_test that were created before
--- this migration stay in the table (nothing is deleted) but are hidden from owners and buyers by RLS /
--- get_customer_orders.
+-- DEMO orders. With the new contract a DEMO shop never accepts an order on the server (create_order_v2 raises
+-- shop_demo): the storefront shows a client-side "Тестовый заказ" instead. Orders flagged is_test (old contract)
+-- are never converted or deleted. They stay visible while their shop is still a DEMO shop (old behaviour) and are
+-- hidden from owners and buyers once the shop has been handed over to a client (is_demo = false).
+
+-- Fail fast instead of queueing behind a long transaction: a waiting ACCESS EXCLUSIVE lock on shops/orders would
+-- block every storefront read and checkout behind it. On timeout the whole migration rolls back (nothing changes)
+-- and the deploy workflow stops before any Edge Function is deployed.
+select set_config('lock_timeout', '5s', true);
 
 -- ---------------------------------------------------------------------------
 -- 1. Shop fulfillment settings (owner-editable)
@@ -23,18 +36,18 @@ alter table public.shops
 
 grant update (delivery_enabled, pickup_enabled, pickup_instructions) on public.shops to authenticated;
 
--- legal_notice is no longer shown anywhere (storefront, admin) and no longer required for publishing.
--- The column and its data are kept (no destructive change on production data), but owners cannot write it.
-revoke update (legal_notice) on public.shops from authenticated;
+-- legal_notice is no longer shown or required for publishing by the new frontend. Stage 1 keeps the column, its
+-- data AND the owners' UPDATE grant: the old admin sends legal_notice with every settings save.
 comment on column public.shops.legal_notice is
-  'DEPRECATED (20261026090000): not shown, not edited, not required for publishing. Kept only to preserve existing data.';
+  'DEPRECATED (20261026090000): not shown or required by the new frontend. Still writable for the old admin; revoke in a follow-up migration.';
 
 -- ---------------------------------------------------------------------------
 -- 2. Orders: fulfillment method + delivery address; name/phone are no longer collected
 -- ---------------------------------------------------------------------------
 
 -- The buyer is identified by the verified Telegram identity (customer_tg_id + customer_snapshot). Existing
--- rows keep their typed name; new orders store NULL instead of a placeholder. The length CHECK stays.
+-- rows keep their typed name; create_order_v2 stores NULL instead of a placeholder. The length CHECK stays and the
+-- old create_order still requires a non-blank name (invalid_contact), so the old contract is unchanged.
 alter table public.orders alter column contact_name drop not null;
 
 alter table public.orders
@@ -49,11 +62,16 @@ alter table public.orders
     or (fulfillment_method is null and delivery_address is null)
   );
 
--- Owners never see test orders of a former DEMO shop (they are not real orders).
+-- Owners never see test orders of a FORMER DEMO shop (they are not real orders). While the shop is still a DEMO
+-- shop its test orders stay visible, exactly as before (the old storefront still creates them). The shops row is
+-- readable for every member (shops_member_read uses the same is_shop_member check).
 drop policy orders_member_read on public.orders;
 create policy orders_member_read on public.orders
   for select to authenticated
-  using (public.is_shop_member(shop_id) and not is_test);
+  using (
+    public.is_shop_member(shop_id)
+    and (not is_test or exists (select 1 from public.shops s where s.id = orders.shop_id and s.is_demo))
+  );
 
 -- Items follow the visibility of their order (the subquery runs with the caller's RLS on orders).
 drop policy order_items_member_read on public.order_items;
@@ -108,13 +126,12 @@ revoke all on function public.order_to_json(uuid) from public, anon, authenticat
 grant execute on function public.order_to_json(uuid) to service_role;
 
 -- ---------------------------------------------------------------------------
--- 3. create_order: fulfillment instead of name/phone; DEMO shops never create orders
+-- 3. create_order_v2: fulfillment instead of name/phone; DEMO shops never create orders
 -- ---------------------------------------------------------------------------
--- Same argument types as before, different names/meaning → drop and re-create (CREATE OR REPLACE cannot rename
--- parameters). Deploy order: migration, then the checkout Edge Function.
-drop function public.create_order(text, bigint, jsonb, jsonb, uuid, text, text, text, text, text, bigint);
-
-create function public.create_order(
+-- A NEW function next to the unchanged public.create_order (old contract, still used by the live storefront until
+-- stage 2). Same locking, pricing, stock and idempotency rules as create_order (see 20261014090400); the
+-- differences are the fulfillment checks, no name/phone and no server-side DEMO orders.
+create function public.create_order_v2(
   p_shop_slug text,
   p_customer_tg_id bigint,
   p_customer_snapshot jsonb,
@@ -342,11 +359,12 @@ begin
 end;
 $$;
 
-revoke all on function public.create_order(text, bigint, jsonb, jsonb, uuid, text, text, text, text, text, bigint)
+revoke all on function public.create_order_v2(text, bigint, jsonb, jsonb, uuid, text, text, text, text, text, bigint)
   from public, anon, authenticated;
-grant execute on function public.create_order(text, bigint, jsonb, jsonb, uuid, text, text, text, text, text, bigint) to service_role;
+grant execute on function public.create_order_v2(text, bigint, jsonb, jsonb, uuid, text, text, text, text, text, bigint) to service_role;
 
--- Buyers never see test orders (legacy DEMO orders of a shop that became a real one).
+-- Buyers never see test orders of a FORMER DEMO shop (legacy DEMO orders of a shop that became a real one). In a
+-- shop that is still DEMO they stay visible, as before.
 create or replace function public.get_customer_orders(
   p_shop_slug text,
   p_customer_tg_id bigint,
@@ -366,7 +384,7 @@ as $$
     join public.shops s on s.id = o.shop_id
     where s.slug = p_shop_slug
       and o.customer_tg_id = p_customer_tg_id
-      and not o.is_test
+      and (not o.is_test or s.is_demo)
       and (p_order_id is null or o.id = p_order_id)
     order by o.created_at desc
     limit least(greatest(coalesce(p_limit, 30), 1), 100)

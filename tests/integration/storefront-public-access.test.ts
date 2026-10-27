@@ -161,13 +161,16 @@ describe('private data and privileged RPCs remain closed to anon', () => {
     }
   });
 
-  it('create_order and get_customer_orders are denied for the public role', async () => {
+  it('create_order, create_order_v2 and get_customer_orders are denied for the public role', async () => {
     const db = anon();
-    const create = await db.rpc('create_order', {
+    const common = {
       p_shop_slug: live.slug, p_customer_tg_id: 1, p_customer_snapshot: {}, p_items: [], p_idempotency_key: randomUUID(),
-      p_request_hash: 'x', p_fulfillment_method: 'pickup', p_delivery_address: '', p_comment: '', p_expected_currency: 'RUB', p_expected_total_minor: 0,
-    });
+      p_request_hash: 'x', p_comment: '', p_expected_currency: 'RUB', p_expected_total_minor: 0,
+    };
+    const create = await db.rpc('create_order_v2', { ...common, p_fulfillment_method: 'pickup', p_delivery_address: '' });
     expect(create.error?.message).toMatch(/permission denied/i);
+    const legacy = await db.rpc('create_order', { ...common, p_contact_name: 'x', p_contact_phone: '' });
+    expect(legacy.error?.message).toMatch(/permission denied/i);
     const orders = await db.rpc('get_customer_orders', { p_shop_slug: live.slug, p_customer_tg_id: 1, p_limit: 30 });
     expect(orders.error?.message).toMatch(/permission denied/i);
   });

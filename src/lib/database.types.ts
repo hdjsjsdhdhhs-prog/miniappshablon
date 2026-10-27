@@ -295,6 +295,9 @@ isOneToOne: true
 { Args: { "p_quantity": number,"p_variant_id": string }; Returns: Json
                            },
 "create_order":
+{ Args: { "p_comment": string,"p_contact_name": string,"p_contact_phone": string,"p_customer_snapshot": Json,"p_customer_tg_id": number,"p_expected_currency": string,"p_expected_total_minor": number,"p_idempotency_key": string,"p_items": Json,"p_request_hash": string,"p_shop_slug": string }; Returns: Json
+                           },
+"create_order_v2":
 { Args: { "p_comment": string,"p_customer_snapshot": Json,"p_customer_tg_id": number,"p_delivery_address": string,"p_expected_currency": string,"p_expected_total_minor": number,"p_fulfillment_method": string,"p_idempotency_key": string,"p_items": Json,"p_request_hash": string,"p_shop_slug": string }; Returns: Json
                            },
 "get_customer_orders":
