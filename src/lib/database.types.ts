@@ -279,7 +279,16 @@ isOneToOne: true
             [_ in never]: never
           }
           Functions: {
-            "admin_set_order_status":
+            "admin_delete_category":
+{ Args: { "p_category_id": string,"p_move_products_to"?: string }; Returns: Json
+                           },
+"admin_delete_product":
+{ Args: { "p_product_id": string }; Returns: Json
+                           },
+"admin_delete_variant":
+{ Args: { "p_variant_id": string }; Returns: Json
+                           },
+"admin_set_order_status":
 { Args: { "p_order_id": string,"p_status": string }; Returns: Json
                            },
 "admin_set_variant_stock":
