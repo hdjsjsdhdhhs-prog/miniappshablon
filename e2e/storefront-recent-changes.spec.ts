@@ -11,14 +11,14 @@ async function openShop(page: Page) {
   await expect(page.getByRole('heading', { level: 1, name: 'Noir Vapor' })).toBeVisible();
 }
 
-test('no age gate and no age notice, while the age settings stay in the data', async ({ page }) => {
-  const { data: shop } = await db.from('shops').select('age_restriction, legal_notice').eq('slug', 'noir-vapor').single();
-  // The legal/age configuration is kept (not deleted) — the storefront just does not show it.
+test('no age gate and no age/legal notice, while the age restriction stays in the data', async ({ page }) => {
+  const { data: shop } = await db.from('shops').select('age_restriction').eq('slug', 'noir-vapor').single();
+  // The age configuration is kept (it is still required for publishing / hand-over) — the storefront just does not show it.
   expect(shop!.age_restriction).toBeGreaterThan(0);
   await openShop(page);
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByText(/Вам исполнилось|Да, мне есть/)).toHaveCount(0);
-  if (shop!.legal_notice.trim()) await expect(page.getByText(shop!.legal_notice.trim(), { exact: false })).toHaveCount(0);
+  await expect(page.getByText(/младше 18 лет/)).toHaveCount(0);
   await expect(page.getByText(/^18\+$/)).toHaveCount(0);
 });
 
@@ -69,12 +69,12 @@ test('brand header uses the real Benzin-Semibold font (Latin + Cyrillic) and sta
   }
 });
 
-test('DEMO banner: exact text, blue @caseypsd link to t.me, tappable on a narrow screen', async ({ page }) => {
+test('DEMO banner: exact text, blue Telegram logo + caseypsd link to t.me, tappable on a narrow screen', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 640 });
   await openShop(page);
   const banner = page.getByTestId('demo-banner');
-  await expect(banner).toHaveText('DEMO-режим: полный доступ можете приобрести у @caseypsd');
-  const link = banner.getByRole('link', { name: '@caseypsd' });
+  await expect(banner).toHaveText('DEMO-режим: приобрести полный доступ - caseypsd');
+  const link = banner.getByRole('link', { name: 'caseypsd' });
   await expect(link).toHaveAttribute('href', 'https://t.me/caseypsd');
   const color = await link.evaluate((el) => getComputedStyle(el).color);
   const [r, g, b] = color.match(/\d+/g)!.map(Number);

@@ -165,7 +165,7 @@ describe('private data and privileged RPCs remain closed to anon', () => {
     const db = anon();
     const create = await db.rpc('create_order', {
       p_shop_slug: live.slug, p_customer_tg_id: 1, p_customer_snapshot: {}, p_items: [], p_idempotency_key: randomUUID(),
-      p_request_hash: 'x', p_contact_name: 'x', p_contact_phone: '', p_comment: '', p_expected_currency: 'RUB', p_expected_total_minor: 0,
+      p_request_hash: 'x', p_fulfillment_method: 'pickup', p_delivery_address: '', p_comment: '', p_expected_currency: 'RUB', p_expected_total_minor: 0,
     });
     expect(create.error?.message).toMatch(/permission denied/i);
     const orders = await db.rpc('get_customer_orders', { p_shop_slug: live.slug, p_customer_tg_id: 1, p_limit: 30 });

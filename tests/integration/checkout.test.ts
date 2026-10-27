@@ -116,14 +116,19 @@ describe('checkout (Edge Function → create_order)', () => {
     expect((tooMany.body!.error as { code: string }).code).toBe('insufficient_stock');
   });
 
-  it('preview shops never accept orders; demo shops create orders marked as test', async () => {
+  it('preview shops never accept orders; DEMO shops never store an order or move stock (also from Telegram)', async () => {
     const preview = await createTestShop({ mode: 'preview' });
     const res = await callFunction('checkout', await initDataFor(newTelegramUserId()), checkoutBody(preview, [{ variantId: preview.variants[0]!.id, quantity: 1 }]));
     expect(res.status).toBe(403);
     expect((await admin.from('orders').select('id').eq('shop_id', preview.id)).data).toEqual([]);
+    // A DEMO shop shows a client-side "Тестовый заказ"; a forged request with valid initData is refused.
     const demo = await createTestShop({ isDemo: true });
     const d = await callFunction('checkout', await initDataFor(newTelegramUserId()), checkoutBody(demo, [{ variantId: demo.variants[0]!.id, quantity: 1 }]));
-    expect((d.body!.order as Order).is_test).toBe(true);
+    expect(d.status).toBe(403);
+    expect((d.body!.error as { code: string }).code).toBe('shop_demo');
+    expect((await admin.from('orders').select('id').eq('shop_id', demo.id)).data).toEqual([]);
+    expect(await stockOf(demo.variants[0]!.id)).toBe(5);
+    expect((await admin.from('inventory_movements').select('id').eq('shop_id', demo.id).eq('reason', 'checkout')).data).toEqual([]);
   });
 
   it('rejects missing, tampered, foreign-bot and expired initData', async () => {
@@ -148,6 +153,129 @@ describe('checkout (Edge Function → create_order)', () => {
     expect(res.status).toBe(201);
     const { data } = await admin.from('orders').select('customer_tg_id').eq('id', (res.body!.order as Order).id).single();
     expect(data!.customer_tg_id).toBe(real);
+  });
+});
+
+describe('fulfillment: delivery / pickup validated on the server', () => {
+  type FOrder = Order & { fulfillment_method: string | null; delivery_address: string | null; contact_name: string | null; contact_phone: string | null };
+  const code = (r: { body: Record<string, unknown> | null }) => (r.body?.error as { code?: string } | undefined)?.code;
+
+  it('delivery stores the trimmed address; no name/phone placeholders are written', async () => {
+    const shop = await createTestShop();
+    const res = await callFunction('checkout', await initDataFor(newTelegramUserId()), checkoutBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }], {
+      fulfillment: { method: 'delivery', address: '  ул. Ленина, 1, кв. 5  ' },
+      comment: 'Позвоните за час',
+    }));
+    expect(res.status).toBe(201);
+    const order = res.body!.order as FOrder;
+    expect(order).toMatchObject({ fulfillment_method: 'delivery', delivery_address: 'ул. Ленина, 1, кв. 5', comment: 'Позвоните за час', contact_name: null, contact_phone: null });
+    const { data: row } = await admin.from('orders').select('fulfillment_method, delivery_address, contact_name, contact_phone').eq('id', order.id).single();
+    expect(row).toEqual({ fulfillment_method: 'delivery', delivery_address: 'ул. Ленина, 1, кв. 5', contact_name: null, contact_phone: null });
+    expect(await stockOf(shop.variants[0]!.id)).toBe(4);
+  });
+
+  it('pickup never stores an address, even when one is injected into the request', async () => {
+    const shop = await createTestShop();
+    const res = await callFunction('checkout', await initDataFor(newTelegramUserId()), checkoutBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }], {
+      fulfillment: { method: 'pickup', address: 'should be ignored' },
+      deliveryAddress: 'also ignored',
+    }));
+    expect(res.status).toBe(201);
+    const { data: row } = await admin.from('orders').select('fulfillment_method, delivery_address').eq('id', (res.body!.order as Order).id).single();
+    expect(row).toEqual({ fulfillment_method: 'pickup', delivery_address: null });
+  });
+
+  it('delivery without a (non-blank) address, unknown methods and the old name/phone body are rejected, nothing is written', async () => {
+    const shop = await createTestShop();
+    const init = await initDataFor(newTelegramUserId());
+    const items = [{ variantId: shop.variants[0]!.id, quantity: 1 }];
+    for (const extra of [
+      { fulfillment: { method: 'delivery' } },
+      { fulfillment: { method: 'delivery', address: '   ' } },
+      { fulfillment: { method: 'delivery', address: 'x'.repeat(301) } },
+      { fulfillment: { method: 'courier', address: 'ул. Мира, 1' } },
+      { fulfillment: undefined, contact: { name: 'Old client', phone: '+79990000000', comment: '' } },
+    ]) {
+      const r = await callFunction('checkout', init, checkoutBody(shop, items, extra));
+      expect(r.status, JSON.stringify(extra)).toBe(400);
+    }
+    expect((await admin.from('orders').select('id').eq('shop_id', shop.id)).data).toEqual([]);
+    expect(await stockOf(shop.variants[0]!.id)).toBe(5);
+  });
+
+  it('a disabled method can not be forced through the API; both disabled → no order at all', async () => {
+    const noDelivery = await createTestShop({ delivery: false });
+    const init = await initDataFor(newTelegramUserId());
+    const forced = await callFunction('checkout', init, checkoutBody(noDelivery, [{ variantId: noDelivery.variants[0]!.id, quantity: 1 }], {
+      fulfillment: { method: 'delivery', address: 'ул. Ленина, 1' },
+    }));
+    expect(forced.status).toBe(409);
+    expect(code(forced)).toBe('fulfillment_unavailable');
+    expect((forced.body!.error as { details: unknown }).details).toEqual({ delivery: false, pickup: true });
+    expect((await callFunction('checkout', init, checkoutBody(noDelivery, [{ variantId: noDelivery.variants[0]!.id, quantity: 1 }]))).status).toBe(201);
+
+    const noPickup = await createTestShop({ pickup: false });
+    const p = await callFunction('checkout', init, checkoutBody(noPickup, [{ variantId: noPickup.variants[0]!.id, quantity: 1 }]));
+    expect(code(p)).toBe('fulfillment_unavailable');
+
+    const none = await createTestShop({ delivery: false, pickup: false });
+    for (const fulfillment of [{ method: 'pickup' }, { method: 'delivery', address: 'ул. Ленина, 1' }]) {
+      const r = await callFunction('checkout', init, checkoutBody(none, [{ variantId: none.variants[0]!.id, quantity: 1 }], { fulfillment }));
+      expect(code(r)).toBe('fulfillment_unavailable');
+    }
+    for (const s of [noPickup, none]) {
+      expect((await admin.from('orders').select('id').eq('shop_id', s.id)).data).toEqual([]);
+      expect(await stockOf(s.variants[0]!.id)).toBe(5);
+    }
+  });
+
+  it("the owner's switch applies to the next checkout immediately; owners can not touch is_demo / mode", async () => {
+    const shop = await createTestShop();
+    const { client: owner } = await createOwner(shop.id);
+    const off = await owner.from('shops').update({ pickup_enabled: false, pickup_instructions: 'ул. Мира, 1, 10–20' }).eq('id', shop.id).select('pickup_enabled');
+    expect(off.error).toBeNull();
+    const r = await callFunction('checkout', await initDataFor(newTelegramUserId()), checkoutBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }]));
+    expect(code(r)).toBe('fulfillment_unavailable');
+    // Column grants: the DEMO flag, publication state and legal_notice are not writable by an owner.
+    for (const patch of [{ is_demo: true }, { mode: 'preview' }, { status: 'suspended' }, { legal_notice: 'x' }]) {
+      const res = await owner.from('shops').update(patch).eq('id', shop.id).select('id');
+      expect(res.error?.message, JSON.stringify(patch)).toMatch(/permission denied/i);
+    }
+    const { data: after } = await admin.from('shops').select('is_demo, mode, status').eq('id', shop.id).single();
+    expect(after).toEqual({ is_demo: false, mode: 'live', status: 'active' });
+  });
+
+  it('idempotency covers the fulfillment: same key with another address is a conflict, a replay returns the order', async () => {
+    const shop = await createTestShop();
+    const init = await initDataFor(newTelegramUserId());
+    const body = checkoutBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }], { fulfillment: { method: 'delivery', address: 'ул. Ленина, 1' } });
+    expect((await callFunction('checkout', init, body)).status).toBe(201);
+    expect((await callFunction('checkout', init, body)).status).toBe(200);
+    const changed = await callFunction('checkout', init, { ...body, fulfillment: { method: 'delivery', address: 'ул. Мира, 2' } });
+    expect(changed.status).toBe(422);
+    expect(await stockOf(shop.variants[0]!.id)).toBe(4);
+  });
+
+  it('legacy test orders of a former DEMO shop are hidden from the owner and from the buyer', async () => {
+    const shop = await createTestShop();
+    const { client: owner } = await createOwner(shop.id);
+    const buyer = newTelegramUserId();
+    const real = await callFunction('checkout', await initDataFor(buyer), checkoutBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }]));
+    const realId = (real.body!.order as Order).id;
+    const { data: legacy, error } = await admin
+      .from('orders')
+      .insert({
+        shop_id: shop.id, order_number: 999, customer_tg_id: buyer, contact_name: 'Demo', currency: 'RUB', total_minor: 1,
+        idempotency_key: randomUUID(), request_hash: 'legacy', is_test: true,
+      })
+      .select('id')
+      .single();
+    expect(error).toBeNull();
+    const { data: seen } = await owner.from('orders').select('id').eq('shop_id', shop.id);
+    expect(seen).toEqual([{ id: realId }]);
+    const mine = await callFunction('my-orders', await initDataFor(buyer), { shopSlug: shop.slug });
+    expect((mine.body!.orders as Order[]).map((o) => o.id)).toEqual([realId]);
+    expect((await admin.from('orders').select('id').eq('id', legacy!.id)).data).toHaveLength(1); // kept, not deleted
   });
 });
 

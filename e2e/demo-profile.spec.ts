@@ -32,7 +32,7 @@ test('demo shop outside Telegram: profile mock-up with the current shop logo/nam
   await expect(page.getByRole('heading', { level: 1, name: 'Noir Vapor' })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const contact = page.getByTestId('demo-contact-link');
-  await expect(page.getByTestId('demo-banner')).toContainText('DEMO-режим: полный доступ можете приобрести у @caseypsd');
+  await expect(page.getByTestId('demo-banner')).toHaveText('DEMO-режим: приобрести полный доступ - caseypsd');
   await expect(contact).toHaveAttribute('href', 'https://t.me/caseypsd');
 
   await page.getByRole('link', { name: /Профиль/ }).click();
@@ -50,11 +50,11 @@ test('demo shop outside Telegram: profile mock-up with the current shop logo/nam
   await expect(page.getByTestId('demo-profile').getByRole('heading', { level: 1, name: 'Mint Lab' })).toBeVisible();
   await expect(page.getByTestId('demo-profile')).not.toContainText('Noir Vapor');
 
-  // Narrow phone: the banner wraps, the contact link stays whole and tappable, no horizontal scroll.
+  // Narrow phone: the banner stays one 32 px line, the contact link stays whole inside the screen, no horizontal scroll.
   await page.setViewportSize({ width: 320, height: 640 });
   const box = (await contact.boundingBox())!;
-  expect(box.height).toBeGreaterThanOrEqual(20);
   expect(box.x + box.width).toBeLessThanOrEqual(320);
+  expect((await page.getByTestId('demo-banner').boundingBox())!.height).toBe(32);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 
   expect(forbidden).toEqual([]);

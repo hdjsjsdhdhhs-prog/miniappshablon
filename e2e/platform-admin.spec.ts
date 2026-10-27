@@ -29,7 +29,7 @@ async function shopOwnedBy(ownerId: string, label: string) {
   const name = `E2E ${label} ${run}`;
   const { data: shop, error } = await db
     .from('shops')
-    .insert({ slug, name, theme_config: DARK_PREMIUM_THEME, currency: 'RUB', mode: 'live', legal_notice: '' })
+    .insert({ slug, name, theme_config: DARK_PREMIUM_THEME, currency: 'RUB', mode: 'live' })
     .select('id')
     .single();
   if (error) throw error;
@@ -155,7 +155,7 @@ test('owner connects Telegram notifications (mock) and receives the order; the t
   if (await mint.count()) await mint.click();
   await buyer.getByTestId('add-to-cart').click();
   await buyer.getByRole('link', { name: /Корзина/ }).click();
-  await buyer.getByLabel('Имя').fill('E2E Покупатель');
+  await buyer.getByTestId('fulfillment-pickup').click();
   await buyer.getByTestId('checkout-submit').click();
   const success = buyer.getByText(/Заказ №\d+ отправлен/);
   await expect(success).toBeVisible();
@@ -167,6 +167,8 @@ test('owner connects Telegram notifications (mock) and receives the order; the t
   const text = (await mockMessages(chat)).find((m) => m.text.includes(`Новый заказ №${n}</b>`))!.text;
   expect(text).toContain(shop.name);
   expect(text).toContain('@e2e_buyer');
+  expect(text).toContain('<b>Получение:</b> самовывоз');
+  expect(text).not.toContain('Контакт из формы');
   expect(text).toMatch(/1\. Liquid · Mint — 1 × 690\s₽ = 690\s₽/);
   expect(text).toMatch(/Итого:<\/b> 690\s₽/);
   await buyerCtx.close();

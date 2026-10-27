@@ -58,6 +58,12 @@ const EXPECTED: Record<string, Roles> = {
   'public.platform_list_shops(uuid)': r(false, false, true),
   'public.platform_find_user(uuid,text)': r(false, false, true),
   'public.platform_transfer_shop(uuid,uuid,uuid)': r(false, false, true),
+  // DEMO lifecycle (20261026090000): platform-admin Edge Function only, actor re-checked inside.
+  'public.platform_create_demo_shop(uuid,uuid,text,text)': r(false, false, true),
+  'public.platform_publish_demo_shop(uuid,uuid)': r(false, false, true),
+  'public.platform_discard_demo_shop(uuid,uuid)': r(false, false, true),
+  'public.platform_handover_check(uuid,uuid)': r(false, false, true),
+  'public.platform_handover_shop(uuid,uuid,uuid,text)': r(false, false, true),
 };
 
 /** Functions that existed on the hosted project when the hardening migration was written (17.10.2026). */
@@ -145,7 +151,7 @@ beforeAll(async () => {
   const res = await callFunction(
     'checkout',
     await initDataFor(victimTgId),
-    checkoutBody(S, [{ variantId: S.variants[0]!.id, quantity: 1 }], { contact: { name: 'Victim Name', phone: '+79991112233', comment: '' } }),
+    checkoutBody(S, [{ variantId: S.variants[0]!.id, quantity: 1 }], { fulfillment: { method: 'delivery', address: 'Victim Street 1, apt 2' } }),
   );
   expect(res.status).toBe(201);
   victimOrderId = (res.body!.order as { id: string }).id;
@@ -161,8 +167,8 @@ function forgedCreateOrderArgs(tgId: number) {
     p_items: [{ variant_id: S.variants[0]!.id, quantity: 1 }],
     p_idempotency_key: randomUUID(),
     p_request_hash: 'forged',
-    p_contact_name: 'Forged',
-    p_contact_phone: '',
+    p_fulfillment_method: 'pickup',
+    p_delivery_address: '',
     p_comment: '',
     p_expected_currency: 'RUB',
     p_expected_total_minor: 50000,
@@ -237,10 +243,10 @@ describe('anon through PostgREST', () => {
     const db = anon();
     const list = await db.rpc('get_customer_orders', { p_shop_slug: S.slug, p_customer_tg_id: victimTgId, p_limit: 30 });
     expect(list.error?.message).toMatch(/permission denied/i);
-    expect(JSON.stringify(list.data ?? null)).not.toContain('Victim Name');
+    expect(JSON.stringify(list.data ?? null)).not.toContain('Victim Street');
     const one = await db.rpc('order_to_json', { p_order_id: victimOrderId });
     expect(one.error?.message).toMatch(/permission denied/i);
-    expect(JSON.stringify(one.data ?? null)).not.toContain('+79991112233');
+    expect(JSON.stringify(one.data ?? null)).not.toContain('Victim Street');
   });
 
   it('cannot change order status or stock via admin_* RPCs', async () => {
@@ -288,7 +294,7 @@ describe('authenticated owners', () => {
     const status = await ownerS.rpc('admin_set_order_status', { p_order_id: victimOrderId, p_status: 'confirmed' });
     expect(status.error).toBeNull();
     expect((status.data as { status: string }).status).toBe('confirmed');
-    expect((await ownerS.from('orders').select('id, contact_name').eq('id', victimOrderId)).data).toEqual([{ id: victimOrderId, contact_name: 'Victim Name' }]);
+    expect((await ownerS.from('orders').select('id, delivery_address').eq('id', victimOrderId)).data).toEqual([{ id: victimOrderId, delivery_address: 'Victim Street 1, apt 2' }]);
     // shops CHECK constraints (is_valid_theme / is_supported_currency) and the updated_at trigger run as authenticated.
     const upd = await ownerS.from('shops').update({ name: 'Renamed by owner' }).eq('id', S.id).select('name');
     expect(upd.error).toBeNull();

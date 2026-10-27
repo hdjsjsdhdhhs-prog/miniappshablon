@@ -28,6 +28,11 @@ export function anon(): Db {
 
 const created = { shops: new Set<string>(), users: new Set<string>() };
 
+/** Registers rows created by the code under test (e.g. a DEMO shop, an invited user) for cleanup(). */
+export function track(kind: 'shop' | 'user', id: string): void {
+  (kind === 'shop' ? created.shops : created.users).add(id);
+}
+
 export interface TestShop {
   id: string;
   slug: string;
@@ -39,6 +44,8 @@ export interface TestShop {
 export async function createTestShop(opts: {
   mode?: 'live' | 'preview';
   isDemo?: boolean;
+  delivery?: boolean;
+  pickup?: boolean;
   basePrice?: number;
   variants?: Array<{ flavor: string | null; stock: number; price?: number | null }>;
 } = {}): Promise<TestShop> {
@@ -52,7 +59,8 @@ export async function createTestShop(opts: {
       currency: 'RUB',
       mode: opts.mode ?? 'live',
       is_demo: opts.isDemo ?? false,
-      legal_notice: 'test',
+      delivery_enabled: opts.delivery ?? true,
+      pickup_enabled: opts.pickup ?? true,
     })
     .select('id')
     .single();
@@ -205,7 +213,8 @@ export function checkoutBody(shop: TestShop, items: Array<{ variantId: string; q
     idempotencyKey: randomUUID(),
     currency: 'RUB',
     items,
-    contact: { name: 'Tester', phone: '+79000000000', comment: '' },
+    fulfillment: { method: 'pickup' },
+    comment: '',
     ...extra,
   };
 }

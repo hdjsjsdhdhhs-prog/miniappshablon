@@ -38,8 +38,6 @@ async function counts() {
   return { users: users.data.users.length, orders: orders.count, items: items.count };
 }
 
-const browser = { inTelegram: false, rawInitData: null };
-
 beforeAll(async () => {
   if (!env.isLocal) throw new Error(`demo profile tests run only against local Supabase, got ${env.url}`);
   demo = await createTestShop({ isDemo: true, basePrice: 69_000, variants: [{ flavor: 'Черника', stock: 5 }] });
@@ -58,7 +56,7 @@ describe('demo profile outside Telegram', () => {
 
     const shop = await fetchShopBySlug(demo.slug);
     expect(shop.isDemo).toBe(true);
-    expect(shouldShowDemoProfile(shop, browser)).toBe(true);
+    expect(shouldShowDemoProfile(shop)).toBe(true);
     const page = await fetchProductsPage(shop.id, { categoryId: null, search: '' }, 0);
     const order = buildDemoOrder(page.items, shop.currency);
     expect(order.title).toBe('Тестовый заказ');
@@ -79,6 +77,6 @@ describe('demo profile outside Telegram', () => {
     client.current = anon();
     const shop = await fetchShopBySlug(regular.slug);
     expect(shop.isDemo).toBe(false);
-    expect(shouldShowDemoProfile(shop, browser)).toBe(false);
+    expect(shouldShowDemoProfile(shop)).toBe(false);
   });
 });

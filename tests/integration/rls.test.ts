@@ -68,7 +68,7 @@ describe('public (anon) access', () => {
     expect(upd.error !== null || upd.data!.length === 0).toBe(true);
     const rpc = await db.rpc('create_order', {
       p_shop_slug: A.slug, p_customer_tg_id: 1, p_customer_snapshot: {}, p_items: [], p_idempotency_key: randomUUID(),
-      p_request_hash: 'x', p_contact_name: 'x', p_contact_phone: '', p_comment: '', p_expected_currency: 'RUB', p_expected_total_minor: 0,
+      p_request_hash: 'x', p_fulfillment_method: 'pickup', p_delivery_address: '', p_comment: '', p_expected_currency: 'RUB', p_expected_total_minor: 0,
     });
     expect(rpc.error?.message).toMatch(/permission denied/i);
     const stock = await db.rpc('admin_set_variant_stock', { p_variant_id: A.variants[0]!.id, p_quantity: 999 });
