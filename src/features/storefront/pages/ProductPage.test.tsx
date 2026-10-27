@@ -105,11 +105,23 @@ describe('ProductPage back button', () => {
     shown = product;
   });
 
-  it('sits above the gallery and returns to the catalog entry with its filters', async () => {
+  it('floats over the top of the photo (no separate strip) and returns to the catalog entry with its filters', async () => {
     renderAt(['/s/demo/?category=liquids&q=salt', '/s/demo/product/p1']);
     const back = screen.getByRole('button', { name: 'Назад' });
-    const gallery = screen.getByRole('main').querySelector('img, [role="img"]') ?? screen.getByRole('heading', { level: 1 });
-    expect(back.compareDocumentPosition(gallery) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const media = screen.getByTestId('product-media');
+    const main = screen.getByRole('main');
+    // The media block is the first thing on the page: nothing (no own bar) sits between the banner and the photo.
+    expect(main.firstElementChild).toBe(media);
+    const photo = media.querySelector('img, [role="img"]');
+    expect(photo).not.toBeNull();
+    // The button lives inside the media block on an absolutely positioned overlay, not in the flow above it.
+    expect(media).toContainElement(back);
+    const overlay = back.parentElement!;
+    expect(overlay).toHaveClass('absolute', 'top-0', 'pointer-events-none');
+    expect(overlay).not.toContainElement(photo as HTMLElement);
+    expect(back).toHaveClass('pointer-events-auto', 'glass-on-media');
+    // First focus stop of the page.
+    expect(back.compareDocumentPosition(photo!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await userEvent.click(back);
     expect(screen.getByTestId('location')).toHaveTextContent('/s/demo/?category=liquids&q=salt');
   });

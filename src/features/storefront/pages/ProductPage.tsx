@@ -94,19 +94,24 @@ export function ProductPage() {
 
   return (
     <main className="pb-6">
-      <div className="px-4 pt-3 pb-3">
-        <button
-          type="button"
-          onClick={back}
-          className="glass-panel glass-transition glass-press inline-flex h-10 items-center gap-1.5 rounded-full pr-4 pl-3 text-sm font-medium hover:border-(--glass-accent-edge)"
-          data-testid="product-back"
-        >
-          <ArrowLeftIcon aria-hidden weight="bold" className="size-4" />
-          Назад
-        </button>
+      {/* The photo starts right under the banner; "Назад" floats over its top edge. The overlay layer ignores
+          taps (swipes reach the gallery), only the button itself is interactive. It comes first in the DOM, so it
+          is also the first focus stop. */}
+      <div className="relative" data-testid="product-media">
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex px-4 pt-3">
+          <button
+            type="button"
+            onClick={back}
+            className="glass-panel glass-on-media glass-transition glass-press pointer-events-auto inline-flex h-10 items-center gap-1.5 rounded-full pr-4 pl-3 text-sm font-medium hover:border-(--glass-accent-edge)"
+            data-testid="product-back"
+          >
+            <ArrowLeftIcon aria-hidden weight="bold" className="size-4" />
+            Назад
+          </button>
+        </div>
+        <Gallery images={p.images} name={p.name} />
       </div>
       {product.isError && <StaleDataNotice onRetry={() => void product.refetch()} />}
-      <Gallery images={p.images} name={p.name} />
       <div className="space-y-5 px-4 pt-4">
         <div className="space-y-1">
           <Link
