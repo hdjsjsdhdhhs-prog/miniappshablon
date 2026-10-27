@@ -1,4 +1,4 @@
-import { PlusIcon } from '@phosphor-icons/react';
+import { PlusIcon, TrashIcon } from '@phosphor-icons/react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { findDuplicateCombos, variantFormSchema } from '@/domain/variants';
+import { findDuplicateCombos, variantFormSchema, variantLabel } from '@/domain/variants';
 import type { Tables } from '@/lib/supabase';
-import { createVariant, setVariantStock, updateVariant } from '../api';
+import { createVariant, deleteVariant, setVariantStock, updateVariant } from '../api';
+import { explainDeleteError } from '../delete-messages';
+import { ConfirmDeleteDialog } from './ConfirmDeleteDialog';
 
 type Variant = Tables<'product_variants'>;
 
@@ -47,7 +49,7 @@ function parseRow(d: RowDraft) {
   };
 }
 
-function VariantRow({ variant, onSaved }: { variant: Variant; onSaved: () => void }) {
+function VariantRow({ variant, onSaved, onDeleted }: { variant: Variant; onSaved: () => void; onDeleted: () => void }) {
   const [d, setD] = useState<RowDraft>(() => toDraft(variant));
   const dirty = JSON.stringify(d) !== JSON.stringify(toDraft(variant));
   const save = useMutation({
@@ -64,6 +66,31 @@ function VariantRow({ variant, onSaved }: { variant: Variant; onSaved: () => voi
     onError: (e) => toast.error(e instanceof Error && /duplicate|unique/i.test(e.message) ? 'Такое сочетание вкус/цвет уже есть' : (e as Error).message),
   });
   const set = (k: keyof RowDraft) => (e: React.ChangeEvent<HTMLInputElement>) => setD({ ...d, [k]: e.target.value });
+
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => deleteVariant(variant.id),
+    onSuccess: () => {
+      setDeleteOpen(false);
+      toast.success('Вариант удалён');
+      onDeleted();
+    },
+    onError: (e) => {
+      if (explainDeleteError(e, 'variant').gone) onDeleted();
+    },
+  });
+  const deactivate = useMutation({
+    mutationFn: () => updateVariant(variant.id, { is_active: false }),
+    onSuccess: () => {
+      setDeleteOpen(false);
+      toast.success('Вариант выключен');
+      onSaved();
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  const deleteError = remove.isError ? explainDeleteError(remove.error, 'variant') : null;
+  const label = variantLabel(variant) || 'Основной вариант';
+
   return (
     <TableRow data-testid="variant-row">
       <TableCell><Input aria-label="Вкус" value={d.flavor} onChange={set('flavor')} placeholder="—" /></TableCell>
@@ -72,9 +99,43 @@ function VariantRow({ variant, onSaved }: { variant: Variant; onSaved: () => voi
       <TableCell><Input aria-label="Остаток" value={d.stock} onChange={set('stock')} inputMode="numeric" className="w-24" data-testid="variant-stock" /></TableCell>
       <TableCell><Switch aria-label="Активен" checked={d.isActive} onCheckedChange={(v) => setD({ ...d, isActive: v })} /></TableCell>
       <TableCell>
-        <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate()} data-testid="variant-save">
-          {save.isPending ? '…' : 'Сохранить'}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate()} data-testid="variant-save">
+            {save.isPending ? '…' : 'Сохранить'}
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="text-destructive hover:text-destructive"
+            aria-label={`Удалить вариант ${label}`}
+            title="Удалить вариант"
+            onClick={() => {
+              remove.reset();
+              setDeleteOpen(true);
+            }}
+            data-testid="variant-delete"
+          >
+            <TrashIcon aria-hidden />
+          </Button>
+        </div>
+        <ConfirmDeleteDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          testId="variant-delete-dialog"
+          title={`Удалить вариант «${label}»?`}
+          description="Вариант и его остаток будут удалены без возможности восстановления. Если вариант уже есть в заказах, удаление будет отменено — такой вариант можно только выключить."
+          pending={remove.isPending}
+          error={deleteError ? deleteError.text + (deleteError.suggest === 'deactivate' && !variant.is_active ? ' Вариант уже выключен.' : '') : null}
+          alternative={
+            deleteError?.suggest === 'deactivate' && variant.is_active ? (
+              <Button variant="outline" disabled={deactivate.isPending} onClick={() => deactivate.mutate()} data-testid="variant-delete-deactivate">
+                Выключить вариант
+              </Button>
+            ) : null
+          }
+          confirmDisabled={deleteError?.suggest === 'deactivate' || deleteError?.code === 'last_variant'}
+          onConfirm={() => remove.mutate()}
+        />
       </TableCell>
     </TableRow>
   );
@@ -84,6 +145,12 @@ export function VariantsEditor({ shopId, productId, variants, queryKey }: { shop
   const qc = useQueryClient();
   const [draft, setDraft] = useState<RowDraft>(EMPTY);
   const refresh = () => void qc.invalidateQueries({ queryKey: queryKey as unknown[] });
+  // A delete also changes the products list (variant count, stock) and the storefront.
+  const refreshAll = () => {
+    refresh();
+    void qc.invalidateQueries({ queryKey: ['admin', 'shop', shopId] });
+    void qc.invalidateQueries({ queryKey: ['shop', shopId] });
+  };
   const add = useMutation({
     mutationFn: async () => {
       const r = parseRow(draft);
@@ -123,7 +190,7 @@ export function VariantsEditor({ shopId, productId, variants, queryKey }: { shop
           </TableHeader>
           <TableBody>
             {sorted.map((v) => (
-              <VariantRow key={`${v.id}:${v.updated_at}`} variant={v} onSaved={refresh} />
+              <VariantRow key={`${v.id}:${v.updated_at}`} variant={v} onSaved={refresh} onDeleted={refreshAll} />
             ))}
             <TableRow>
               <TableCell><Input aria-label="Новый вкус" value={draft.flavor} onChange={set('flavor')} placeholder="Новый вкус" /></TableCell>

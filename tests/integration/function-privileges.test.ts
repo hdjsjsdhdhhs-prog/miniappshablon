@@ -37,6 +37,10 @@ const EXPECTED: Record<string, Roles> = {
   'public.storage_object_shop_id(text)': r(false, true, true),
   'public.admin_set_order_status(uuid,text)': r(false, true, true),
   'public.admin_set_variant_stock(uuid,integer)': r(false, true, true),
+  // Catalog deletes (20261026100000): owner admin through PostgREST, shop membership re-checked inside.
+  'public.admin_delete_product(uuid)': r(false, true, true),
+  'public.admin_delete_variant(uuid)': r(false, true, true),
+  'public.admin_delete_category(uuid,uuid)': r(false, true, true),
   'public.is_valid_theme(jsonb)': r(false, true, true),
   'public.is_supported_currency(text)': r(false, true, true),
   'public.order_status_transition_allowed(text,text)': r(false, false, true),
@@ -83,6 +87,15 @@ const HARDENED_FUNCTIONS = [
   'public.admin_set_order_status(uuid,text)',
   'public.admin_set_variant_stock(uuid,integer)',
 ];
+
+/**
+ * Functions added AFTER the hardening migration that later migrations deliberately grant to authenticated. The
+ * hardening migration's own assertion only knows its 17.10.2026 allowlist, so the replay below takes these grants
+ * away before running it and gives them back afterwards — exactly the state the later migrations produce.
+ */
+const LATER_AUTHENTICATED_FUNCTIONS = Object.entries(EXPECTED)
+  .filter(([sig, roles]) => roles.authenticated && !HARDENED_FUNCTIONS.includes(sig))
+  .map(([sig]) => sig);
 
 /** jsonb: { "<schema>.<name>(<argtypes>)": { anon, authenticated, service_role, public } } for public functions. */
 const MATRIX_SQL = `(
@@ -212,7 +225,9 @@ describe('EXECUTE privileges per PostgreSQL role', () => {
         'anon_get_customer_orders', has_function_privilege('anon', 'public.get_customer_orders(text,bigint,uuid,integer)', 'EXECUTE'),
         'authenticated_create_order', has_function_privilege('authenticated', 'public.create_order(text,bigint,jsonb,jsonb,uuid,text,text,text,text,text,bigint)', 'EXECUTE')
       ));
+      ${LATER_AUTHENTICATED_FUNCTIONS.length ? `revoke execute on function ${LATER_AUTHENTICATED_FUNCTIONS.join(', ')} from authenticated;` : ''}
       execute $it_mig$${migration}$it_mig$;
+      ${LATER_AUTHENTICATED_FUNCTIONS.length ? `grant execute on function ${LATER_AUTHENTICATED_FUNCTIONS.join(', ')} to authenticated;` : ''}
       result := result || jsonb_build_object('matrix', ${MATRIX_SQL});
       declare outer_result jsonb := result;
       begin

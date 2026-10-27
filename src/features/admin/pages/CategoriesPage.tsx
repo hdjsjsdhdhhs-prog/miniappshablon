@@ -1,25 +1,142 @@
-import { ArrowDownIcon, ArrowUpIcon, PlusIcon } from '@phosphor-icons/react';
+import { ArrowDownIcon, ArrowUpIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { ErrorState, PageSpinner } from '@/components/state-views';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { queryKeys } from '@/domain/query-keys';
 import { CATEGORY_SLUG_RE as SLUG, slugify } from '@/domain/slugify';
 import { useAdminShop } from '../admin-context';
-import { createCategory, fetchAdminCategories, updateCategory, type AdminCategory } from '../api';
+import { createCategory, deleteCategory, fetchAdminCategories, fetchAdminProducts, updateCategory, type AdminCategory } from '../api';
+import { ConfirmDeleteDialog } from '../components/ConfirmDeleteDialog';
 import { ImagePicker } from '../components/ImagePicker';
+import { explainDeleteError, ru } from '../delete-messages';
 import { removeImageIfUnused, uploadShopImage } from '../media';
 
-function CategoryRow({ cat, index, total, onMove }: { cat: AdminCategory; index: number; total: number; onMove: (dir: -1 | 1) => void }) {
+function DeleteCategoryDialog({
+  cat,
+  productCount,
+  targets,
+  open,
+  onOpenChange,
+  onArchive,
+}: {
+  cat: AdminCategory;
+  /** From the cached products list; the server re-counts and refuses if it is stale. */
+  productCount: number;
+  targets: AdminCategory[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onArchive: () => void;
+}) {
+  const shop = useAdminShop();
+  const qc = useQueryClient();
+  const [moveTo, setMoveTo] = useState('');
+  const remove = useMutation({
+    mutationFn: () => deleteCategory(cat.id, moveTo || undefined),
+    onSuccess: async (r) => {
+      onOpenChange(false);
+      await qc.invalidateQueries({ queryKey: ['admin', 'shop', shop.id] });
+      void qc.invalidateQueries({ queryKey: ['shop', shop.id] });
+      const target = targets.find((t) => t.id === r.moved_to);
+      toast.success(
+        r.moved_products > 0 && target
+          ? `Категория удалена. ${r.moved_products} ${ru(r.moved_products, 'товар перенесён', 'товара перенесено', 'товаров перенесено')} в «${target.name}»`
+          : 'Категория удалена',
+      );
+      if (r.media.failed) toast.warning('Категория удалена, но её изображение не удалось убрать из хранилища.');
+    },
+    onError: (e) => {
+      if (explainDeleteError(e, 'category').gone) void qc.invalidateQueries({ queryKey: ['admin', 'shop', shop.id] });
+    },
+  });
+  const err = remove.isError ? explainDeleteError(remove.error, 'category') : null;
+  // Products must be moved when the list says so, or when the server said so (the list was stale).
+  const needsMove = productCount > 0 || err?.suggest === 'move';
+
+  return (
+    <ConfirmDeleteDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      testId="category-delete-dialog"
+      title={`Удалить категорию «${cat.name}»?`}
+      description={
+        needsMove
+          ? 'Категория будет удалена без возможности восстановления. Товары не удаляются: в той же операции они переносятся в выбранную категорию.'
+          : 'В категории нет товаров. Она будет удалена без возможности восстановления вместе со своим изображением.'
+      }
+      pending={remove.isPending}
+      error={err?.text ?? null}
+      alternative={
+        needsMove && !cat.archived_at ? (
+          <Button variant="outline" onClick={onArchive} data-testid="category-delete-archive">
+            В архив
+          </Button>
+        ) : null
+      }
+      confirmDisabled={needsMove && !moveTo}
+      onConfirm={() => remove.mutate()}
+    >
+      {needsMove && (
+        <div className="space-y-1.5" data-testid="category-delete-move">
+          {productCount > 0 && (
+            <p className="text-sm" data-testid="category-delete-count">
+              В категории {productCount} {ru(productCount, 'товар', 'товара', 'товаров')} (включая архивные).
+            </p>
+          )}
+          {targets.length > 0 ? (
+            <>
+              <Label htmlFor={`move-${cat.id}`}>Перенести товары в</Label>
+              <Select value={moveTo} onValueChange={setMoveTo}>
+                <SelectTrigger id={`move-${cat.id}`} className="w-full" data-testid="category-delete-target">
+                  <SelectValue placeholder="Выберите категорию" />
+                </SelectTrigger>
+                <SelectContent>
+                  {targets.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                      {!t.is_active && ' (скрыта)'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground" data-testid="category-delete-no-target">
+              Других категорий нет, переносить товары некуда. Создайте новую категорию или отправьте эту в архив.
+            </p>
+          )}
+        </div>
+      )}
+    </ConfirmDeleteDialog>
+  );
+}
+
+function CategoryRow({
+  cat,
+  index,
+  total,
+  onMove,
+  productCount,
+  targets,
+}: {
+  cat: AdminCategory;
+  index: number;
+  total: number;
+  onMove: (dir: -1 | 1) => void;
+  productCount: number;
+  targets: AdminCategory[];
+}) {
   const shop = useAdminShop();
   const qc = useQueryClient();
   const [name, setName] = useState(cat.name);
   const [slug, setSlug] = useState(cat.slug);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: queryKeys.adminCategories(shop.id) });
     void qc.invalidateQueries({ queryKey: ['shop', shop.id] });
@@ -82,7 +199,30 @@ function CategoryRow({ cat, index, total, onMove }: { cat: AdminCategory; index:
         <Button size="sm" variant="ghost" onClick={() => save.mutate({ archived_at: archived ? null : new Date().toISOString(), is_active: archived })}>
           {archived ? 'Вернуть' : 'В архив'}
         </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-destructive hover:text-destructive"
+          onClick={() => setDeleteOpen(true)}
+          data-testid="category-delete"
+        >
+          <TrashIcon aria-hidden /> Удалить
+        </Button>
       </div>
+      {/* Mounted only while open: every opening starts with a clean form and no stale server error. */}
+      {deleteOpen && (
+        <DeleteCategoryDialog
+          cat={cat}
+          productCount={productCount}
+          targets={targets}
+          open
+          onOpenChange={setDeleteOpen}
+          onArchive={() => {
+            save.mutate({ archived_at: new Date().toISOString(), is_active: false });
+            setDeleteOpen(false);
+          }}
+        />
+      )}
     </li>
   );
 }
@@ -91,6 +231,13 @@ export function CategoriesPage() {
   const shop = useAdminShop();
   const qc = useQueryClient();
   const cats = useQuery({ queryKey: queryKeys.adminCategories(shop.id), queryFn: () => fetchAdminCategories(shop.id) });
+  // Same query as the products page (shared cache): lets the delete dialog show how many products would move.
+  const products = useQuery({ queryKey: queryKeys.adminProducts(shop.id), queryFn: () => fetchAdminProducts(shop.id) });
+  const productCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of products.data ?? []) m.set(p.category_id, (m.get(p.category_id) ?? 0) + 1);
+    return m;
+  }, [products.data]);
   const [name, setName] = useState('');
 
   const create = useMutation({
@@ -149,7 +296,15 @@ export function CategoriesPage() {
       </form>
       <ul className="space-y-2">
         {list.map((c, i) => (
-          <CategoryRow key={`${c.id}:${c.updated_at}`} cat={c} index={i} total={list.length} onMove={(d) => void move(i, d)} />
+          <CategoryRow
+            key={`${c.id}:${c.updated_at}`}
+            cat={c}
+            index={i}
+            total={list.length}
+            onMove={(d) => void move(i, d)}
+            productCount={productCounts.get(c.id) ?? 0}
+            targets={list.filter((t) => t.id !== c.id && !t.archived_at)}
+          />
         ))}
       </ul>
     </div>

@@ -1,6 +1,9 @@
 import type { ShopTheme } from '@/domain/theme';
 import type { OrderStatus } from '@/domain/order-status';
+import { IMAGE_SETTINGS } from '@/config/images';
 import { supabase, type Tables } from '@/lib/supabase';
+
+const IMAGE_BUCKET = IMAGE_SETTINGS.bucket;
 
 /**
  * Admin data access. All writes go through RLS (membership checked in Postgres) or
@@ -194,6 +197,80 @@ export async function updateVariant(id: string, patch: Partial<VariantInput>) {
 /** Stock changes are journaled server-side (inventory_movements) by the RPC. */
 export async function setVariantStock(variantId: string, quantity: number) {
   return check(await supabase.rpc('admin_set_variant_stock', { p_variant_id: variantId, p_quantity: quantity }));
+}
+
+// ---- physical deletion ---------------------------------------------------------------
+
+/**
+ * A refused delete. `code` is the server's reason (product_has_orders, variant_has_orders, last_variant,
+ * category_has_products, target_not_found, *_not_found); `details` carries counts such as { orders: 2 }.
+ */
+export class CatalogDeleteError extends Error {
+  readonly code: string;
+  readonly details: Record<string, number>;
+  constructor(code: string, details: Record<string, number>) {
+    super(code);
+    this.name = 'CatalogDeleteError';
+    this.code = code;
+    this.details = details;
+  }
+}
+
+interface DeleteResult {
+  id: string;
+  deleted: true;
+  /** Storage paths of the deleted rows that no row of the shop references any more (computed by the server). */
+  unused_media: string[];
+}
+
+function parseDetails(raw: string | null | undefined): Record<string, number> {
+  try {
+    const v = raw ? (JSON.parse(raw) as unknown) : null;
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Membership, dependency checks and the delete itself all run in one server transaction (SECURITY DEFINER RPC). */
+function deleteRpc<T>(res: { data: unknown; error: { message: string; details?: string | null } | null }): T {
+  if (res.error) throw new CatalogDeleteError(res.error.message, parseDetails(res.error.details));
+  if (!res.data) throw new Error('Пустой ответ сервера');
+  return res.data as T;
+}
+
+/**
+ * Removes Storage objects the server reported as unused after a delete. The database is already consistent at this
+ * point, so a Storage failure only leaves an orphaned file behind; it is reported, not thrown.
+ */
+async function removeUnusedMedia(paths: string[]): Promise<{ removed: number; failed: boolean }> {
+  if (paths.length === 0) return { removed: 0, failed: false };
+  const { data, error } = await supabase.storage.from(IMAGE_BUCKET).remove(paths);
+  return { removed: data?.length ?? 0, failed: !!error };
+}
+
+export async function deleteProduct(productId: string) {
+  const r = deleteRpc<DeleteResult & { variants: number; images: number }>(
+    await supabase.rpc('admin_delete_product', { p_product_id: productId }),
+  );
+  return { ...r, media: await removeUnusedMedia(r.unused_media) };
+}
+
+export async function deleteVariant(variantId: string) {
+  return deleteRpc<{ id: string; product_id: string; deleted: true }>(
+    await supabase.rpc('admin_delete_variant', { p_variant_id: variantId }),
+  );
+}
+
+/** With products in the category, `moveProductsTo` (another category of the same shop) is required by the server. */
+export async function deleteCategory(categoryId: string, moveProductsTo?: string) {
+  const r = deleteRpc<DeleteResult & { moved_products: number; moved_to: string | null }>(
+    await supabase.rpc('admin_delete_category', {
+      p_category_id: categoryId,
+      ...(moveProductsTo ? { p_move_products_to: moveProductsTo } : {}),
+    }),
+  );
+  return { ...r, media: await removeUnusedMedia(r.unused_media) };
 }
 
 // ---- images ------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ArchiveIcon, ArrowCounterClockwiseIcon } from '@phosphor-icons/react';
+import { ArchiveIcon, ArrowCounterClockwiseIcon, TrashIcon } from '@phosphor-icons/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
@@ -16,8 +17,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { minorToInput, parseMoneyInput } from '@/domain/money';
 import { queryKeys } from '@/domain/query-keys';
 import { useAdminShop } from '../admin-context';
-import { createProduct, fetchAdminCategories, fetchAdminProduct, saveProductWithPrice, updateProduct, type AdminProduct } from '../api';
+import { createProduct, deleteProduct, fetchAdminCategories, fetchAdminProduct, saveProductWithPrice, updateProduct, type AdminProduct } from '../api';
+import { ConfirmDeleteDialog } from '../components/ConfirmDeleteDialog';
 import { ProductImagesEditor } from '../components/ProductImagesEditor';
+import { explainDeleteError } from '../delete-messages';
 import { VariantsEditor } from '../components/VariantsEditor';
 
 const schema = z.object({
@@ -157,6 +160,27 @@ export function ProductEditPage() {
     onError: (e) => toast.error((e as Error).message),
   });
 
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => deleteProduct(productId),
+    onSuccess: async (r) => {
+      setDeleteOpen(false);
+      // The card is gone: drop its cache instead of refetching a row that no longer exists.
+      qc.removeQueries({ queryKey: key });
+      await qc.invalidateQueries({ queryKey: queryKeys.adminProducts(shop.id) });
+      void qc.invalidateQueries({ queryKey: ['admin', 'shop', shop.id] });
+      void qc.invalidateQueries({ queryKey: ['shop', shop.id] });
+      toast.success('Товар удалён');
+      if (r.media.failed) toast.warning('Товар удалён, но часть фото не удалось убрать из хранилища.');
+      navigate(`/admin/shops/${shop.slug}/products`, { replace: true });
+    },
+    onError: (e) => {
+      if (explainDeleteError(e, 'product').gone) {
+        void qc.invalidateQueries({ queryKey: ['admin', 'shop', shop.id] });
+      }
+    },
+  });
+
   if (isNew) {
     return (
       <Card>
@@ -175,13 +199,14 @@ export function ProductEditPage() {
     return <EmptyState title="Товар не найден" action={<Button asChild variant="outline"><Link to="..">К товарам</Link></Button>} />;
   }
   const p = product.data;
+  const deleteError = remove.isError ? explainDeleteError(remove.error, 'product') : null;
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
         <Button asChild variant="ghost" size="sm">
           <Link to={`/admin/shops/${shop.slug}/products`}>← Все товары</Link>
         </Button>
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-wrap gap-2">
           {p.archived_at ? (
             <Button variant="outline" size="sm" onClick={() => archive.mutate(false)}>
               <ArrowCounterClockwiseIcon aria-hidden /> Вернуть из архива
@@ -191,8 +216,49 @@ export function ProductEditPage() {
               <ArchiveIcon aria-hidden /> В архив
             </Button>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={() => {
+              remove.reset();
+              setDeleteOpen(true);
+            }}
+            data-testid="product-delete"
+          >
+            <TrashIcon aria-hidden /> Удалить
+          </Button>
         </div>
       </div>
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        testId="product-delete-dialog"
+        title={`Удалить «${p.name}»?`}
+        description={
+          <>
+            Товар будет удалён без возможности восстановления вместе с вариантами ({p.product_variants.length}), их остатками и
+            фотографиями ({p.product_images.length}). Если товар уже есть в заказах, удаление будет отменено — такой товар можно
+            только отправить в архив.
+          </>
+        }
+        pending={remove.isPending}
+        error={deleteError ? deleteError.text + (deleteError.suggest === 'archive' && p.archived_at ? ' Товар уже в архиве.' : '') : null}
+        alternative={
+          deleteError?.suggest === 'archive' && !p.archived_at ? (
+            <Button
+              variant="outline"
+              disabled={archive.isPending}
+              onClick={() => archive.mutate(true, { onSuccess: () => setDeleteOpen(false) })}
+              data-testid="product-delete-archive"
+            >
+              <ArchiveIcon aria-hidden /> Отправить в архив
+            </Button>
+          ) : null
+        }
+        confirmDisabled={deleteError?.suggest === 'archive'}
+        onConfirm={() => remove.mutate()}
+      />
       <Card>
         <CardHeader>
           <CardTitle>Карточка товара</CardTitle>
