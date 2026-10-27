@@ -109,14 +109,14 @@ isOneToOne: false
                   ]
                 },"orders": {
                   Row: {
-                    "comment": string | null,"contact_name": string,"contact_phone": string | null,"created_at": string,"currency": string,"customer_snapshot": NonNullable<Json>,"customer_tg_id": number,"id": string,"idempotency_key": string,"is_test": boolean,"order_number": number,"request_hash": string,"shop_id": string,"status": string,"stock_state": string,"total_minor": number,"updated_at": string
+                    "comment": string | null,"contact_name": string | null,"contact_phone": string | null,"created_at": string,"currency": string,"customer_snapshot": NonNullable<Json>,"customer_tg_id": number,"delivery_address": string | null,"fulfillment_method": string | null,"id": string,"idempotency_key": string,"is_test": boolean,"order_number": number,"request_hash": string,"shop_id": string,"status": string,"stock_state": string,"total_minor": number,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "comment"?: string | null,"contact_name": string,"contact_phone"?: string | null,"created_at"?: string,"currency": string,"customer_snapshot"?: NonNullable<Json>,"customer_tg_id": number,"id"?: string,"idempotency_key": string,"is_test"?: boolean,"order_number": number,"request_hash": string,"shop_id": string,"status"?: string,"stock_state"?: string,"total_minor": number,"updated_at"?: string
+                    "comment"?: string | null,"contact_name"?: string | null,"contact_phone"?: string | null,"created_at"?: string,"currency": string,"customer_snapshot"?: NonNullable<Json>,"customer_tg_id": number,"delivery_address"?: string | null,"fulfillment_method"?: string | null,"id"?: string,"idempotency_key": string,"is_test"?: boolean,"order_number": number,"request_hash": string,"shop_id": string,"status"?: string,"stock_state"?: string,"total_minor": number,"updated_at"?: string
                   }
                   Update: {
-                    "comment"?: string | null,"contact_name"?: string,"contact_phone"?: string | null,"created_at"?: string,"currency"?: string,"customer_snapshot"?: NonNullable<Json>,"customer_tg_id"?: number,"id"?: string,"idempotency_key"?: string,"is_test"?: boolean,"order_number"?: number,"request_hash"?: string,"shop_id"?: string,"status"?: string,"stock_state"?: string,"total_minor"?: number,"updated_at"?: string
+                    "comment"?: string | null,"contact_name"?: string | null,"contact_phone"?: string | null,"created_at"?: string,"currency"?: string,"customer_snapshot"?: NonNullable<Json>,"customer_tg_id"?: number,"delivery_address"?: string | null,"fulfillment_method"?: string | null,"id"?: string,"idempotency_key"?: string,"is_test"?: boolean,"order_number"?: number,"request_hash"?: string,"shop_id"?: string,"status"?: string,"stock_state"?: string,"total_minor"?: number,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -261,14 +261,14 @@ isOneToOne: true
                   ]
                 },"shops": {
                   Row: {
-                    "age_restriction": number,"cover_path": string | null,"created_at": string,"currency": string,"description": string,"id": string,"info": NonNullable<Json>,"is_demo": boolean,"legal_notice": string,"logo_path": string | null,"mode": string,"name": string,"published_at": string | null,"settings": NonNullable<Json>,"slug": string,"status": string,"telegram": NonNullable<Json>,"theme_config": NonNullable<Json>,"updated_at": string
+                    "age_restriction": number,"cover_path": string | null,"created_at": string,"currency": string,"delivery_enabled": boolean,"description": string,"id": string,"info": NonNullable<Json>,"is_demo": boolean,"legal_notice": string,"logo_path": string | null,"mode": string,"name": string,"pickup_enabled": boolean,"pickup_instructions": string,"published_at": string | null,"settings": NonNullable<Json>,"slug": string,"status": string,"telegram": NonNullable<Json>,"theme_config": NonNullable<Json>,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "age_restriction"?: number,"cover_path"?: string | null,"created_at"?: string,"currency": string,"description"?: string,"id"?: string,"info"?: NonNullable<Json>,"is_demo"?: boolean,"legal_notice"?: string,"logo_path"?: string | null,"mode"?: string,"name": string,"published_at"?: string | null,"settings"?: NonNullable<Json>,"slug": string,"status"?: string,"telegram"?: NonNullable<Json>,"theme_config": NonNullable<Json>,"updated_at"?: string
+                    "age_restriction"?: number,"cover_path"?: string | null,"created_at"?: string,"currency": string,"delivery_enabled"?: boolean,"description"?: string,"id"?: string,"info"?: NonNullable<Json>,"is_demo"?: boolean,"legal_notice"?: string,"logo_path"?: string | null,"mode"?: string,"name": string,"pickup_enabled"?: boolean,"pickup_instructions"?: string,"published_at"?: string | null,"settings"?: NonNullable<Json>,"slug": string,"status"?: string,"telegram"?: NonNullable<Json>,"theme_config": NonNullable<Json>,"updated_at"?: string
                   }
                   Update: {
-                    "age_restriction"?: number,"cover_path"?: string | null,"created_at"?: string,"currency"?: string,"description"?: string,"id"?: string,"info"?: NonNullable<Json>,"is_demo"?: boolean,"legal_notice"?: string,"logo_path"?: string | null,"mode"?: string,"name"?: string,"published_at"?: string | null,"settings"?: NonNullable<Json>,"slug"?: string,"status"?: string,"telegram"?: NonNullable<Json>,"theme_config"?: NonNullable<Json>,"updated_at"?: string
+                    "age_restriction"?: number,"cover_path"?: string | null,"created_at"?: string,"currency"?: string,"delivery_enabled"?: boolean,"description"?: string,"id"?: string,"info"?: NonNullable<Json>,"is_demo"?: boolean,"legal_notice"?: string,"logo_path"?: string | null,"mode"?: string,"name"?: string,"pickup_enabled"?: boolean,"pickup_instructions"?: string,"published_at"?: string | null,"settings"?: NonNullable<Json>,"slug"?: string,"status"?: string,"telegram"?: NonNullable<Json>,"theme_config"?: NonNullable<Json>,"updated_at"?: string
                   }
                   Relationships: [
                     
@@ -286,7 +286,7 @@ isOneToOne: true
 { Args: { "p_quantity": number,"p_variant_id": string }; Returns: Json
                            },
 "create_order":
-{ Args: { "p_comment": string,"p_contact_name": string,"p_contact_phone": string,"p_customer_snapshot": Json,"p_customer_tg_id": number,"p_expected_currency": string,"p_expected_total_minor": number,"p_idempotency_key": string,"p_items": Json,"p_request_hash": string,"p_shop_slug": string }; Returns: Json
+{ Args: { "p_comment": string,"p_customer_snapshot": Json,"p_customer_tg_id": number,"p_delivery_address": string,"p_expected_currency": string,"p_expected_total_minor": number,"p_fulfillment_method": string,"p_idempotency_key": string,"p_items": Json,"p_request_hash": string,"p_shop_slug": string }; Returns: Json
                            },
 "get_customer_orders":
 { Args: { "p_customer_tg_id": number,"p_limit"?: number,"p_order_id"?: string,"p_shop_slug": string }; Returns: Json
@@ -336,11 +336,26 @@ isOneToOne: true
 "order_to_json":
 { Args: { "p_order_id": string }; Returns: Json
                            },
+"platform_create_demo_shop":
+{ Args: { "p_actor": string,"p_name": string,"p_slug": string,"p_template_id": string }; Returns: Json
+                           },
+"platform_discard_demo_shop":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: boolean
+                           },
 "platform_find_user":
 { Args: { "p_actor": string,"p_email": string }; Returns: Json
                            },
+"platform_handover_check":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
+                           },
+"platform_handover_shop":
+{ Args: { "p_actor": string,"p_invitation": string,"p_new_owner": string,"p_shop_id": string }; Returns: Json
+                           },
 "platform_list_shops":
 { Args: { "p_actor": string }; Returns: Json
+                           },
+"platform_publish_demo_shop":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
                            },
 "platform_transfer_shop":
 { Args: { "p_actor": string,"p_new_owner": string,"p_shop_id": string }; Returns: Json
