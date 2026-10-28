@@ -16,8 +16,9 @@ function ShopFrame({ shop }: { shop: Shop }) {
     <div className="pb-nav mx-auto min-h-dvh max-w-3xl">
       {(shop.isDemo || shop.mode === 'preview') && (
         // Fixed 32 px, one line, never wider than the screen: the text can not grow the bar or the page.
+        // Compact padding / gap: the DEMO text budget (see DemoBannerText) counts on 298 px inside a 320 px screen.
         <div
-          className="glass-bar sticky top-0 z-30 flex h-8 items-center justify-center gap-1.5 overflow-hidden border-x-0 border-t-0 border-b-[color:var(--glass-accent-edge)] px-2 text-xs font-medium whitespace-nowrap text-foreground"
+          className="glass-bar sticky top-0 z-30 flex h-8 items-center justify-center gap-1 overflow-hidden border-x-0 border-t-0 border-b-[color:var(--glass-accent-edge)] px-1.5 text-xs font-medium whitespace-nowrap text-foreground"
           data-testid="demo-banner"
         >
           {shop.mode === 'preview' ? (
