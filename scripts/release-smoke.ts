@@ -3,13 +3,14 @@
 // Usage:
 //   tsx scripts/release-smoke.ts api
 //     env: SUPABASE_URL, SUPABASE_ANON_KEY (public values: vars.VITE_SUPABASE_URL / vars.VITE_SUPABASE_ANON_KEY).
-//     Supabase reachable, stock_status readable as anon, the storefront queries of the new frontend, the stock RPC exists
-//     and is refused to anon, every Edge Function deployed by supabase-deploy.yml answers, checkout requires Telegram.
-//     Reports (never fails on) whether the previous frontend can still read its legacy stock_quantity embed.
+//     Supabase reachable, stock_status readable as anon, the storefront queries of the new frontend, the queries of the
+//     PREVIOUS frontend (main 741d478: stock_quantity embed, filter, select('*')) still work — fail-closed, an Expand
+//     release must not break them —, the stock RPC exists and is refused to anon, every Edge Function deployed by
+//     supabase-deploy.yml answers, checkout requires Telegram.
 //   tsx scripts/release-smoke.ts web <app-url>... [--slug <shop>]
 //     env: SUPABASE_URL. Every URL: app shell on the public pages, JS bundle downloadable, new stock_status contract,
 //     expected Supabase project.
-import { appendFileSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deployedFunctions, REPO_ROOT } from './lib/edge-functions.ts';
 import {
@@ -17,14 +18,14 @@ import {
   assertBundleContract,
   assertCheckoutRequiresTelegram,
   assertFunctionDeployed,
+  assertLegacyFrontendQuery,
   assertRpcProtected,
   assertStockStatusReadable,
   assertStorefrontQuery,
   assertSupabaseReachable,
   assetScripts,
   DEFAULT_SMOKE_SLUG,
-  LEGACY_VARIANT_EMBED,
-  legacyCompatibility,
+  LEGACY_FRONTEND_QUERIES,
   PUBLIC_PAGES,
   STOCK_RPC,
   STOREFRONT_PRODUCT_COLUMNS,
@@ -68,6 +69,12 @@ async function smokeApi(): Promise<void> {
   );
   ok('storefront queries of the new frontend (stock_status embed and filter) answer as anon');
 
+  // Expand: the frontend that is live until the frontend job of this release must keep working. Fail-closed.
+  for (const { what, path } of LEGACY_FRONTEND_QUERIES) {
+    const n = assertLegacyFrontendQuery(await rest(path), what);
+    ok(`previous frontend compatible: ${what} answers as anon (${n} row(s)${n > 0 ? ', numeric stock_quantity in every variant' : ', privileges accepted'})`);
+  }
+
   // A random UUID: the RPC must refuse anon before looking at it (no data is read or written).
   const rpc = await http(`${base}/rest/v1/rpc/${STOCK_RPC}`, {
     method: 'POST',
@@ -87,15 +94,6 @@ async function smokeApi(): Promise<void> {
     await http(`${base}/functions/v1/checkout`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }),
   );
   ok('checkout refuses a request without Telegram initData (401 telegram_auth_failed)');
-
-  const legacy = legacyCompatibility(await rest(`products?select=id,${encodeURIComponent(LEGACY_VARIANT_EMBED)}&limit=1`));
-  const legacyLine =
-    legacy === 'compatible'
-      ? 'previous frontend compatible: its stock_quantity embed is still readable (Expand state)'
-      : 'previous frontend NOT compatible: stock_quantity is no longer readable by anon — the storefront of the currently deployed frontend fails until the frontend job of this release succeeds (see RELEASE.md)';
-  if (legacy === 'compatible') ok(legacyLine);
-  else console.log(`::warning title=Legacy frontend::${legacyLine}`);
-  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `legacy_frontend=${legacy}\n`);
 }
 
 async function smokeWeb(urls: string[], slug: string): Promise<void> {

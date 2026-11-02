@@ -27,10 +27,14 @@ jobs:
     # runs from main (environment deployment branch policy). The `if` keeps a run from any other ref from even asking.
     if: github.ref == 'refs/heads/main'
     environment: production
+    # Least exposure: the job env holds only the (non-secret) project ref. Each production secret is passed through
+    # the env of exactly the steps that need it — never to checkout, pnpm install (dependency install scripts), the
+    # integrity check, the gate's plan / stage checks or any other step:
+    #   SUPABASE_ACCESS_TOKEN — supabase link, functions deploy / list (Management API);
+    #   SUPABASE_DB_PASSWORD  — supabase link only;
+    #   SUPABASE_DB_URL       — Session Pooler validation, migration list, dry-run, db push, verify-applied.
+    # GitHub masks secret values in logs; no step prints them.
     env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
     steps:
       # Defence in depth, before checkout and before any secret is used: main, a manual dispatch of release.yml on
@@ -47,7 +51,7 @@ jobs:
           if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::refusing: sha is not a full commit SHA"; exit 1; fi
           if [ "$RELEASE_SHA" != "$GITHUB_SHA" ]; then echo "::error::refusing: sha $RELEASE_SHA is not the run commit $GITHUB_SHA"; exit 1; fi
           echo "Supabase release of $RELEASE_SHA from $GITHUB_WORKFLOW_REF"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.sha }}
           persist-credentials: false
@@ -55,8 +59,8 @@ jobs:
         env:
           RELEASE_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -65,11 +69,14 @@ jobs:
       # database: exact file set, valid UTF-8, CRLF→LF canonical content equal to the approved hash.
       - name: Verify migration file integrity (SHA-256)
         run: pnpm check:migration-integrity
-      - run: pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+      - name: Link the production project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
       - name: Validate Session Pooler target
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
         run: |
           node --input-type=module <<'NODE'
           const url = new URL(process.env.SUPABASE_DB_URL);
@@ -88,6 +95,8 @@ jobs:
           console.log('Session Pooler target format and project ref validated.');
           NODE
       - name: Show pending migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no
       # Gate (scripts/lib/migration-plan.ts): local file names, remote history AND dry-run (JSON) must agree on one state.
       # `db push` has no version/stage selector: it applies EVERY local migration missing from the remote history, so
@@ -98,6 +107,8 @@ jobs:
       # stops before db push. Every `check-production-migration-plan.ts` call also re-reads and re-hashes all
       # migration files first (SHA-256 integrity), so content changed after any earlier step stops the job too.
       - name: Read migration history and dry-run plan
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no --output-format json \
             > "$RUNNER_TEMP/migration-list.json" || { cat "$RUNNER_TEMP/migration-list.json"; exit 1; }
@@ -118,6 +129,7 @@ jobs:
         if: steps.plan.outputs.mode == 'apply'
         env:
           PLANNED_STAGES: ${{ steps.plan.outputs.stages }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           # Re-check right before the push: file integrity (re-hashed from disk, no cached result), then history and
           # dry-run; it must still be an apply of exactly the planned stages. The `plan --expect-stages` call hashes
@@ -131,13 +143,29 @@ jobs:
             "$RUNNER_TEMP/db-push-dry-run-recheck.json" --expect-stages "$PLANNED_STAGES"
           pnpm exec supabase db push --db-url "$SUPABASE_DB_URL"
       - name: Verify migration history after push
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no --output-format json \
             > "$RUNNER_TEMP/migration-list-after.json" || { cat "$RUNNER_TEMP/migration-list-after.json"; exit 1; }
           pnpm exec tsx scripts/check-production-migration-plan.ts verify-applied "$RUNNER_TEMP/migration-list-after.json"
-      - run: pnpm exec supabase functions deploy checkout --project-ref "$SUPABASE_PROJECT_REF"
-      - run: pnpm exec supabase functions deploy my-orders --project-ref "$SUPABASE_PROJECT_REF"
-      - run: pnpm exec supabase functions deploy notification-settings --project-ref "$SUPABASE_PROJECT_REF"
-      - run: pnpm exec supabase functions deploy platform-admin --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Edge Function checkout
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: pnpm exec supabase functions deploy checkout --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Edge Function my-orders
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: pnpm exec supabase functions deploy my-orders --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Edge Function notification-settings
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: pnpm exec supabase functions deploy notification-settings --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Edge Function platform-admin
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: pnpm exec supabase functions deploy platform-admin --project-ref "$SUPABASE_PROJECT_REF"
       - name: List deployed Edge Functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: pnpm exec supabase functions list --project-ref "$SUPABASE_PROJECT_REF" --agent no

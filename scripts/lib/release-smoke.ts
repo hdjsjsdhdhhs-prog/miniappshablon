@@ -23,6 +23,28 @@ export const STOREFRONT_PRODUCT_COLUMNS =
   'product_images(id, storage_path, is_primary, sort_order, alt_text)';
 /** The variant embed of the frontend BEFORE this release (main, 741d478): it still reads stock_quantity. */
 export const LEGACY_VARIANT_EMBED = 'product_variants(id, flavor, color, stock_quantity, is_active, sort_order)';
+/** PRODUCT_COLUMNS of the frontend before this release (main 741d478, src/features/storefront/api.ts), verbatim. */
+export const LEGACY_PRODUCT_COLUMNS =
+  'id, name, base_price_minor, category_id, description, ' +
+  'categories!inner(name, slug, is_active, archived_at), ' +
+  `${LEGACY_VARIANT_EMBED}, ` +
+  'product_images(id, storage_path, is_primary, sort_order, alt_text)';
+
+/**
+ * Read-only PostgREST paths (relative to /rest/v1/) of the frontend before this release, sent as anon by smoke-api.
+ * Expand releases must keep every one of them working (RELEASE.md); a failure stops the release before the frontend.
+ */
+export const LEGACY_FRONTEND_QUERIES: ReadonlyArray<{ what: string; path: string }> = [
+  { what: 'previous storefront product page (stock_quantity embed)', path: `products?select=${encodeURIComponent(LEGACY_PRODUCT_COLUMNS)}&limit=5` },
+  {
+    what: 'previous storefront listing (filter in_stock.stock_quantity > 0)',
+    path: `products?select=${encodeURIComponent(`${LEGACY_PRODUCT_COLUMNS}, in_stock:product_variants!inner(id)`)}&in_stock.stock_quantity=gt.0&in_stock.is_active=eq.true&limit=5`,
+  },
+  // The previous admin reads variants with select('*') as an authenticated member. Smoke has no member session (no
+  // credentials, read-only); anon and authenticated share the same table privileges on product_variants, so `*` as
+  // anon is refused exactly when the admin's `*` would be (a Contract-style column grant).
+  { what: "previous admin select('*') on product_variants (same privilege as anon)", path: 'product_variants?select=*&limit=5' },
+];
 
 /** Admin-only RPC of the stock projection; anon must be refused (exists + protected), never served. */
 export const STOCK_RPC = 'admin_variant_stock';
@@ -104,23 +126,29 @@ export function assertCheckoutRequiresTelegram(r: HttpResult): void {
   }
 }
 
-export type LegacyCompatibility = 'compatible' | 'incompatible';
-
 /**
- * Whether the frontend from BEFORE this release can still read its variant embed (stock_quantity). Informational: it
- * decides how urgent the frontend step is (RELEASE.md), it never blocks — blocking would keep the old frontend live.
+ * Backward compatibility of an Expand release, FAIL-CLOSED: a query of the frontend before this release must answer
+ * 200 with an array, and every variant it returns must still carry a numeric stock_quantity. Anything else (permission
+ * denied after a Contract-style grant, missing column, gateway error, unexpected shape) throws, so the release stops
+ * before the frontend job and the operator restores / fixes the database (RELEASE.md). Returns the row count.
  */
-export function legacyCompatibility(r: HttpResult): LegacyCompatibility {
-  if (r.status === 200) return 'compatible';
-  const body = (() => {
-    try {
-      return JSON.parse(r.body) as unknown;
-    } catch {
-      return null;
-    }
-  })();
-  if (pgCode(body) === '42501' || /permission denied/i.test(r.body)) return 'incompatible';
-  return fail(`legacy variant query answered HTTP ${r.status}: ${r.body.slice(0, 200)}`);
+export function assertLegacyFrontendQuery(r: HttpResult, what: string): number {
+  const incompatible = (reason: string): never =>
+    fail(`previous frontend (main 741d478) is NOT compatible with this schema — ${what}: ${reason}. The release is stopped before the frontend; see RELEASE.md`);
+  if (r.status !== 200) incompatible(`HTTP ${r.status} ${r.body.slice(0, 200)}`);
+  let rows: unknown;
+  try {
+    rows = JSON.parse(r.body);
+  } catch {
+    return incompatible('body is not JSON');
+  }
+  if (!Array.isArray(rows)) return incompatible('response is not an array');
+  const hasStock = (v: unknown) => !!v && typeof v === 'object' && typeof (v as { stock_quantity?: unknown }).stock_quantity === 'number';
+  for (const row of rows as Array<Record<string, unknown>>) {
+    const variants = 'product_variants' in row ? row.product_variants : [row];
+    if (!Array.isArray(variants) || !variants.every(hasStock)) incompatible('a returned variant has no numeric stock_quantity');
+  }
+  return rows.length;
 }
 
 /** The app shell: 200 HTML with the React root and at least one module script under /assets/. */

@@ -13,10 +13,10 @@ preflight ──▶ supabase ──▶ smoke-api ──▶ frontend ──▶ sm
 
 | Job | Что делает | Доступ |
 | --- | --- | --- |
-| `preflight` | запуск вручную из `refs/heads/main`; `sha` — полный SHA и равен коммиту запуска; коммит в истории `main`; CI-run (`ci.yml`, push в `main`) и три обязательные проверки (`Lint · types · unit · build`, `Edge Functions · deno check`, `SQL/integration + Playwright (local Supabase in Docker)`) зелёные на этом SHA; `backup_verified = true` и непустой `backup_reference`; SHA-256 manifest миграций; в manifest только разрешённые стадии (3A, 3B); окружения `production` и `production-frontend` существуют и защищены | `GITHUB_TOKEN`: contents/actions/checks read. Секретов нет |
-| `supabase` | `supabase-deploy.yml`: guard (main, вызов только из `release.yml@refs/heads/main`, SHA), integrity, Session Pooler, history + dry-run → Migration Gate, allowlist стадий, `db push` целыми стадиями с перепроверкой, `verify-applied`, деплой 4 Edge Functions | environment `production` (одобрение владельца, только `main`) |
-| `smoke-api` | только безопасные запросы с публичным ключом: Auth health; `product_variants.stock_status` читается и содержит только `in_stock / low_stock / out_of_stock`; запросы витрины (embed и фильтр по `stock_status`); RPC `admin_variant_stock` существует и отказывает anon (42501); каждая Edge Function отвечает своим 405 на GET; `checkout` без Telegram initData → 401 `telegram_auth_failed` (до разбора тела и до БД). Информационно: читается ли legacy `stock_quantity` (совместимость старого frontend). Перед frontend повторно проверяет защиту окружений | `GITHUB_TOKEN`: contents/actions read; `vars.VITE_SUPABASE_*` (публичные) |
-| `frontend` | checkout ровно выбранного SHA, `pnpm install --frozen-lockfile`, production build, `check:bundle-secrets`, `wrangler pages deploy … --branch=main --commit-hash=<sha>` | environment `production-frontend` (одобрение владельца) |
+| `preflight` | запуск вручную из `refs/heads/main`; `sha` — полный SHA и равен коммиту запуска; коммит в истории `main`; CI-run (`ci.yml`, push в `main`) и три обязательные проверки (`Lint · types · unit · build`, `Edge Functions · deno check`, `SQL/integration + Playwright (local Supabase in Docker)`) зелёные на этом SHA; `backup_verified = true` и непустой `backup_reference` (**только утверждение оператора**: pipeline не проверяет ни наличие, ни целостность, ни восстановимость копии — см. [Backup](#backup--открытый-блокер)); SHA-256 manifest миграций; в manifest только разрешённые стадии (3A, 3B); окружения `production` и `production-frontend` существуют и защищены | `GITHUB_TOKEN`: contents/actions/checks read. Секретов нет |
+| `supabase` | `supabase-deploy.yml`: guard (main, вызов только из `release.yml@refs/heads/main`, SHA), integrity, Session Pooler, history + dry-run → Migration Gate, allowlist стадий, `db push` целыми стадиями с перепроверкой, `verify-applied`, деплой 4 Edge Functions | environment `production` (одобрение владельца, только `main`). Secrets не на уровне job: `SUPABASE_DB_URL` — только шаги Session Pooler / migration list / dry-run / db push / verify; `SUPABASE_ACCESS_TOKEN` — link и functions deploy/list; `SUPABASE_DB_PASSWORD` — только link. `pnpm install`, checkout и проверки Gate секретов не получают |
+| `smoke-api` | только безопасные запросы с публичным ключом: Auth health; `product_variants.stock_status` читается и содержит только `in_stock / low_stock / out_of_stock`; запросы витрины (embed и фильтр по `stock_status`); RPC `admin_variant_stock` существует и отказывает anon (42501); каждая Edge Function отвечает своим 405 на GET; `checkout` без Telegram initData → 401 `telegram_auth_failed` (до разбора тела и до БД). **Обратная совместимость, fail-closed:** точные запросы старого frontend (`main` 741d478) — embed `product_variants(… stock_quantity …)`, фильтр `in_stock.stock_quantity > 0`, `product_variants?select=*` (те же права, что у `select('*')` старой админки); каждый вариант обязан содержать числовой `stock_quantity`. Любая ошибка останавливает релиз до `frontend`. Перед frontend повторно проверяет защиту окружений | `GITHUB_TOKEN`: contents/actions read; `vars.VITE_SUPABASE_*` (публичные) |
+| `frontend` | checkout ровно выбранного SHA, `pnpm install --frozen-lockfile`, production build, `check:bundle-secrets`, `wrangler pages deploy … --branch=main --commit-hash=<sha>` | environment `production-frontend` (одобрение владельца). Только этот job и только шаг деплоя получают secrets окружения `PRODUCTION_CLOUDFLARE_API_TOKEN`, `PRODUCTION_CLOUDFLARE_ACCOUNT_ID`; variable окружения `PRODUCTION_CLOUDFLARE_PAGES_PROJECT`. Старые `CLOUDFLARE_*` не используются (без fallback) |
 | `smoke-web` | URL этого деплоя и production-адрес: app shell на `/`, `/s/<slug>/`, `/s/<slug>/catalog`, `/admin`; все JS-чанки загружаются; бандл запрашивает `stock_status`, не запрашивает legacy `stock_quantity`; ссылается на ожидаемый Supabase-проект | только публичные адреса |
 
 Ни один job не создаёт заказов и не меняет данные покупателей.
@@ -49,14 +49,17 @@ preflight ──▶ supabase ──▶ smoke-api ──▶ frontend ──▶ sm
 - Release-миграции обязаны быть **Expand**: старый frontend должен работать на новой схеме. Pipeline не применяет
   Contract-стадии: preflight и Supabase job пропускают только стадии из `RELEASE_ALLOWED_STAGES`
   (`scripts/lib/release.ts`, сейчас `3A`, `3B`). Появление `3C` в manifest или в плане останавливает релиз до `db push`.
-- `smoke-api` печатает `legacy_frontend=compatible|incompatible` (job output и warning в логе):
-  - `compatible` — старый frontend читает свои данные, повторять frontend можно спокойно;
-  - `incompatible` — схема уже скрывает `stock_quantity` от anon, витрина старого frontend не загружает товары до
-    успешного деплоя нового frontend. Повторите frontend как можно скорее или восстановите БД из копии (ниже).
-  > На момент создания pipeline стадия `3B` (`20261102090100_stock_status_projection.sql`) в PR #1 отзывает у
-  > anon SELECT на `stock_quantity`, то есть она **не** Expand-совместима со старым frontend. До первого релиза её
-  > нужно разделить на Expand (3B) и Contract (3C) в PR #1, иначе между `supabase` и `frontend` витрина будет
-  > недоступна.
+- `smoke-api` проверяет запросы старого frontend **fail-closed** (предупреждений больше нет): если хотя бы один из них
+  не работает, `smoke-api` падает и `frontend` не запускается. Это значит, что БД уже несовместима с frontend,
+  который сейчас обслуживает покупателей: не одобряйте frontend «вслепую», а восстановите БД из копии или выпустите
+  исправляющую Expand-миграцию.
+- Stock status (3B, `20261102090100_stock_status_projection.sql`) — **Expand**: добавляются `stock_status`,
+  `admin_variant_stock` и защита checkout от подбора остатка; права на `product_variants` не меняются, старый
+  frontend читает `stock_quantity` как раньше. **Contract (3C)** — отзыв табличного SELECT у anon/authenticated и
+  column grants без `stock_quantity` — выпускается **отдельным** изменением только после деплоя нового frontend и
+  периода наблюдения. Это изменение должно одновременно: добавить миграцию 3C в manifest, разрешить `3C` в
+  `RELEASE_ALLOWED_STAGES` и убрать из `smoke-api` проверку запросов старого frontend (иначе smoke-api
+  справедливо остановит релиз). В текущем релизе 3C нет (проверяется `migration-integrity.test.ts`).
 
 **Повторить frontend (тот же релиз).** Actions → запуск релиза → **Re-run failed jobs**. Перезапустятся `frontend`
 и `smoke-web` с теми же SHA и inputs. Успешные `preflight`, `supabase`, `smoke-api` не повторяются, БД не
@@ -84,13 +87,56 @@ preflight ──▶ supabase ──▶ smoke-api ──▶ frontend ──▶ sm
    bypassing, Deployment branches → Selected branches → только `main`. Пока его нет или он не защищён, preflight
    останавливает релиз до любых изменений. Workflow никогда не создаёт окружение сам: GitHub создал бы его без
    защиты, но job `frontend` не стартует, пока preflight и smoke-api не подтвердили защиту.
-2. Рекомендуется перенести `CLOUDFLARE_API_TOKEN` и `CLOUDFLARE_ACCOUNT_ID` из secrets репозитория в secrets
-   окружения `production-frontend`. Сейчас это secrets уровня репозитория: их может прочитать любой workflow с любой
-   ветки (не форка). Имена менять не нужно, workflow читает `secrets.CLOUDFLARE_*` в обоих случаях.
-3. Variables остаются прежними: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `CLOUDFLARE_PAGES_PROJECT`
-   (уровень репозитория; smoke-jobs читают их без environment). Опционально `PRODUCTION_APP_URL`, если production-домен
-   не `https://<CLOUDFLARE_PAGES_PROJECT>.pages.dev`.
+2. В environment **`production-frontend`** создать (вручную, workflow этого не делает):
+   - secret `PRODUCTION_CLOUDFLARE_API_TOKEN` — API token Cloudflare только с правом *Cloudflare Pages: Edit* на нужный
+     аккаунт;
+   - secret `PRODUCTION_CLOUDFLARE_ACCOUNT_ID` — Account ID Cloudflare;
+   - variable `PRODUCTION_CLOUDFLARE_PAGES_PROJECT` — имя проекта Cloudflare Pages (не секрет; job `frontend` передаёт
+     его в `smoke-web` для адреса по умолчанию `https://<project>.pages.dev`).
+   Fallback на старые имена нет: пока этих значений нет, job `frontend` падает до деплоя.
+3. Variables уровня репозитория остаются: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (публичные; их читают CI-сборка
+   и smoke-jobs без environment). Опционально `PRODUCTION_APP_URL`, если production-домен не
+   `https://<PRODUCTION_CLOUDFLARE_PAGES_PROJECT>.pages.dev`. Старые repository secrets `CLOUDFLARE_API_TOKEN`,
+   `CLOUDFLARE_ACCOUNT_ID` и variable `CLOUDFLARE_PAGES_PROJECT` удалить **после** merge PR #1 и PR #2 в `main`: до
+   этого их ещё использует job `deploy-cloudflare-pages` в `ci.yml` текущего `main`.
 4. Production branch проекта Cloudflare Pages должен быть `main` (деплой идёт с `--branch=main`).
 5. Удалить или обновить старые ветки, где `supabase-deploy.yml` ещё содержит `workflow_dispatch` (например
    `release/fulfillment-catalog-delete`). Секреты `production` им не выдаются (deployment branches = `main`),
    но лишние входы лучше убрать.
+
+## Backup — открытый блокер
+
+`backup_verified=true` в `release.yml` — **утверждение оператора, а не проверка**: preflight лишь требует галочку и
+непустой `backup_reference`. Pipeline не доказывает, что копия существует, цела и восстанавливается. Пока ниже не
+выбран и не реализован один из вариантов, этот пункт остаётся **открытым блокером первого production-релиза**.
+Production backup без отдельного согласования не создаётся; дампы БД **никогда** не загружаются в GitHub Artifacts.
+
+Важно для всех вариантов: резервная копия БД **не содержит файлов Storage** (bucket `shop-media`: логотипы, фото
+товаров), только их метаданные в `storage.objects`. Для полного восстановления нужна отдельная копия bucket.
+
+Цены и лимиты ниже — по документации Supabase / Cloudflare / AWS, известной на момент составления; перед выбором
+сверить с https://supabase.com/pricing и https://supabase.com/docs/guides/platform/backups. Текущий тариф
+production-проекта из репозитория не виден (SETUP.md: на Free автоматических бэкапов нет).
+
+| Вариант | Credentials | Стоимость / тариф | Хранение | Шифрование | Срок хранения | Восстановление | Проверка доступности |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **1. Supabase daily backups / PITR** | доступ владельца к Dashboard; в CI ничего | Free — нет бэкапов. Pro и выше — ежедневные копии; PITR — платное дополнение (требует compute не ниже Small) | инфраструктура Supabase | at rest — силами Supabase | по тарифу (ориентир: Pro 7 дней, Team 14, Enterprise до 30; PITR — 7/14/28 дней) | Dashboard → Database → Backups / PITR: восстановление проекта целиком на момент времени, с простоем | только визуально в Dashboard (дата последней копии); из CI проверить нельзя без Management API токена |
+| **2. Ручной `pg_dump` → внешнее хранилище** | `SUPABASE_DB_URL` (Session Pooler) — лучше отдельная роль только для чтения; ключ записи в хранилище | бесплатно, кроме хранилища | приватный S3-совместимый bucket (R2 / S3), не GitHub | `age` или `gpg` на машине оператора **до** загрузки; приватный ключ офлайн | lifecycle bucket, например 35 дней | `supabase db dump` (roles / schema / data) или `pg_dump -Fc` (клиент PG 17) → `psql` / `pg_restore` в чистую БД | SHA-256 файла записывается рядом; `HEAD` объекта (размер); тестовое восстановление (вариант 4) |
+| **3. Job `backup` в Release Pipeline** | environment с approval: read-only DB URL; токен bucket только на один bucket (R2: *Object Read & Write* на bucket); публичный ключ `age` — variable, не секрет | R2: 10 ГБ/мес бесплатно, далее ≈ $0.015/ГБ·мес, без egress; S3 Standard ≈ $0.023/ГБ·мес | приватный bucket, ключ `prod/<дата>-<sha>.dump.age`; Bucket Lock / Object Lock от удаления | `age` на runner публичным ключом; runner не может расшифровать | Bucket Lock + lifecycle (например 35 дней) | как в варианте 2; приватный ключ только у владельца | job вычисляет SHA-256, загружает, затем отдельным запросом проверяет наличие объекта, размер и checksum; `backup_reference` = ключ + SHA-256 формирует job, а не оператор |
+| **4. Тестовое восстановление** | приватный ключ `age` (офлайн, у владельца); read-доступ к bucket | бесплатно (локальный Docker) | — | расшифровка только на машине владельца | — | восстановление в disposable-стек (как `tma-migration-gate-cli-test`, порты 5542x, без `link`) | SHA-256 совпал; `migration list` = manifest; контрольные `count(*)` по `shops`, `products`, `orders`; результат фиксируется в журнале релиза |
+
+**Предлагаемая конфигурация** (требует решения владельца и создания хранилища вручную):
+
+1. Cloudflare R2 bucket `miniapp-db-backups` (приватный, без public access, Bucket Lock 35 дней, lifecycle 35 дней);
+   отдельный R2 token только на этот bucket.
+2. Новый environment `production-backup` (Required reviewers = владелец, только `main`) с secrets
+   `BACKUP_DB_URL` (Session Pooler, отдельная роль только для чтения), `BACKUP_R2_ACCESS_KEY_ID`,
+   `BACKUP_R2_SECRET_ACCESS_KEY` и variables `BACKUP_R2_ENDPOINT`, `BACKUP_R2_BUCKET`, `BACKUP_AGE_RECIPIENT`.
+3. Job `backup` между `preflight` и `supabase`: `pg_dump -Fc` → `age -r` → SHA-256 → upload → проверка объекта
+   (размер + SHA-256). `supabase` получает `needs: [preflight, backup]`; input `backup_verified` убирается.
+4. Перед первым релизом и далее ежемесячно — тестовое восстановление (вариант 4) владельцем.
+5. Если тариф Pro доступен — дополнительно включить ежедневные копии Supabase (вариант 1) как второй уровень.
+6. Отдельно решить копирование bucket `shop-media` (например, `rclone sync` в тот же R2 по расписанию).
+
+До реализации п. 1–4 оператор обязан сам сделать и проверить копию (варианты 1 или 2 + 4) и указать её в
+`backup_reference`; preflight выводит это как `ATTESTED … NOT verified by this pipeline`.

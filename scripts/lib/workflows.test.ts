@@ -46,6 +46,40 @@ function jobNames(yaml: string): string[] {
     .filter((n): n is string => n !== undefined);
 }
 
+/** Steps of a job (each `      - ` item under `steps:`), with a label: its `name:`, otherwise its first line. */
+function stepsOf(job: string): Array<{ label: string; text: string }> {
+  const lines = job.split('\n');
+  const start = lines.indexOf('    steps:');
+  if (start < 0) return [];
+  const steps: string[][] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.startsWith('      - ')) steps.push([line]);
+    else if (steps.length > 0) steps[steps.length - 1]!.push(line);
+  }
+  return steps.map((s) => {
+    const text = s.join('\n');
+    const name = /^ {6}(?:- | {2})name: (.+)$/m.exec(text)?.[1];
+    return { label: name ?? s[0]!.trim(), text };
+  });
+}
+
+/** Secret names referenced in a piece of workflow text (`secrets.X`), sorted, unique. */
+const secretsIn = (text: string) => [...new Set([...text.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]!))].sort();
+
+/**
+ * Problems of one `uses:` value. Local reusable workflows / actions (`./…`) are fine; every other action must be
+ * `owner/repo[/path]@<40-hex commit SHA> # v<semver>` — never a tag, branch or short SHA; docker:// only by digest.
+ */
+function unpinnedReason(uses: string): string | null {
+  if (uses.startsWith('./')) return null;
+  if (uses.startsWith('docker://')) return /@sha256:[0-9a-f]{64}$/.test(uses) ? null : 'docker image not pinned by digest';
+  const m = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_./-]+)?)@(\S+)(.*)$/.exec(uses);
+  if (!m) return 'not owner/repo@ref';
+  if (!/^[0-9a-f]{40}$/.test(m[2]!)) return `ref "${m[2]}" is not a full 40-character commit SHA`;
+  if (!/^ # v\d+\.\d+\.\d+$/.test(m[3]!)) return 'missing "# vX.Y.Z" version comment';
+  return null;
+}
+
 /** The `needs:` list of a job ([] when it has none). */
 function needsOf(job: string): string[] {
   const m = /^ {4}needs: \[([^\]]*)\]$/m.exec(job);
@@ -83,7 +117,7 @@ describe('supabase-deploy.yml', () => {
       'if [ "$GITHUB_WORKFLOW_REF" != "$EXPECTED_CALLER" ]',
       '=~ ^[0-9a-f]{40}$',
       'if [ "$RELEASE_SHA" != "$GITHUB_SHA" ]',
-      'uses: actions/checkout@v4\n        with:\n          ref: ${{ inputs.sha }}\n          persist-credentials: false',
+      'uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0\n        with:\n          ref: ${{ inputs.sha }}\n          persist-credentials: false',
       'test "$(git rev-parse HEAD)" = "$RELEASE_SHA"',
       'run: pnpm check:migration-integrity',
     ]);
@@ -279,7 +313,7 @@ describe('release.yml', () => {
     expect(order.every((i) => i >= 0), JSON.stringify(order)).toBe(true);
   });
 
-  it('frontend builds the exact SHA, checks the bundle, and deploys with the existing Cloudflare names', () => {
+  it('frontend builds the exact SHA, checks the bundle, and deploys with the production-frontend Cloudflare names', () => {
     const order = inOrder(job('frontend'), [
       'if [ "$GITHUB_REF" != "refs/heads/main" ]',
       'ref: ${{ needs.preflight.outputs.sha }}\n          persist-credentials: false',
@@ -289,10 +323,10 @@ describe('release.yml', () => {
       'VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}',
       'pnpm build',
       'run: pnpm check:bundle-secrets',
-      'uses: cloudflare/wrangler-action@v3',
-      'apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}',
-      'accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}',
-      'command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=main --commit-hash=${{ needs.preflight.outputs.sha }}',
+      'uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0',
+      'apiToken: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}',
+      'accountId: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}',
+      'command: pages deploy dist --project-name=${{ vars.PRODUCTION_CLOUDFLARE_PAGES_PROJECT }} --branch=main --commit-hash=${{ needs.preflight.outputs.sha }}',
     ]);
     expect(order.every((i) => i >= 0), JSON.stringify(order)).toBe(true);
     expect(yaml.match(/pages deploy/g)).toHaveLength(1);
@@ -326,5 +360,155 @@ describe('no deployment outside release.yml', () => {
       expect(yaml, f).not.toMatch(/uses: \.\/\.github\/workflows\//);
       expect(yaml, f).not.toContain('wrangler');
     }
+  });
+});
+
+// C5: third-party actions run by commit SHA only. A tag or branch can be moved by whoever controls the action's
+// repository; a full commit SHA cannot. Every new `uses:` must follow the same rule or this suite fails.
+describe('third-party actions are pinned to a full commit SHA', () => {
+  const files = readdirSync(join(REPO_ROOT, '.github', 'workflows')).filter((f) => /\.ya?ml$/.test(f)).sort();
+  const usesOf = (yaml: string) => [...yaml.matchAll(/^\s*(?:-\s+)?uses:\s*(.+?)\s*$/gm)].map((m) => m[1]!);
+  /** Verified against the official repositories (git ls-remote / fetch, 2026-11-02): tag → commit. */
+  const APPROVED: Record<string, string> = {
+    'actions/checkout': '11d5960a326750d5838078e36cf38b85af677262 # v4.4.0',
+    'actions/setup-node': '49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0',
+    'pnpm/action-setup': 'b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0',
+    'actions/upload-artifact': 'ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2',
+    'cloudflare/wrangler-action': '9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0',
+    'denoland/setup-deno': '22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5',
+  };
+
+  it('every `uses:` in every workflow is local or owner/repo@<40-hex SHA> # vX.Y.Z', () => {
+    let count = 0;
+    for (const f of files) {
+      for (const uses of usesOf(read(f))) {
+        count += 1;
+        expect(unpinnedReason(uses), `${f}: uses: ${uses}`).toBeNull();
+      }
+    }
+    expect(count).toBeGreaterThan(20);
+  });
+
+  it('every action is one of the reviewed pins, with the same SHA and version everywhere', () => {
+    for (const f of files) {
+      for (const uses of usesOf(read(f)).filter((u) => !u.startsWith('./'))) {
+        const [repo, pin] = [uses.slice(0, uses.indexOf('@')), uses.slice(uses.indexOf('@') + 1)];
+        expect(APPROVED[repo], `${f}: ${repo} is not a reviewed action (add its verified SHA to APPROVED)`).toBeDefined();
+        expect(pin, `${f}: ${repo}`).toBe(APPROVED[repo]);
+      }
+    }
+  });
+
+  it('the rule rejects tags, branches, short SHAs, missing version comments and unpinned docker images', () => {
+    expect(unpinnedReason('./.github/workflows/supabase-deploy.yml')).toBeNull();
+    expect(unpinnedReason('actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0')).toBeNull();
+    expect(unpinnedReason('github/codeql-action/init@11d5960a326750d5838078e36cf38b85af677262 # v3.1.0')).toBeNull();
+    expect(unpinnedReason('actions/checkout@v4')).toMatch(/not a full 40-character commit SHA/);
+    expect(unpinnedReason('some/action@main')).toMatch(/not a full 40-character commit SHA/);
+    expect(unpinnedReason('some/action@11d5960')).toMatch(/not a full 40-character commit SHA/);
+    expect(unpinnedReason('some/action@11D5960A326750D5838078E36CF38B85AF677262 # v1.0.0')).toMatch(/not a full/);
+    expect(unpinnedReason('actions/checkout@11d5960a326750d5838078e36cf38b85af677262')).toMatch(/version comment/);
+    expect(unpinnedReason('actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4')).toMatch(/version comment/);
+    expect(unpinnedReason('docker://alpine:3.20')).toMatch(/digest/);
+    expect(unpinnedReason(`docker://alpine@sha256:${'a'.repeat(64)}`)).toBeNull();
+    expect(unpinnedReason('checkout')).toMatch(/owner\/repo/);
+  });
+});
+
+// D1: production Supabase credentials reach only the steps that use them.
+describe('supabase-deploy.yml: Supabase secrets are step-scoped', () => {
+  const job = jobBlock(read('supabase-deploy.yml'), 'deploy');
+  const steps = stepsOf(job);
+  const EXPECTED: Record<string, string[]> = {
+    'Link the production project': ['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD'],
+    'Validate Session Pooler target': ['SUPABASE_DB_URL'],
+    'Show pending migrations': ['SUPABASE_DB_URL'],
+    'Read migration history and dry-run plan': ['SUPABASE_DB_URL'],
+    'Apply migrations': ['SUPABASE_DB_URL'],
+    'Verify migration history after push': ['SUPABASE_DB_URL'],
+    'Deploy Edge Function checkout': ['SUPABASE_ACCESS_TOKEN'],
+    'Deploy Edge Function my-orders': ['SUPABASE_ACCESS_TOKEN'],
+    'Deploy Edge Function notification-settings': ['SUPABASE_ACCESS_TOKEN'],
+    'Deploy Edge Function platform-admin': ['SUPABASE_ACCESS_TOKEN'],
+    'List deployed Edge Functions': ['SUPABASE_ACCESS_TOKEN'],
+  };
+
+  it('the job-level env holds no secret (only the project ref)', () => {
+    const head = job.slice(0, job.indexOf('\n    steps:\n'));
+    expect(secretsIn(head)).toEqual([]);
+    expect(head.endsWith('    env:\n      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}')).toBe(true);
+  });
+
+  it('each secret is passed through the env of exactly the steps that need it', () => {
+    const actual = Object.fromEntries(steps.map((s) => [s.label, secretsIn(s.text)] as const).filter(([, v]) => v.length > 0));
+    expect(actual).toEqual(EXPECTED);
+    for (const s of steps.filter((x) => secretsIn(x.text).length > 0)) {
+      // Only through `env:` of the step (KEY: ${{ secrets.KEY }}), never interpolated into a command.
+      for (const line of s.text.split('\n').filter((l) => l.includes('secrets.'))) {
+        expect(line, s.label).toMatch(/^ {10}([A-Z_]+): \$\{\{ secrets\.\1 \}\}$/);
+      }
+    }
+  });
+
+  it('checkout, pnpm install, the integrity check and the gate checks get no secret', () => {
+    const clean = ['pnpm install --frozen-lockfile', 'actions/checkout@', 'pnpm/action-setup@', 'actions/setup-node@', 'Verify migration file integrity (SHA-256)', 'Validate migration plan', 'Planned stages are release-allowed (no Contract stage)'];
+    for (const needle of clean) {
+      const step = steps.find((s) => s.text.includes(needle));
+      expect(step, needle).toBeDefined();
+      expect(secretsIn(step!.text), needle).toEqual([]);
+    }
+  });
+
+  it('no step echoes a secret variable', () => {
+    for (const s of steps) expect(s.text, s.label).not.toMatch(/(echo|printf|cat)\b[^\n]*\$\{?SUPABASE_(ACCESS_TOKEN|DB_PASSWORD|DB_URL)/);
+  });
+});
+
+// D2: Cloudflare credentials only in the frontend job, environment-scoped names, no fallback to the old ones.
+describe('release.yml: Cloudflare credentials are isolated in production-frontend', () => {
+  const yaml = read('release.yml');
+
+  it('PRODUCTION_CLOUDFLARE_* secrets appear only in the deploy step of the frontend job, which has environment production-frontend', () => {
+    const frontend = jobBlock(yaml, 'frontend');
+    expect(frontend).toContain('    environment: production-frontend\n');
+    const withSecrets = stepsOf(frontend).filter((s) => secretsIn(s.text).length > 0);
+    expect(withSecrets.map((s) => [s.label, secretsIn(s.text)])).toEqual([
+      ['Deploy to Cloudflare Pages', ['PRODUCTION_CLOUDFLARE_ACCOUNT_ID', 'PRODUCTION_CLOUDFLARE_API_TOKEN']],
+    ]);
+    for (const name of jobNames(yaml).filter((n) => n !== 'frontend')) expect(secretsIn(job(name)), name).toEqual([]);
+  });
+
+  it('never uses the former repository-level CLOUDFLARE_* names, nor any fallback expression for a secret', () => {
+    for (const f of ['ci.yml', 'release.yml', 'supabase-deploy.yml']) {
+      const text = read(f);
+      expect(text, f).not.toMatch(/(secrets|vars)\.CLOUDFLARE_/);
+      expect(text, f).not.toMatch(/secrets\.[A-Za-z0-9_]+\s*\|\|/);
+      expect(text, f).not.toMatch(/\|\|\s*secrets\./);
+    }
+    expect(yaml).toContain('--project-name=${{ vars.PRODUCTION_CLOUDFLARE_PAGES_PROJECT }}');
+  });
+
+  it('smoke-web derives the default production address from the frontend job, not from a repository variable', () => {
+    expect(jobBlock(yaml, 'frontend')).toContain('      pages_project: ${{ vars.PRODUCTION_CLOUDFLARE_PAGES_PROJECT }}\n');
+    expect(jobBlock(yaml, 'smoke-web')).toContain(
+      "PRODUCTION_APP_URL: ${{ vars.PRODUCTION_APP_URL || format('https://{0}.pages.dev', needs.frontend.outputs.pages_project) }}",
+    );
+  });
+
+  function job(name: string) {
+    return jobBlock(yaml, name);
+  }
+});
+
+describe('release.yml: backup is labelled as an operator attestation, smoke-api has no warn-only path', () => {
+  const yaml = read('release.yml');
+  it('backup_verified says it is not checked by the pipeline', () => {
+    expect(yaml).toContain('description: Operator attestation, NOT checked by this pipeline');
+  });
+  it('smoke-api exports no legacy_frontend output (previous-frontend incompatibility fails the job)', () => {
+    expect(yaml).not.toContain('legacy_frontend');
+    const smoke = readFileSync(join(REPO_ROOT, 'scripts', 'release-smoke.ts'), 'utf8');
+    expect(smoke).not.toMatch(/::warning|legacy_frontend|GITHUB_OUTPUT/);
+    expect(smoke).toContain('assertLegacyFrontendQuery(');
   });
 });

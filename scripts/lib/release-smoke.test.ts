@@ -7,13 +7,15 @@ import {
   assertBundleContract,
   assertCheckoutRequiresTelegram,
   assertFunctionDeployed,
+  assertLegacyFrontendQuery,
   assertRpcProtected,
   assertStockStatusReadable,
   assertStorefrontQuery,
   assertSupabaseReachable,
   assetScripts,
+  LEGACY_FRONTEND_QUERIES,
+  LEGACY_PRODUCT_COLUMNS,
   LEGACY_VARIANT_EMBED,
-  legacyCompatibility,
   PUBLIC_PAGES,
   STOREFRONT_PRODUCT_COLUMNS,
   STOREFRONT_VARIANT_EMBED,
@@ -39,6 +41,20 @@ describe('contract constants follow the code', () => {
   it('the legacy embed is what the frontend before stock_status requested', () => {
     expect(LEGACY_VARIANT_EMBED).toBe(STOREFRONT_VARIANT_EMBED.replace('stock_status', 'stock_quantity'));
     expect(api).not.toContain(LEGACY_VARIANT_EMBED);
+  });
+  it('the legacy queries are exactly those of main 741d478 (PRODUCT_COLUMNS, listing filter, admin select *)', () => {
+    // Verbatim from main 741d478, src/features/storefront/api.ts (PRODUCT_COLUMNS) and fetchProductsPage.
+    expect(LEGACY_PRODUCT_COLUMNS).toBe(
+      'id, name, base_price_minor, category_id, description, categories!inner(name, slug, is_active, archived_at), ' +
+        'product_variants(id, flavor, color, stock_quantity, is_active, sort_order), ' +
+        'product_images(id, storage_path, is_primary, sort_order, alt_text)',
+    );
+    const paths = LEGACY_FRONTEND_QUERIES.map((q) => decodeURIComponent(q.path));
+    expect(paths).toEqual([
+      `products?select=${LEGACY_PRODUCT_COLUMNS}&limit=5`,
+      `products?select=${LEGACY_PRODUCT_COLUMNS}, in_stock:product_variants!inner(id)&in_stock.stock_quantity=gt.0&in_stock.is_active=eq.true&limit=5`,
+      'product_variants?select=*&limit=5',
+    ]);
   });
 });
 
@@ -83,11 +99,22 @@ describe('smoke-api evaluators', () => {
     expect(() => assertCheckoutRequiresTelegram(res(201, { order: {} }))).toThrow(/expected 401/);
   });
 
-  it('legacy compatibility is reported, never thrown, for 200 / permission denied', () => {
-    expect(legacyCompatibility(res(200, []))).toBe('compatible');
-    expect(legacyCompatibility(denied)).toBe('incompatible');
-    expect(legacyCompatibility(res(403, 'permission denied for table product_variants', 'text/plain'))).toBe('incompatible');
-    expect(() => legacyCompatibility(res(502, 'bad gateway', 'text/plain'))).toThrow(/502/);
+  it('previous frontend queries fail closed: anything but 200 with numeric stock_quantity stops the release', () => {
+    const product = (variants: unknown[]) => ({ id: 'p', product_variants: variants, in_stock: [{ id: 'v' }] });
+    expect(assertLegacyFrontendQuery(res(200, []), 'q')).toBe(0);
+    expect(assertLegacyFrontendQuery(res(200, [product([{ id: 'v', stock_quantity: 3 }, { id: 'w', stock_quantity: 0 }])]), 'q')).toBe(1);
+    expect(assertLegacyFrontendQuery(res(200, [{ id: 'v', stock_quantity: 5, stock_status: 'in_stock' }]), 'q')).toBe(1);
+    // Contract-style privileges: permission denied → NOT compatible (no longer a warning).
+    expect(() => assertLegacyFrontendQuery(denied, 'q')).toThrow(/NOT compatible[\s\S]*HTTP 401/);
+    expect(() => assertLegacyFrontendQuery(res(403, 'permission denied for table product_variants', 'text/plain'), 'q')).toThrow(/NOT compatible/);
+    expect(() => assertLegacyFrontendQuery(res(400, { code: '42703', message: 'column product_variants.stock_quantity does not exist' }), 'q')).toThrow(/NOT compatible/);
+    expect(() => assertLegacyFrontendQuery(res(502, 'bad gateway', 'text/plain'), 'q')).toThrow(/502/);
+    expect(() => assertLegacyFrontendQuery(res(200, '<html>', 'text/html'), 'q')).toThrow(/not JSON/);
+    expect(() => assertLegacyFrontendQuery(res(200, { id: 1 }), 'q')).toThrow(/not an array/);
+    // A 200 that silently lost the column (e.g. a view without it) is incompatible too.
+    expect(() => assertLegacyFrontendQuery(res(200, [product([{ id: 'v', stock_status: 'in_stock' }])]), 'q')).toThrow(/no numeric stock_quantity/);
+    expect(() => assertLegacyFrontendQuery(res(200, [product([{ id: 'v', stock_quantity: '3' }])]), 'q')).toThrow(/no numeric stock_quantity/);
+    expect(() => assertLegacyFrontendQuery(res(200, [{ id: 'v' }]), 'q')).toThrow(/no numeric stock_quantity/);
   });
 });
 

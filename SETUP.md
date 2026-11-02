@@ -92,8 +92,10 @@ pnpm db:start        # = supabase start + локальные секреты Edge
 
 **Cloudflare Pages.** Push в `main` frontend **не** деплоит. `dist` деплоит job `frontend` ручного
 `.github/workflows/release.yml` (environment `production-frontend`, после Supabase и `smoke-api`, см. [RELEASE.md](RELEASE.md)).
-Используются variables `CLOUDFLARE_PAGES_PROJECT`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` и secrets
-`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`. SPA fallback задаётся в `public/_redirects`.
+Используются variables уровня репозитория `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` и значения **environment
+`production-frontend`**: secrets `PRODUCTION_CLOUDFLARE_API_TOKEN`, `PRODUCTION_CLOUDFLARE_ACCOUNT_ID`, variable
+`PRODUCTION_CLOUDFLARE_PAGES_PROJECT` (старые repository `CLOUDFLARE_*` не используются, см. [RELEASE.md](RELEASE.md)).
+SPA fallback задаётся в `public/_redirects`.
 
 Заголовок `X-Frame-Options` намеренно не ставится: Telegram Web открывает Mini App в iframe.
 

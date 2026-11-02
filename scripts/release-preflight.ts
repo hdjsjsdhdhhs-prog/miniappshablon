@@ -70,7 +70,9 @@ async function preflight(): Promise<void> {
   const sha = assertReleaseSha(process.env.RELEASE_SHA, process.env.GITHUB_SHA);
   console.log(`OK  release SHA ${sha} = the commit this run was started for`);
   const backup = assertBackupConfirmation(process.env.BACKUP_VERIFIED, process.env.BACKUP_REFERENCE);
-  console.log(`OK  backup confirmed as verified: ${backup}`);
+  // An operator attestation only: nothing here proves that the backup exists, is intact or can be restored (RELEASE.md,
+  // "Backup" — open blocker until an automated, verified backup step exists).
+  console.log(`ATTESTED  backup reference given by the operator, NOT verified by this pipeline: ${backup}`);
 
   const compare = await gh<{ status: string }>(`/compare/${sha}...${RELEASE_BRANCH}`);
   assertCommitOnMain(compare?.status);
