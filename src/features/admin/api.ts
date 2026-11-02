@@ -15,8 +15,8 @@ export type AdminShop = Tables<'shops'>;
 export type AdminCategory = Tables<'categories'>;
 /**
  * A variant in the admin: every column the client may read plus the EXACT stock, which comes only from
- * admin_variant_stock (members of this shop, checked on the server; 20261102090100). stock_quantity itself is not
- * readable through PostgREST by anyone but the service role.
+ * admin_variant_stock (members of this shop, checked on the server; 20261102090100). The client never reads
+ * stock_quantity through PostgREST: after the Contract step (3C) only the service role can.
  */
 export type AdminVariant = Tables<'product_variants'>;
 export type AdminProduct = Tables<'products'> & {
@@ -24,7 +24,7 @@ export type AdminProduct = Tables<'products'> & {
   product_images: Tables<'product_images'>[];
 };
 
-/** Readable variant columns (all except stock_quantity). `*` would be refused by the column privileges. */
+/** Variant columns the admin reads (all except stock_quantity). Not `*`: the Contract step (3C) refuses it. */
 const VARIANT_COLUMNS =
   'id, shop_id, product_id, flavor, color, sku, price_override_minor, stock_status, is_active, sort_order, seed_key, created_at, updated_at';
 type VariantRow = Omit<AdminVariant, 'stock_quantity'>;

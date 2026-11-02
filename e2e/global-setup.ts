@@ -36,7 +36,7 @@ async function stockRegularTenant(local: SupabaseEnv, shopId: string, owner: { e
   if (se) throw se;
   const { data: variants, error } = await client.from('product_variants').select('id').eq('shop_id', shopId).eq('is_active', true);
   if (error) throw error;
-  // The exact stock is not readable through PostgREST (20261102090100); members read it with admin_variant_stock.
+  // Like the admin, read the exact stock with admin_variant_stock (20261102090100), not through PostgREST (3C).
   const { data: stock, error: ste } = await client.rpc('admin_variant_stock', { p_shop_id: shopId });
   if (ste) throw ste;
   const exact = new Map((stock as Array<{ variant_id: string; stock_quantity: number }>).map((s) => [s.variant_id, s.stock_quantity]));

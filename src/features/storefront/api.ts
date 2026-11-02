@@ -36,7 +36,7 @@ export interface Category {
 
 /**
  * A sellable flavor/color row. It has no price: every variant sells at the product price (basePriceMinor).
- * Availability is a status only — the exact stock is not readable by buyers (20261102090100).
+ * Availability is a status only — the storefront never requests the exact stock (20261102090100).
  */
 export interface Variant {
   id: string;
