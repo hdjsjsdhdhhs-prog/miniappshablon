@@ -1,26 +1,30 @@
--- Exact stock is visible only to the shop's own admins; buyers get a status.
+-- Stock status projection — EXPAND step (stage 3B) of an Expand/Contract change.
 --
 -- Before: anon and authenticated had SELECT on every column of public.product_variants, so stock_quantity was
 -- readable (and filterable / sortable, i.e. binary-searchable) through PostgREST, GraphQL and the storefront JSON,
 -- and checkout answered insufficient_stock with the exact remaining quantity.
 --
--- Now:
---   * stock_status — a STORED generated column, computed by PostgreSQL from stock_quantity, the only stock information
---     of the public projection:  0 → 'out_of_stock',  1–2 → 'low_stock',  ≥ 3 → 'in_stock'.
---   * anon / authenticated keep SELECT on every variant column EXCEPT stock_quantity (column privileges apply to the
---     row data, filters, ordering and RETURNING of PostgREST and to pg_graphql alike). SKU stays visible as before.
---   * Exact quantities: public.admin_variant_stock(p_shop_id) for members of that very shop (owner / manager, or an
---     aal2 platform admin — public.is_shop_member, 20261102090000 / 20261102090100). The service role (Edge
+-- This migration (Expand) only ADDS; it changes no existing table privilege, so the frontend released before it
+-- (main, 741d478: storefront embed / filter on stock_quantity, admin select('*')) keeps working while the new
+-- frontend, which reads stock_status and admin_variant_stock only, is rolled out:
+--   * stock_status — a STORED generated column, computed by PostgreSQL from stock_quantity, the public stock
+--     projection of the new frontend:  0 → 'out_of_stock',  1–2 → 'low_stock',  ≥ 3 → 'in_stock'.
+--   * Exact quantities for the new admin: public.admin_variant_stock(p_shop_id), members of that very shop only
+--     (owner / manager, or an aal2 platform admin — public.is_shop_member, 20261102090000). The service role (Edge
 --     Functions, scripts) keeps full access.
 --   * Probing through checkout: insufficient_stock now carries only the status (checkout Edge Function), and a buyer
 --     who keeps asking for more than is available is stopped: after 5 refused requests per shop within an hour
 --     the checkout answers stock_check_limited (429) BEFORE trying, so it no longer tells "fits / does not fit".
 -- create_order_v2 (locking, price check, stock deduction, non-negative stock) is NOT changed.
+--
+-- NOT here (Contract, a separate stage 3C, released only after the new frontend is deployed and observed): revoking
+-- the table SELECT of anon / authenticated on product_variants and granting every column except stock_quantity.
+-- Until 3C, stock_quantity stays readable through PostgREST exactly as before this migration.
 
 select set_config('lock_timeout', '5s', true);
 
 -- ---------------------------------------------------------------------------
--- 1. Public projection: status only
+-- 1. Public projection: status (additive; existing table privileges unchanged)
 -- ---------------------------------------------------------------------------
 
 alter table public.product_variants
@@ -33,13 +37,7 @@ alter table public.product_variants
   ) stored;
 
 comment on column public.product_variants.stock_status is
-  'Public stock projection: out_of_stock (0) | low_stock (1–2) | in_stock (≥3). The exact stock_quantity is not readable by anon/authenticated; members use admin_variant_stock().';
-
-revoke select on public.product_variants from anon, authenticated;
-grant select (
-  id, shop_id, product_id, flavor, color, sku, price_override_minor, stock_status, is_active, sort_order, seed_key,
-  created_at, updated_at
-) on public.product_variants to anon, authenticated;
+  'Public stock projection: out_of_stock (0) | low_stock (1–2) | in_stock (≥3). Members read exact stock through admin_variant_stock().';
 
 -- ---------------------------------------------------------------------------
 -- 2. Exact stock for the shop's own admins

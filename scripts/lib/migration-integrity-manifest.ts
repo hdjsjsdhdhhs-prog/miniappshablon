@@ -49,7 +49,7 @@ export const MIGRATION_INTEGRITY_MANIFEST = [
   },
   // Stage 3B.
   { file: '20261102090000_platform_admin_mfa.sql', sha256: 'e90e47222b295f75940482aa55b9e9278a22115ec1f617dace057b2d64d9c8c5' },
-  { file: '20261102090100_stock_status_projection.sql', sha256: '2b10821da784ae680942a81c376912ef93aa47f8e0c67a4e96efd889503eb4e7' },
+  { file: '20261102090100_stock_status_projection.sql', sha256: '2ae259986bb867b749b2d2d2c21b2b9a9b9885ee925434bdf7c5fcd94e5d785e' },
   { file: '20261102090200_demo_shop_deletion.sql', sha256: '6d94c3121bd07b082787f3147e0ca27c87db3daa6f770bee0e0d79df8b8d32fd' },
   { file: '20261102090300_platform_admin_mfa_recovery.sql', sha256: 'faff2111c634d5d439224f0c3bfc35be501a3d4f0714069aad3fe7961fdc2d46' },
 ] as const satisfies readonly MigrationIntegrityEntry[];

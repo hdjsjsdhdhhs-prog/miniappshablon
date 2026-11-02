@@ -1,7 +1,8 @@
 /**
- * Public stock projection. The storefront never receives the exact quantity: PostgreSQL computes
- * product_variants.stock_status (generated column, migration 20261102090100) and only that column is readable by
- * buyers. Exact quantities are shown in the admin only (admin_variant_stock RPC, members of the shop).
+ * Public stock projection. The storefront never requests the exact quantity: PostgreSQL computes
+ * product_variants.stock_status (generated column, migration 20261102090100) and the storefront reads only that
+ * column (after the Contract step 3C it is the only stock column buyers can read). Exact quantities are shown in the
+ * admin only (admin_variant_stock RPC, members of the shop).
  *
  *   0    → out_of_stock  «Нет в наличии» (cannot be chosen or added to the cart)
  *   1–2  → low_stock     «Осталось мало» (can be chosen and bought)

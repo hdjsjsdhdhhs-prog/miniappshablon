@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -336,5 +336,48 @@ describe('CLI scripts (independent of the working directory)', () => {
     const verify = run('check-production-migration-plan.ts', ['verify-applied', list], elsewhere);
     expect(verify.status, verify.stderr).toBe(0);
     expect(verify.stdout).toMatch(/^Integrity: 20 reviewed migration file\(s\) match the approved SHA-256\.\nVerified:/);
+  });
+});
+
+// Expand/Contract: 3B (stock_status projection) is the Expand step; the Contract step (3C: revoke the table SELECT on
+// product_variants from anon / authenticated, column grants without stock_quantity) is NOT part of this release.
+describe('stock status: Expand only, no Contract (3C) in this release', () => {
+  const STOCK_FILE = '20261102090100_stock_status_projection.sql';
+  /** SQL without `--` comments, whitespace collapsed, lower case: only executable statements are matched. */
+  const sqlOf = (file: string) =>
+    readFileSync(join(DEFAULT_MIGRATIONS_DIR, file), 'utf8')
+      .replace(/--[^\n]*/g, ' ')
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
+
+  it('the release has exactly the stages 3A and 3B; no 3C stage and no migration after 3B', () => {
+    expect(MIGRATION_STAGES.map((s) => s.id)).toEqual(['3A', '3B']);
+    expect(MIGRATION_STAGES[1].files).toContain(STOCK_FILE);
+    expect(readdirSync(DEFAULT_MIGRATIONS_DIR).sort()).toEqual([...REVIEWED_MIGRATION_FILES].sort());
+    expect(REVIEWED_MIGRATION_FILES.at(-1)).toBe('20261102090300_platform_admin_mfa_recovery.sql');
+  });
+
+  it('3B adds stock_status and admin_variant_stock and keeps admin_variant_stock away from anon', () => {
+    const sql = sqlOf(STOCK_FILE);
+    expect(sql).toContain('alter table public.product_variants add column stock_status text generated always as');
+    expect(sql).toContain('create or replace function public.admin_variant_stock(p_shop_id uuid)');
+    expect(sql).toContain('not public.is_shop_member(p_shop_id)');
+    expect(sql).toContain('revoke all on function public.admin_variant_stock(uuid) from public, anon, authenticated;');
+    expect(sql).toContain('grant execute on function public.admin_variant_stock(uuid) to authenticated, service_role;');
+    expect(sql).not.toMatch(/grant [^;]*on function public\.admin_variant_stock[^;]*\banon\b/);
+  });
+
+  it('no migration revokes SELECT on product_variants or narrows it to column grants (that is the Contract step)', () => {
+    for (const file of REVIEWED_MIGRATION_FILES) {
+      const sql = sqlOf(file);
+      expect(sql, file).not.toMatch(/revoke [^;]*\bselect\b[^;]*on (table )?public\.product_variants\b/);
+      expect(sql, file).not.toMatch(/revoke all [^;]*on (table )?public\.product_variants\b/);
+      expect(sql, file).not.toMatch(/grant select ?\([^)]*\) on (table )?public\.product_variants\b/);
+    }
+    // The baseline (20261014090100) revokes everything and then grants SELECT on product_variants again; a release
+    // stage must not revoke table privileges wholesale.
+    for (const file of MIGRATION_STAGES.flatMap((s) => s.files)) {
+      expect(sqlOf(file), file).not.toMatch(/revoke [^;]*on all tables in schema public[^;]*\b(anon|authenticated)\b/);
+    }
   });
 });
