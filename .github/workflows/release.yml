@@ -1,0 +1,211 @@
+name: Production release
+
+# Controlled production release (architecture C). The ONLY way to deploy production: CI (ci.yml) never deploys.
+#
+#   preflight ─▶ supabase ─▶ smoke-api ─▶ frontend ─▶ smoke-web
+#   (no secrets)  (env: production,   (read-only,   (env: production-frontend,  (read-only)
+#                  owner approval)     public key)    owner approval)
+#
+# * preflight — before ANY environment / secret: started from main, full SHA = this run's commit, commit in main,
+#   CI run + the three required checks green on it, backup confirmed, migration SHA-256 manifest intact, manifest
+#   has only release-allowed (Expand) stages, both environments exist and are protected (scripts/release-preflight.ts).
+# * supabase  — the reusable .github/workflows/supabase-deploy.yml (Migration Gate: integrity, history, dry-run,
+#   stage allowlist, db push of whole stages, verify-applied, Edge Functions).
+# * smoke-api — read-only checks of the new API contract; a failure blocks the frontend.
+# * frontend  — build of the selected SHA, bundle-secrets, Cloudflare Pages deploy (production branch main).
+# * smoke-web — the deployed app shell, public pages and the stock_status contract of the bundle.
+#
+# Partial release (DB updated, frontend refused / failed), retry and stop: RELEASE.md. There is no automatic database
+# rollback; recovery uses the backup named in `backup_reference`. Checked by scripts/lib/workflows.test.ts.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full 40-character SHA to release — the current HEAD of main this run is started from
+        required: true
+        type: string
+      backup_reference:
+        description: Identifier of the production database backup taken and verified before this release
+        required: true
+        type: string
+      backup_verified:
+        description: I confirm this backup exists and was verified
+        required: true
+        type: boolean
+        default: false
+
+# One production release at a time, never cancelled automatically (a run may be inside db push or a deploy). The group
+# is a fixed string, so runs started from any ref share it. GitHub keeps at most one run waiting: a newer dispatch
+# replaces a waiting older one (which did nothing yet).
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+# No default token permissions; every job asks for exactly what it needs.
+permissions: {}
+
+jobs:
+  preflight:
+    name: Preflight (main, SHA, CI, backup, integrity)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout, compare API
+      actions: read # CI workflow runs, environment protection
+      checks: read # required check runs
+    outputs:
+      sha: ${{ steps.guard.outputs.sha }}
+    steps:
+      # Inputs reach the shell only through env (never interpolated into the script).
+      - name: Guard — manual run from main for the typed SHA
+        id: guard
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then echo "::error::release must be started manually"; exit 1; fi
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "::error::release must be started from refs/heads/main, not $GITHUB_REF"; exit 1; fi
+          if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::sha must be the full 40-character lowercase commit SHA"; exit 1; fi
+          if [ "$RELEASE_SHA" != "$GITHUB_SHA" ]; then echo "::error::sha $RELEASE_SHA is not the commit this run was started for ($GITHUB_SHA)"; exit 1; fi
+          echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.guard.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Release preflight (SHA in main, CI green, backup, stages, environments)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.guard.outputs.sha }}
+          BACKUP_REFERENCE: ${{ inputs.backup_reference }}
+          BACKUP_VERIFIED: ${{ inputs.backup_verified }}
+        run: pnpm exec tsx scripts/release-preflight.ts preflight
+      - name: Verify migration file integrity (SHA-256)
+        run: pnpm check:migration-integrity
+
+  supabase:
+    name: Supabase
+    needs: [preflight]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/supabase-deploy.yml
+    with:
+      sha: ${{ needs.preflight.outputs.sha }}
+
+  smoke-api:
+    name: Smoke API (read-only)
+    needs: [preflight, supabase]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # environment protection re-check
+    outputs:
+      legacy_frontend: ${{ steps.api.outputs.legacy_frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: API contract (stock_status, RPC, Edge Functions)
+        id: api
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+        run: pnpm exec tsx scripts/release-smoke.ts api
+      # Right before the frontend job: production-frontend must (still) exist and be protected — a job that references
+      # a missing environment would make GitHub create it unprotected.
+      - name: Deployment environments are protected
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm exec tsx scripts/release-preflight.ts environments
+
+  frontend:
+    name: Frontend (Cloudflare Pages)
+    needs: [preflight, smoke-api]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production-frontend
+    permissions:
+      contents: read
+    outputs:
+      deployment_url: ${{ steps.deploy.outputs.deployment-url }}
+    steps:
+      - name: Guard — main and the preflight SHA
+        env:
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "::error::refusing: ref $GITHUB_REF"; exit 1; fi
+          if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || [ "$RELEASE_SHA" != "$GITHUB_SHA" ]; then echo "::error::refusing: sha"; exit 1; fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          persist-credentials: false
+      - name: Checked-out commit is the release SHA
+        env:
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Production build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+        run: |
+          set -euo pipefail
+          for v in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY CLOUDFLARE_PAGES_PROJECT; do
+            if [ -z "${!v}" ]; then echo "::error::variable $v is not set"; exit 1; fi
+          done
+          pnpm build
+      - run: pnpm check:bundle-secrets
+      # Same variable / secret names as the former CI job. --branch=main: the checkout is a detached SHA, the Pages
+      # production branch is main; --commit-hash records the released SHA on the deployment.
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=main --commit-hash=${{ needs.preflight.outputs.sha }}
+
+  smoke-web:
+    name: Smoke Web (read-only)
+    needs: [preflight, frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The deployment itself (unique Pages URL) and the production address (vars.PRODUCTION_APP_URL, otherwise the
+      # project's pages.dev domain).
+      - name: Deployed app (shell, public pages, stock_status contract)
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          DEPLOYMENT_URL: ${{ needs.frontend.outputs.deployment_url }}
+          PRODUCTION_APP_URL: ${{ vars.PRODUCTION_APP_URL || format('https://{0}.pages.dev', vars.CLOUDFLARE_PAGES_PROJECT) }}
+        run: pnpm exec tsx scripts/release-smoke.ts web "$DEPLOYMENT_URL" "$PRODUCTION_APP_URL"

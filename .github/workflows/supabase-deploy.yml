@@ -1,22 +1,31 @@
-name: Supabase deploy (manual)
+name: Supabase deploy (release stage)
 
 # Applies migrations from Git and deploys Edge Functions to the linked hosted project.
-# Manual trigger only: schema changes to production are an explicit operator action.
+# Reusable workflow ONLY: it has no trigger of its own (no workflow_dispatch, no push), so it runs exclusively as the
+# `supabase` job of .github/workflows/release.yml — after that workflow's preflight (main, SHA, CI green, backup,
+# migration integrity, protected environments) — and the guard below refuses any other caller.
+#
+# Concurrency: deliberately NONE here. The caller holds the single production-release group (release.yml); a second
+# group with the same name in a called workflow would deadlock, a different one would split the serialisation.
+# Checked by scripts/lib/workflows.test.ts.
 on:
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      sha:
+        description: Full SHA validated by the release preflight; the exact commit that is checked out and deployed.
+        required: true
+        type: string
 
-# One production deployment at a time. The group is a fixed string (no ref / run id), so EVERY run of this workflow,
-# from any branch, waits for the one in progress; a running deployment is never cancelled (it may be inside db push).
-# GitHub keeps at most one run waiting per group: a newer dispatch replaces an older one that has not started yet —
-# that run did nothing, the newer one re-reads the state from scratch. CI (ci.yml) uses its own group and is not
-# affected. Checked by scripts/lib/workflows.test.ts.
-concurrency:
-  group: supabase-deploy-production
-  cancel-in-progress: false
+permissions:
+  contents: read
 
 jobs:
   deploy:
+    name: Migrations + Edge Functions (production)
     runs-on: ubuntu-latest
+    # Secrets live in the `production` environment: they are released only after the owner's approval and only to
+    # runs from main (environment deployment branch policy). The `if` keeps a run from any other ref from even asking.
+    if: github.ref == 'refs/heads/main'
     environment: production
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -24,7 +33,28 @@ jobs:
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
     steps:
+      # Defence in depth, before checkout and before any secret is used: main, a manual dispatch of release.yml on
+      # main (github.workflow_ref is the CALLER's workflow), and the full SHA of that run.
+      - name: Guard — called by release.yml on main for the run's SHA
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+          EXPECTED_CALLER: ${{ github.repository }}/.github/workflows/release.yml@refs/heads/main
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "::error::refusing: ref $GITHUB_REF is not refs/heads/main"; exit 1; fi
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then echo "::error::refusing: event $GITHUB_EVENT_NAME"; exit 1; fi
+          if [ "$GITHUB_WORKFLOW_REF" != "$EXPECTED_CALLER" ]; then echo "::error::refusing: caller $GITHUB_WORKFLOW_REF is not $EXPECTED_CALLER"; exit 1; fi
+          if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::refusing: sha is not a full commit SHA"; exit 1; fi
+          if [ "$RELEASE_SHA" != "$GITHUB_SHA" ]; then echo "::error::refusing: sha $RELEASE_SHA is not the run commit $GITHUB_SHA"; exit 1; fi
+          echo "Supabase release of $RELEASE_SHA from $GITHUB_WORKFLOW_REF"
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - name: Checked-out commit is the release SHA
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -77,6 +107,13 @@ jobs:
       - name: Validate migration plan
         id: plan
         run: pnpm exec tsx scripts/check-production-migration-plan.ts plan "$RUNNER_TEMP/migration-list.json" "$RUNNER_TEMP/db-push-dry-run.json"
+      # Release allowlist (scripts/lib/release.ts RELEASE_ALLOWED_STAGES): only Expand stages may be pushed by a
+      # release. A Contract stage (3C) in the plan stops the job before db push; the apply step re-checks that the
+      # plan is still exactly these stages.
+      - name: Planned stages are release-allowed (no Contract stage)
+        env:
+          PLANNED_STAGES: ${{ steps.plan.outputs.stages }}
+        run: pnpm exec tsx scripts/release-preflight.ts stages "$PLANNED_STAGES"
       - name: Apply migrations
         if: steps.plan.outputs.mode == 'apply'
         env:

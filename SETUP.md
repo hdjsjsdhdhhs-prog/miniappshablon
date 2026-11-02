@@ -46,8 +46,9 @@ pnpm db:start        # = supabase start + локальные секреты Edge
    pnpm exec supabase functions deploy notification-settings
    pnpm exec supabase functions deploy platform-admin
    ```
-   То же самое делает ручной workflow `.github/workflows/supabase-deploy.yml`
-   (secrets `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, variable `SUPABASE_PROJECT_REF`).
+   Для production то же самое делает job `supabase` ручного release workflow `.github/workflows/release.yml`
+   (reusable `.github/workflows/supabase-deploy.yml`, environment `production`: secrets `SUPABASE_ACCESS_TOKEN`,
+   `SUPABASE_DB_PASSWORD`, `SUPABASE_DB_URL`, variable `SUPABASE_PROJECT_REF`). Порядок релиза — [RELEASE.md](RELEASE.md).
    `verify_jwt = false` для функций берётся из `supabase/config.toml`: покупатель авторизуется через initData, а не через JWT.
 3. Секреты функций (только сервер):
    ```bash
@@ -89,9 +90,10 @@ pnpm db:start        # = supabase start + локальные секреты Edge
 > Vercel Hobby (https://vercel.com/docs/plans/hobby) разрешён только для **некоммерческого личного** использования.
 > Продаваемому сервису нужен Pro; смена плана выполняется владельцем вручную.
 
-**Cloudflare Pages.** Workflow `.github/workflows/ci.yml` (job `deploy-cloudflare-pages`) деплоит `dist` при push в `main`, если заданы
-variable `CLOUDFLARE_PAGES_PROJECT`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` и secrets `CLOUDFLARE_API_TOKEN`,
-`CLOUDFLARE_ACCOUNT_ID`. SPA fallback задаётся в `public/_redirects`.
+**Cloudflare Pages.** Push в `main` frontend **не** деплоит. `dist` деплоит job `frontend` ручного
+`.github/workflows/release.yml` (environment `production-frontend`, после Supabase и `smoke-api`, см. [RELEASE.md](RELEASE.md)).
+Используются variables `CLOUDFLARE_PAGES_PROJECT`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` и secrets
+`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`. SPA fallback задаётся в `public/_redirects`.
 
 Заголовок `X-Frame-Options` намеренно не ставится: Telegram Web открывает Mini App в iframe.
 
@@ -111,3 +113,4 @@ variable `CLOUDFLARE_PAGES_PROJECT`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KE
 
 `ci.yml`: lint → typecheck → unit → валидация всех tenants → build → проверка бандла на секреты, затем локальный
 Supabase в Docker → проверка воспроизводимости миграций → seed/publish/verify demo → integration → Playwright.
+CI ничего не деплоит. Production выпускается только `release.yml` ([RELEASE.md](RELEASE.md)).

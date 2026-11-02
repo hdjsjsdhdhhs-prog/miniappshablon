@@ -9,6 +9,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# CI only verifies code: no job here deploys anything, uses an environment or reads a secret. Production releases
+# (Supabase, then Cloudflare Pages) run only through the manual, approved .github/workflows/release.yml, which
+# requires this workflow to be green for the released SHA. Checked by scripts/lib/workflows.test.ts.
+permissions:
+  contents: read
+
 jobs:
   quality:
     name: Lint · types · unit · build
@@ -90,27 +96,3 @@ jobs:
         with:
           name: playwright-report
           path: playwright-report
-
-  deploy-cloudflare-pages:
-    name: Deploy frontend to Cloudflare Pages
-    runs-on: ubuntu-latest
-    needs: [quality, integration, edge-functions-deno-check]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CLOUDFLARE_PAGES_PROJECT != ''
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Build
-        env:
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
-        run: pnpm build && pnpm check:bundle-secrets
-      - uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }}
