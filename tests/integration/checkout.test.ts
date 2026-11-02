@@ -285,106 +285,111 @@ describe('fulfillment: delivery / pickup validated on the server', () => {
   });
 });
 
-describe('release stage 1: the old storefront contract ({ contact }) keeps working through the old create_order', () => {
+// Audit F-03 (20261030090100): the pre-20261026090000 body ({ contact }) is no longer accepted — it reached the old
+// create_order, which stored orders (and moved stock, sent notifications) in DEMO shops. These tests replace the
+// release-stage-1 tests that asserted the old contract kept working. History created by it stays readable.
+describe('the old storefront contract ({ contact }) is removed; its history stays intact', () => {
   type LOrder = Order & { fulfillment_method: string | null; delivery_address: string | null; contact_name: string | null; contact_phone: string | null; comment: string | null };
   const code = (r: { body: Record<string, unknown> | null }) => (r.body?.error as { code?: string } | undefined)?.code;
   /** Exactly the body the storefront published before 20261026090000 sends. */
   function legacyBody(shop: TestShop, items: Array<{ variantId: string; quantity: number }>, contact: Record<string, string> = { name: 'Ирина', phone: '+7 900 000-00-00', comment: '' }, extra: Record<string, unknown> = {}) {
     return { shopSlug: shop.slug, idempotencyKey: randomUUID(), currency: 'RUB', items, contact, ...extra };
   }
+  /** An order as the old contract stored it (written directly: the old path no longer exists). */
+  async function legacyOrder(shop: TestShop, buyer: number, quantity: number): Promise<string> {
+    const { data: n } = await admin.from('orders').select('order_number').eq('shop_id', shop.id).order('order_number', { ascending: false }).limit(1);
+    const hash = createHash('sha256').update(randomUUID()).digest('hex');
+    const { data, error } = await admin
+      .from('orders')
+      .insert({
+        shop_id: shop.id, order_number: (n?.[0]?.order_number ?? 0) + 1, customer_tg_id: buyer, contact_name: 'Ирина', contact_phone: '+7 900 000-00-00',
+        currency: 'RUB', total_minor: 50000 * quantity, idempotency_key: randomUUID(), request_hash: hash,
+      })
+      .select('id')
+      .single();
+    if (error) throw error;
+    // Keep the per-shop counter in step, as the old create_order did.
+    const { error: ce } = await admin.from('shop_order_counters').upsert({ shop_id: shop.id, last_number: (n?.[0]?.order_number ?? 0) + 1 });
+    if (ce) throw ce;
+    const { error: ie } = await admin.from('order_items').insert({
+      shop_id: shop.id, order_id: data.id, product_id: shop.productId, variant_id: shop.variants[0]!.id, product_name: 'Liquid',
+      variant_label: 'Mint', flavor: 'Mint', unit_price_minor: 50000, quantity, line_total_minor: 50000 * quantity,
+    });
+    if (ie) throw ie;
+    return data.id;
+  }
 
-  it('creates the order with name/phone, server prices, stock deduction and the pre-release request hash', async () => {
+  it('every old-contract body is refused with 400 before any database call: no order, no stock change', async () => {
     const shop = await createTestShop({ basePrice: 50000, variants: [{ flavor: 'Mint', stock: 5 }] });
-    const user = newTelegramUserId();
-    const body = legacyBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 2 }], { name: '  Ирина ', phone: ' +7 900 000-00-00 ', comment: ' Позвоните ' }, { expectedTotalMinor: 100000 });
-    const res = await callFunction('checkout', await initDataFor(user), body);
-    expect(res.status, JSON.stringify(res.body)).toBe(201);
-    const order = res.body!.order as LOrder;
-    expect(order).toMatchObject({ total_minor: 100000, contact_name: 'Ирина', contact_phone: '+7 900 000-00-00', comment: 'Позвоните', fulfillment_method: null, delivery_address: null, is_test: false });
-    expect(await stockOf(shop.variants[0]!.id)).toBe(3);
-    const { data: row } = await admin.from('orders').select('customer_tg_id, request_hash, stock_state').eq('id', order.id).single();
-    // Same formula as the checkout function before the release: retries across the deploy still replay.
-    const oldHash = createHash('sha256')
-      .update(JSON.stringify({ s: shop.slug, i: [[shop.variants[0]!.id, 2]], c: { name: 'Ирина', phone: '+7 900 000-00-00', comment: 'Позвоните' }, cur: 'RUB' }))
-      .digest('hex');
-    expect(row).toEqual({ customer_tg_id: user, request_hash: oldHash, stock_state: 'deducted' });
-  });
-
-  it('idempotency: replay returns the same order once; edited contact or switching to the new contract is a conflict', async () => {
-    const shop = await createTestShop({ variants: [{ flavor: 'Mint', stock: 5 }] });
-    const init = await initDataFor(newTelegramUserId());
-    const body = legacyBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }]);
-    const first = await callFunction('checkout', init, body);
-    const again = await callFunction('checkout', init, body);
-    expect([first.status, again.status]).toEqual([201, 200]);
-    expect((again.body!.order as Order).id).toBe((first.body!.order as Order).id);
-    expect((await callFunction('checkout', init, { ...body, contact: { ...body.contact, phone: '+7 911 111-11-11' } })).status).toBe(422);
-    const switched = { shopSlug: body.shopSlug, idempotencyKey: body.idempotencyKey, currency: body.currency, items: body.items, fulfillment: { method: 'pickup' }, comment: '' };
-    expect((await callFunction('checkout', init, switched)).status).toBe(422);
-    expect(await stockOf(shop.variants[0]!.id)).toBe(4);
-    expect((await admin.from('orders').select('id').eq('shop_id', shop.id)).data).toHaveLength(1);
-  });
-
-  it('keeps every server-side check: name, price, foreign/inactive variants, stock, currency, preview shop, initData', async () => {
-    const shop = await createTestShop({ basePrice: 50000 });
-    const other = await createTestShop();
+    const demo = await createTestShop({ isDemo: true, variants: [{ flavor: 'Mint', stock: 5 }] });
     const preview = await createTestShop({ mode: 'preview' });
     const init = await initDataFor(newTelegramUserId());
-    const items = [{ variantId: shop.variants[0]!.id, quantity: 1 }];
-    expect((await callFunction('checkout', init, legacyBody(shop, items, { name: '   ', phone: '', comment: '' }))).status).toBe(400);
-    expect((await callFunction('checkout', init, legacyBody(shop, items, { name: 'x'.repeat(81), phone: '', comment: '' }))).status).toBe(400);
-    expect(code(await callFunction('checkout', init, legacyBody(shop, items, undefined, { expectedTotalMinor: 1 })))).toBe('price_changed');
-    expect(code(await callFunction('checkout', init, legacyBody(shop, [{ variantId: other.variants[0]!.id, quantity: 1 }])))).toBe('item_unavailable');
-    expect(code(await callFunction('checkout', init, legacyBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 6 }])))).toBe('insufficient_stock');
-    expect(code(await callFunction('checkout', init, legacyBody(shop, items, undefined, { currency: 'USD' })))).toBe('currency_mismatch');
-    expect((await callFunction('checkout', init, legacyBody(preview, [{ variantId: preview.variants[0]!.id, quantity: 1 }]))).status).toBe(403);
+    const items = [{ variantId: shop.variants[0]!.id, quantity: 2 }];
+    for (const body of [
+      legacyBody(shop, items),
+      legacyBody(shop, items, { name: '   ', phone: '', comment: '' }),
+      legacyBody(shop, items, undefined, { expectedTotalMinor: 100000 }),
+      legacyBody(demo, [{ variantId: demo.variants[0]!.id, quantity: 1 }]),
+      legacyBody(preview, [{ variantId: preview.variants[0]!.id, quantity: 1 }]),
+      { ...legacyBody(shop, items), fulfillment: { method: 'pickup' }, comment: '' },
+    ]) {
+      const res = await callFunction('checkout', init, body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect(code(res)).toBe('invalid_body');
+    }
+    // initData is still checked first.
     expect((await callFunction('checkout', null, legacyBody(shop, items))).status).toBe(401);
-    // A buyer-supplied identity is ignored on this path too.
-    const forged = await callFunction('checkout', init, legacyBody(shop, items, undefined, { customer_tg_id: 1, p_customer_tg_id: 1 }));
-    expect(forged.status).toBe(201);
-    expect((await admin.from('orders').select('customer_tg_id').eq('id', (forged.body!.order as Order).id).single()).data!.customer_tg_id).not.toBe(1);
-    for (const s of [other, preview]) expect((await admin.from('orders').select('id').eq('shop_id', s.id)).data).toEqual([]);
-    expect(await stockOf(other.variants[0]!.id)).toBe(5);
-    expect(await stockOf(shop.variants[0]!.id)).toBe(4);
+    for (const s of [shop, demo, preview]) expect((await admin.from('orders').select('id').eq('shop_id', s.id)).data).toEqual([]);
+    expect(await stockOf(shop.variants[0]!.id)).toBe(5);
+    expect(await stockOf(demo.variants[0]!.id)).toBe(5);
   });
 
-  it('a DEMO shop keeps the old behaviour (stored test order, visible) until it is handed over; then it is hidden, never real', async () => {
-    const shop = await createTestShop({ isDemo: true, variants: [{ flavor: 'Mint', stock: 5 }] });
+  it('a retry of an old-contract order (same idempotency key) creates nothing; the current contract with that key is a conflict', async () => {
+    const shop = await createTestShop({ variants: [{ flavor: 'Mint', stock: 5 }] });
+    const buyer = newTelegramUserId();
+    const id = await legacyOrder(shop, buyer, 1);
+    const { data: row } = await admin.from('orders').select('idempotency_key').eq('id', id).single();
+    const init = await initDataFor(buyer);
+    const retry = legacyBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }], undefined, { idempotencyKey: row!.idempotency_key });
+    expect((await callFunction('checkout', init, retry)).status).toBe(400);
+    const switched = { ...checkoutBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }]), idempotencyKey: row!.idempotency_key };
+    expect((await callFunction('checkout', init, switched)).status).toBe(422);
+    expect((await admin.from('orders').select('id').eq('shop_id', shop.id)).data).toEqual([{ id }]);
+  });
+
+  it('old and new orders coexist in one shop and in the buyer history; the owner can still cancel an old one', async () => {
+    const shop = await createTestShop({ variants: [{ flavor: 'Mint', stock: 5 }] });
     const { client: owner } = await createOwner(shop.id);
     const buyer = newTelegramUserId();
-    const res = await callFunction('checkout', await initDataFor(buyer), legacyBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }]));
-    expect(res.status, JSON.stringify(res.body)).toBe(201);
-    const id = (res.body!.order as Order).id;
-    expect((res.body!.order as Order).is_test).toBe(true);
-    expect(await stockOf(shop.variants[0]!.id)).toBe(4);
-    // While DEMO: buyer and owner see it (the old storefront shows "тестовый").
+    const init = await initDataFor(buyer);
+    const oldId = await legacyOrder(shop, buyer, 1);
+    const newRes = await callFunction('checkout', init, checkoutBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }], { fulfillment: { method: 'delivery', address: 'ул. Мира, 1' } }));
+    expect(newRes.status).toBe(201);
+    const mine = (await callFunction('my-orders', init, { shopSlug: shop.slug })).body!.orders as LOrder[];
+    expect(mine.map((o) => [o.contact_name, o.fulfillment_method]).sort()).toEqual([['Ирина', null], [null, 'delivery']].sort());
+    const { data: seen } = await owner.from('orders').select('order_number').eq('shop_id', shop.id).order('order_number');
+    expect(seen!.map((o) => o.order_number)).toEqual([1, 2]);
+    expect((await owner.rpc('admin_set_order_status', { p_order_id: oldId, p_status: 'cancelled' })).error).toBeNull();
+    expect(await stockOf(shop.variants[0]!.id)).toBe(5); // 5 − 1 (new) + 1 (old order restored)
+  });
+
+  it('historical DEMO test orders stay visible while DEMO and hidden after the shop became a real one', async () => {
+    const shop = await createTestShop({ variants: [{ flavor: 'Mint', stock: 5 }] });
+    const { client: owner } = await createOwner(shop.id);
+    const buyer = newTelegramUserId();
+    const id = await legacyOrder(shop, buyer, 1);
+    // What the removed contract produced in a DEMO shop: an is_test order.
+    expect((await admin.from('orders').update({ is_test: true }).eq('id', id)).error).toBeNull();
+    expect((await admin.from('shops').update({ is_demo: true }).eq('id', shop.id)).error).toBeNull();
     expect(((await callFunction('my-orders', await initDataFor(buyer), { shopSlug: shop.slug })).body!.orders as Order[]).map((o) => o.id)).toEqual([id]);
     expect((await owner.from('orders').select('id, is_test').eq('shop_id', shop.id)).data).toEqual([{ id, is_test: true }]);
-    expect((await owner.from('order_items').select('order_id').eq('shop_id', shop.id)).data).toEqual([{ order_id: id }]);
-    // The new contract never stores a DEMO order.
     expect(code(await callFunction('checkout', await initDataFor(buyer), checkoutBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }])))).toBe('shop_demo');
 
-    // Handed over (is_demo=false): the test order is hidden from owner and buyer but kept and still is_test.
     expect((await admin.from('shops').update({ is_demo: false }).eq('id', shop.id)).error).toBeNull();
     expect((await owner.from('orders').select('id').eq('shop_id', shop.id)).data).toEqual([]);
     expect((await owner.from('order_items').select('order_id').eq('shop_id', shop.id)).data).toEqual([]);
     expect((await callFunction('my-orders', await initDataFor(buyer), { shopSlug: shop.slug })).body!.orders).toEqual([]);
     expect((await admin.from('orders').select('is_test').eq('id', id).single()).data).toEqual({ is_test: true });
-  });
-
-  it('old and new orders coexist in one shop and in the buyer history', async () => {
-    const shop = await createTestShop({ variants: [{ flavor: 'Mint', stock: 5 }] });
-    const { client: owner } = await createOwner(shop.id);
-    const buyer = newTelegramUserId();
-    const init = await initDataFor(buyer);
-    const oldRes = await callFunction('checkout', init, legacyBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }]));
-    const newRes = await callFunction('checkout', init, checkoutBody(shop, [{ variantId: shop.variants[0]!.id, quantity: 1 }], { fulfillment: { method: 'delivery', address: 'ул. Мира, 1' } }));
-    expect([oldRes.status, newRes.status]).toEqual([201, 201]);
-    const mine = (await callFunction('my-orders', init, { shopSlug: shop.slug })).body!.orders as LOrder[];
-    expect(mine.map((o) => [o.contact_name, o.fulfillment_method]).sort()).toEqual([['Ирина', null], [null, 'delivery']].sort());
-    const { data: seen } = await owner.from('orders').select('order_number').eq('shop_id', shop.id).order('order_number');
-    expect(seen!.map((o) => o.order_number)).toEqual([1, 2]);
-    expect(await stockOf(shop.variants[0]!.id)).toBe(3);
   });
 });
 

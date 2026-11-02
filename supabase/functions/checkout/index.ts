@@ -2,11 +2,10 @@
 // Creates an order atomically after verifying Telegram initData. The client sends only variant ids and
 // quantities; prices, ownership and stock are resolved in PostgreSQL inside one transaction.
 //
-// Two body formats (release stage 1, see 20261026090000):
-//   * { fulfillment, comment }        → public.create_order_v2 (current storefront: delivery / pickup)
-//   * { contact: { name, phone, comment } } → public.create_order (storefront published before 20261026090000;
-//     kept unchanged until a follow-up release removes the old contract)
-// A body with both or neither is rejected. Both paths share identity (initData only), validation and errors.
+// Body: { fulfillment, comment, … } → public.create_order_v2 (delivery / pickup). The pre-20261026090000 contract
+// ({ contact: { name, phone, comment } } → create_order) was removed in 20261030090100 (audit F-03: it stored orders
+// in DEMO shops); such a body is refused before any database call. DEMO shops, per-order size and per-buyer rate
+// limits are enforced in SQL (create_order_v2 + orders trigger), so no caller can skip them.
 import { z } from 'npm:zod@4.6.7';
 import { telegramApiBase } from '../_shared/admin-auth.ts';
 import { serviceClient, verifyTelegramRequest } from '../_shared/auth.ts';
@@ -35,31 +34,11 @@ const fulfillmentBodySchema = z.object({
   comment: z.string().trim().max(500).optional().default(''),
 });
 
-/** The pre-20261026090000 contract, byte-for-byte the old schema (its parsed `contact` feeds the request hash). */
-const legacyBodySchema = z.object({
-  ...baseShape,
-  contact: z.object({
-    name: z.string().trim().min(1).max(80),
-    phone: z.string().trim().max(32).optional().default(''),
-    comment: z.string().trim().max(500).optional().default(''),
-  }),
-});
-
 type FulfillmentBody = z.infer<typeof fulfillmentBodySchema>;
-type LegacyBody = z.infer<typeof legacyBodySchema>;
-type ParsedBody = { kind: 'fulfillment'; body: FulfillmentBody } | { kind: 'legacy'; body: LegacyBody };
 
-/**
- * Picks the contract by its top-level key. `contact` alone → legacy; otherwise the current schema (which rejects a
- * body without `fulfillment`). Both keys at once is ambiguous → null (invalid body). Throws ZodError on bad input.
- */
-function parseBody(raw: unknown): ParsedBody | null {
-  const obj = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-  const hasFulfillment = obj.fulfillment !== undefined;
-  const hasContact = obj.contact !== undefined;
-  if (hasContact && hasFulfillment) return null;
-  if (hasContact) return { kind: 'legacy', body: legacyBodySchema.parse(raw) };
-  return { kind: 'fulfillment', body: fulfillmentBodySchema.parse(raw) };
+/** The removed old contract is recognised explicitly (clear error), never silently mapped onto the current one. */
+function isLegacyBody(raw: unknown): boolean {
+  return !!raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as Record<string, unknown>).contact !== undefined;
 }
 
 const DB_ERRORS: Record<string, number> = {
@@ -80,7 +59,28 @@ const DB_ERRORS: Record<string, number> = {
   insufficient_stock: 409,
   price_changed: 409,
   idempotency_conflict: 422,
+  order_too_large: 422,
+  rate_limited: 429,
+  too_many_open_orders: 429,
+  stock_check_limited: 429,
 };
+
+type StockStatus = 'out_of_stock' | 'low_stock' | 'in_stock';
+
+/**
+ * insufficient_stock without the exact quantity (20261102090100): the SQL detail carries `available`, the buyer gets
+ * only the public status of each refused variant, read from the generated column product_variants.stock_status.
+ */
+async function insufficientStockDetails(details: unknown): Promise<Array<{ variant_id: string; stock_status: StockStatus }>> {
+  const ids = Array.isArray(details)
+    ? [...new Set(details.map((d) => (d as { variant_id?: unknown })?.variant_id).filter((id): id is string => typeof id === 'string'))]
+    : [];
+  if (ids.length === 0) return [];
+  const { data, error } = await serviceClient().from('product_variants').select('id, stock_status').in('id', ids);
+  const byId = new Map((error ? [] : (data ?? [])).map((v: { id: string; stock_status: StockStatus }) => [v.id, v.stock_status]));
+  // A variant that vanished meanwhile is simply not available any more.
+  return ids.map((id) => ({ variant_id: id, stock_status: byId.get(id) ?? 'out_of_stock' }));
+}
 
 async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
@@ -91,23 +91,46 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders(req) });
   if (req.method !== 'POST') return errorResponse(req, 405, 'method_not_allowed');
 
-  const auth = await verifyTelegramRequest(req);
+  // Creating an order accepts a shorter initData age than reading the history (see http.ts).
+  const auth = await verifyTelegramRequest(req, 'checkout');
   if (!auth.ok) return auth.response;
 
-  let parsed: ParsedBody | null;
+  let body: FulfillmentBody;
   try {
-    parsed = parseBody(await req.json());
+    const raw = await req.json();
+    if (isLegacyBody(raw)) {
+      return errorResponse(req, 400, 'invalid_body', { formErrors: ['contract_removed: send fulfillment instead of contact'], fieldErrors: {} });
+    }
+    body = fulfillmentBodySchema.parse(raw);
   } catch (err) {
     return errorResponse(req, 400, 'invalid_body', err instanceof z.ZodError ? z.flattenError(err) : null);
   }
-  if (!parsed) return errorResponse(req, 400, 'invalid_body', { formErrors: ['Send either fulfillment or contact, not both'], fieldErrors: {} });
 
   const user = auth.data.user;
-  const { body } = parsed;
   const canonicalItems = [...body.items]
     .map((i) => [i.variantId, i.quantity] as const)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  const common = {
+  const address = body.fulfillment.method === 'delivery' ? body.fulfillment.address : null;
+  const requestHash = await sha256Hex(
+    JSON.stringify({ s: body.shopSlug, i: canonicalItems, f: body.fulfillment.method, a: address, c: body.comment, cur: body.currency }),
+  );
+
+  // Probing guard: a buyer who already got too many "not enough stock" answers in this shop is stopped BEFORE the
+  // order is attempted, so the answer no longer reveals whether a quantity fits (20261102090100).
+  const guard = await serviceClient().rpc('checkout_stock_probe_guard', { p_shop_slug: body.shopSlug, p_customer_tg_id: user.id });
+  if (guard.error) {
+    if (guard.error.message === 'stock_check_limited') {
+      const details = parseDbErrorDetails(guard.error.details);
+      const res = errorResponse(req, 429, 'stock_check_limited', details);
+      const retryAfter = (details as { retry_after_sec?: unknown } | null)?.retry_after_sec;
+      if (typeof retryAfter === 'number') res.headers.set('Retry-After', String(retryAfter));
+      return res;
+    }
+    console.error('checkout_stock_probe_guard failed', guard.error);
+    return errorResponse(req, 500, 'internal_error');
+  }
+
+  const { data, error } = await serviceClient().rpc('create_order_v2', {
     p_shop_slug: body.shopSlug,
     p_customer_tg_id: user.id,
     p_customer_snapshot: {
@@ -117,34 +140,30 @@ Deno.serve(async (req) => {
     },
     p_items: body.items.map((i) => ({ variant_id: i.variantId, quantity: i.quantity })),
     p_idempotency_key: body.idempotencyKey,
+    p_request_hash: requestHash,
+    p_fulfillment_method: body.fulfillment.method,
+    p_delivery_address: address,
+    p_comment: body.comment,
     p_expected_currency: body.currency,
     p_expected_total_minor: body.expectedTotalMinor ?? null,
-  };
-
-  let rpcName: 'create_order' | 'create_order_v2';
-  let args: Record<string, unknown>;
-  if (parsed.kind === 'legacy') {
-    const b = parsed.body;
-    // Same hash as before the fulfillment release, so a retry of an order placed before the deploy still replays.
-    const requestHash = await sha256Hex(JSON.stringify({ s: b.shopSlug, i: canonicalItems, c: b.contact, cur: b.currency }));
-    rpcName = 'create_order';
-    args = { ...common, p_request_hash: requestHash, p_contact_name: b.contact.name, p_contact_phone: b.contact.phone, p_comment: b.contact.comment };
-  } else {
-    const b = parsed.body;
-    const address = b.fulfillment.method === 'delivery' ? b.fulfillment.address : null;
-    const requestHash = await sha256Hex(
-      JSON.stringify({ s: b.shopSlug, i: canonicalItems, f: b.fulfillment.method, a: address, c: b.comment, cur: b.currency }),
-    );
-    rpcName = 'create_order_v2';
-    args = { ...common, p_request_hash: requestHash, p_fulfillment_method: b.fulfillment.method, p_delivery_address: address, p_comment: b.comment };
-  }
-
-  const { data, error } = await serviceClient().rpc(rpcName, args);
+  });
 
   if (error) {
     const status = DB_ERRORS[error.message];
-    if (status) return errorResponse(req, status, error.message, parseDbErrorDetails(error.details));
-    console.error(`${rpcName} failed`, error);
+    if (status) {
+      let details = parseDbErrorDetails(error.details);
+      if (error.message === 'insufficient_stock') {
+        // Counted for the probing guard; the exact remaining quantity never leaves the server.
+        const recorded = await serviceClient().rpc('checkout_record_stock_refusal', { p_shop_slug: body.shopSlug, p_customer_tg_id: user.id });
+        if (recorded.error) console.error('checkout_record_stock_refusal failed', recorded.error.code ?? '');
+        details = await insufficientStockDetails(details);
+      }
+      const res = errorResponse(req, status, error.message, details);
+      const retryAfter = (details as { retry_after_sec?: unknown } | null)?.retry_after_sec;
+      if (status === 429 && typeof retryAfter === 'number') res.headers.set('Retry-After', String(retryAfter));
+      return res;
+    }
+    console.error('create_order_v2 failed', error);
     return errorResponse(req, 500, 'internal_error');
   }
 

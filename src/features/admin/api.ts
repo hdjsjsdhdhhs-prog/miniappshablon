@@ -13,10 +13,31 @@ const IMAGE_BUCKET = IMAGE_SETTINGS.bucket;
 
 export type AdminShop = Tables<'shops'>;
 export type AdminCategory = Tables<'categories'>;
+/**
+ * A variant in the admin: every column the client may read plus the EXACT stock, which comes only from
+ * admin_variant_stock (members of this shop, checked on the server; 20261102090100). stock_quantity itself is not
+ * readable through PostgREST by anyone but the service role.
+ */
+export type AdminVariant = Tables<'product_variants'>;
 export type AdminProduct = Tables<'products'> & {
-  product_variants: Tables<'product_variants'>[];
+  product_variants: AdminVariant[];
   product_images: Tables<'product_images'>[];
 };
+
+/** Readable variant columns (all except stock_quantity). `*` would be refused by the column privileges. */
+const VARIANT_COLUMNS =
+  'id, shop_id, product_id, flavor, color, sku, price_override_minor, stock_status, is_active, sort_order, seed_key, created_at, updated_at';
+type VariantRow = Omit<AdminVariant, 'stock_quantity'>;
+
+/** Exact stock of every variant of the shop: { variantId → quantity }. Refused unless the caller is a member. */
+export async function fetchVariantStock(shopId: string): Promise<Map<string, number>> {
+  const rows = check(await supabase.rpc('admin_variant_stock', { p_shop_id: shopId }));
+  return new Map(rows.map((r) => [r.variant_id, r.stock_quantity]));
+}
+
+function withStock(rows: VariantRow[], stock: Map<string, number>): AdminVariant[] {
+  return rows.map((v) => ({ ...v, stock_quantity: stock.get(v.id) ?? 0 }));
+}
 export type AdminOrder = Tables<'orders'> & { order_items: Tables<'order_items'>[] };
 
 /** For `.single()` / list / rpc results: throws on error or empty response. */
@@ -89,26 +110,36 @@ export async function updateCategory(
 
 // ---- products ------------------------------------------------------------------
 
+type ProductRow = Tables<'products'> & { product_variants: VariantRow[]; product_images: Tables<'product_images'>[] };
+
 export async function fetchAdminProducts(shopId: string): Promise<AdminProduct[]> {
-  return check(
-    await supabase
+  const [rows, stock] = await Promise.all([
+    supabase
       .from('products')
-      .select('*, product_variants(*), product_images(*)')
+      .select(`*, product_variants(${VARIANT_COLUMNS}), product_images(*)`)
       .eq('shop_id', shopId)
       .order('sort_order')
-      .order('created_at'),
-  ) as AdminProduct[];
+      .order('created_at')
+      .overrideTypes<ProductRow[], { merge: false }>()
+      .then(check),
+    fetchVariantStock(shopId),
+  ]);
+  return rows.map((p) => ({ ...p, product_variants: withStock(p.product_variants, stock) }));
 }
 
 export async function fetchAdminProduct(shopId: string, productId: string): Promise<AdminProduct | null> {
-  return checkMaybe(
-    await supabase
+  const [row, stock] = await Promise.all([
+    supabase
       .from('products')
-      .select('*, product_variants(*), product_images(*)')
+      .select(`*, product_variants(${VARIANT_COLUMNS}), product_images(*)`)
       .eq('shop_id', shopId)
       .eq('id', productId)
-      .maybeSingle(),
-  ) as AdminProduct | null;
+      .maybeSingle()
+      .overrideTypes<ProductRow | null, { merge: false }>()
+      .then(checkMaybe),
+    fetchVariantStock(shopId),
+  ]);
+  return row ? { ...row, product_variants: withStock(row.product_variants, stock) } : null;
 }
 
 export interface ProductInput {
@@ -178,20 +209,20 @@ function variantRow(input: Partial<VariantInput>) {
   return Object.fromEntries(Object.entries({ flavor, color, sku, is_active }).filter(([, v]) => v !== undefined)) as Partial<VariantInput>;
 }
 
-export async function createVariant(shopId: string, productId: string, input: VariantInput, stock: number) {
+export async function createVariant(shopId: string, productId: string, input: VariantInput, stock: number): Promise<AdminVariant> {
   const v = check(
     await supabase
       .from('product_variants')
       .insert({ shop_id: shopId, product_id: productId, ...variantRow(input), price_override_minor: null })
-      .select('*')
+      .select(VARIANT_COLUMNS)
       .single(),
-  );
+  ) as VariantRow;
   if (stock > 0) await setVariantStock(v.id, stock);
-  return v;
+  return { ...v, stock_quantity: stock };
 }
 
-export async function updateVariant(id: string, patch: Partial<VariantInput>) {
-  return check(await supabase.from('product_variants').update(variantRow(patch)).eq('id', id).select('*').single());
+export async function updateVariant(id: string, patch: Partial<VariantInput>): Promise<VariantRow> {
+  return check(await supabase.from('product_variants').update(variantRow(patch)).eq('id', id).select(VARIANT_COLUMNS).single()) as VariantRow;
 }
 
 /** Stock changes are journaled server-side (inventory_movements) by the RPC. */
@@ -330,7 +361,8 @@ export async function fetchDashboardStats(shopId: string) {
       .select('id, flavor, color, products!inner(id, name, archived_at)')
       .eq('shop_id', shopId)
       .eq('is_active', true)
-      .eq('stock_quantity', 0)
+      // The status column, not the exact stock (not readable through PostgREST): out_of_stock ⇔ stock 0.
+      .eq('stock_status', 'out_of_stock')
       .is('products.archived_at', null)
       .limit(20),
   ) as unknown as Array<{ id: string; flavor: string | null; color: string | null; products: { id: string; name: string } }>;

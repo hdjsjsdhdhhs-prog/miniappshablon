@@ -13,7 +13,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders(req) });
   if (req.method !== 'POST') return errorResponse(req, 405, 'method_not_allowed');
 
-  const auth = await verifyTelegramRequest(req);
+  const auth = await verifyTelegramRequest(req, 'read');
   if (!auth.ok) return auth.response;
 
   let body: z.infer<typeof bodySchema>;

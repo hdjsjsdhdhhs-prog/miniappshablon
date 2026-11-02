@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import { expect, test, type Page } from '@playwright/test';
 import { resolveSupabaseEnv, serviceClient } from '../scripts/lib/supabase-env.ts';
+import { STOCK_STATUS_LABELS, stockStatusOf } from '../src/domain/stock.ts';
 import { createAccount, createDemoShop, deleteShops, deleteUsers, type Account } from './shops';
 import { openAsTelegramUser } from './telegram';
 
@@ -93,7 +94,9 @@ test('regular shop: buyer orders with delivery → owner sees the address → st
   await page.getByTestId('product-card').filter({ hasText: 'Noir Salt 30 мл' }).getByTestId('product-card-link').click();
   await expect(page.getByTestId('product-price')).toHaveText(/^690\s?₽$/);
   await page.getByRole('radio', { name: 'Черника' }).click();
-  await expect(page.getByTestId('product-stock')).toHaveText(`Осталось: ${originalStock}`);
+  // Buyers see a status only, never the number (20261102090100).
+  await expect(page.getByTestId('product-stock')).toHaveText(STOCK_STATUS_LABELS[stockStatusOf(originalStock)]);
+  await expect(page.getByTestId('product-stock')).not.toHaveText(/\d/);
   await page.getByTestId('add-to-cart').click();
   await page.getByRole('link', { name: /Корзина/ }).click();
   await expect(page.getByTestId('cart-line')).toContainText('Черника');
@@ -146,12 +149,24 @@ test('regular shop: buyer orders with delivery → owner sees the address → st
   await admin.getByRole('navigation', { name: 'Разделы магазина' }).getByRole('link', { name: 'Товары', exact: true }).click();
   await admin.getByTestId('admin-product-link').filter({ hasText: 'Noir Salt 30 мл' }).click();
   const row = admin.getByTestId('variant-row').filter({ has: admin.getByLabel('Вкус').and(admin.locator('[value="Черника"]')) });
-  await row.getByTestId('variant-stock').fill('42');
+  // The owner works with the exact number; the buyer sees only that it is running low (1–2), still purchasable.
+  await row.getByTestId('variant-stock').fill('2');
   await row.getByTestId('variant-save').click();
   await expect(admin.getByText('Вариант сохранён')).toBeVisible();
+  await admin.reload();
+  await expect(
+    admin.getByTestId('variant-row').filter({ has: admin.getByLabel('Вкус').and(admin.locator('[value="Черника"]')) }).getByTestId('variant-stock'),
+  ).toHaveValue('2');
+  const storefrontJson: string[] = [];
+  page.on('response', async (r) => {
+    if (/\/rest\/v1\/|\/functions\/v1\//.test(r.url())) storefrontJson.push(await r.text().catch(() => ''));
+  });
   await page.goto(`/s/${slug}/product/${v!.product_id}`);
   await page.getByRole('radio', { name: 'Черника' }).click();
-  await expect(page.getByTestId('product-stock')).toHaveText('Осталось: 42');
+  await expect(page.getByTestId('product-stock')).toHaveText('Осталось мало');
+  await expect(page.getByTestId('add-to-cart')).toBeEnabled();
+  expect(storefrontJson.length).toBeGreaterThan(0);
+  for (const body of storefrontJson) expect(body).not.toContain('stock_quantity');
 
   // Another tenant's owner sees neither the order nor can edit the product.
   const otherCtx = await browser.newContext({ locale: 'ru-RU' });

@@ -1,3 +1,4 @@
+import { LOW_STOCK_MAX, type StockStatus } from '@/domain/stock';
 import { MAX_LINE_QUANTITY } from '@/domain/variants';
 
 /**
@@ -12,7 +13,10 @@ export interface CartLine {
   unitPriceMinor: number;
   imagePath: string | null;
   quantity: number;
-  /** Stock known when the line was last touched; used only to cap the stepper. */
+  /**
+   * Cap of the stepper: the business limit (MAX_LINE_QUANTITY). Never the stock — buyers do not receive it; the
+   * server checks the real stock at checkout. Older carts may hold a stock value here: it only lowers the cap.
+   */
   maxQuantity: number;
 }
 
@@ -121,18 +125,25 @@ export const cartStore = {
     write(shopId, []);
   },
 
-  /** Applies server-confirmed prices/stock after a failed checkout (price_changed / insufficient_stock). */
+  /**
+   * Applies what the server reported after a failed checkout: new prices (price_changed) and, for insufficient_stock,
+   * the STATUS of each refused line (the exact stock is never sent). out_of_stock → the line goes; low_stock (1–2
+   * left) → at most LOW_STOCK_MAX and one less than requested; in_stock → one less than requested. The server checks
+   * the real quantity again on the next attempt.
+   */
   reconcile(
     shopId: string,
-    updates: { prices?: Record<string, number>; available?: Record<string, number> },
+    updates: { prices?: Record<string, number>; stock?: Record<string, StockStatus> },
   ): void {
     const next = read(shopId)
       .map((l) => {
         const price = updates.prices?.[l.variantId];
-        const avail = updates.available?.[l.variantId];
+        const status = updates.stock?.[l.variantId];
         let line = l;
         if (price !== undefined) line = { ...line, unitPriceMinor: price };
-        if (avail !== undefined) line = { ...line, maxQuantity: avail, quantity: Math.min(line.quantity, avail) };
+        if (status === 'out_of_stock') line = { ...line, quantity: 0 };
+        else if (status === 'low_stock') line = { ...line, quantity: Math.max(1, Math.min(line.quantity - 1, LOW_STOCK_MAX)) };
+        else if (status === 'in_stock') line = { ...line, quantity: Math.max(1, line.quantity - 1) };
         return line;
       })
       .filter((l) => l.quantity > 0);

@@ -57,7 +57,7 @@ const item = (id: string, name: string, price: number, flavor: string | null): P
   categoryName: '',
   categorySlug: '',
   images: [],
-  variants: [{ id: `${id}-v`, flavor, color: null, stock_quantity: 4, is_active: true, sort_order: 0 }],
+  variants: [{ id: `${id}-v`, flavor, color: null, stock_status: 'in_stock' as const, is_active: true, sort_order: 0 }],
 });
 const catalogs: Record<string, ProductDetail[]> = {
   'shop-noir': [item('n1', 'Noir Salt 30 мл', 69_000, 'Черника'), item('n2', 'Obsidian Kit', 189_000, null)],

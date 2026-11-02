@@ -1,9 +1,10 @@
+import { isStockStatus, type StockStatus } from '@/domain/stock';
 import { ApiError } from './checkout-api';
 
 export interface CheckoutErrorView {
   message: string;
-  /** Server-confirmed updates to apply to the local cart. */
-  reconcile?: { prices?: Record<string, number>; available?: Record<string, number> };
+  /** Server-confirmed updates to apply to the local cart (stock: statuses only, never quantities). */
+  reconcile?: { prices?: Record<string, number>; stock?: Record<string, StockStatus> };
   removeVariantIds?: string[];
   resetIdempotencyKey?: boolean;
 }
@@ -30,11 +31,20 @@ export function describeCheckoutError(err: unknown): CheckoutErrorView {
     case 'shop_unavailable':
       return { message: 'Магазин временно не принимает заказы.' };
     case 'insufficient_stock': {
-      const rows = Array.isArray(d) ? (d as Array<{ variant_id: string; available: number }>) : [];
+      // The server reports only the status of each refused line (20261102090100), never the remaining quantity.
+      const rows = Array.isArray(d) ? (d as Array<{ variant_id?: unknown; stock_status?: unknown }>) : [];
+      const stock = Object.fromEntries(
+        rows.filter((r) => typeof r.variant_id === 'string' && isStockStatus(r.stock_status)).map((r) => [r.variant_id as string, r.stock_status as StockStatus]),
+      );
       return {
-        message: 'Часть товаров закончилась — количество в корзине уменьшено. Проверьте заказ.',
-        reconcile: { available: Object.fromEntries(rows.map((r) => [r.variant_id, r.available])) },
+        message: 'Столько нет в наличии — количество в корзине уменьшено, закончившиеся товары убраны. Проверьте заказ.',
+        reconcile: { stock },
       };
+    }
+    case 'stock_check_limited': {
+      const sec = Number((d as { retry_after_sec?: number } | null)?.retry_after_sec ?? 0);
+      const wait = sec > 0 ? ` через ${Math.max(1, Math.ceil(sec / 60))} мин.` : ' позже.';
+      return { message: `Слишком много попыток заказать больше, чем есть в наличии. Попробуйте ещё раз${wait}` };
     }
     case 'price_changed': {
       const prices = (d as { prices?: Array<{ variant_id: string; unit_price_minor: number }> } | null)?.prices ?? [];
@@ -52,6 +62,21 @@ export function describeCheckoutError(err: unknown): CheckoutErrorView {
       return { message: 'Валюта магазина изменилась. Обновите страницу.' };
     case 'idempotency_conflict':
       return { message: 'Данные заказа изменились. Нажмите «Оформить» ещё раз.', resetIdempotencyKey: true };
+    case 'rate_limited': {
+      const sec = Number((d as { retry_after_sec?: number } | null)?.retry_after_sec ?? 0);
+      const wait = sec > 0 ? ` через ${Math.max(1, Math.ceil(sec / 60))} мин.` : ' позже.';
+      return { message: `Слишком много заказов за короткое время. Попробуйте ещё раз${wait}` };
+    }
+    case 'too_many_open_orders':
+      return { message: 'У вас уже есть несколько необработанных заказов в этом магазине. Дождитесь, пока продавец их подтвердит.' };
+    case 'order_too_large': {
+      const max = Number((d as { max_units?: number } | null)?.max_units ?? 0);
+      return {
+        message: max > 0
+          ? `Слишком большой заказ: не более ${max} шт. в одном заказе. Для крупной покупки свяжитесь с магазином.`
+          : 'Слишком большой заказ. Для крупной покупки свяжитесь с магазином.',
+      };
+    }
     case 'invalid_body':
     case 'invalid_comment':
       return { message: 'Проверьте поля формы.' };

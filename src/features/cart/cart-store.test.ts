@@ -36,11 +36,21 @@ describe('cart store', () => {
     expect(cartStore.getLines('s')).toEqual([]);
   });
 
-  it('applies server-confirmed prices and stock after a failed checkout', () => {
-    cartStore.add('s', line('v1', 1000, 5), 4);
-    cartStore.add('s', line('v2', 500, 5), 1);
-    cartStore.reconcile('s', { prices: { v1: 1200 }, available: { v1: 2, v2: 0 } });
-    expect(cartStore.getLines('s')).toEqual([expect.objectContaining({ variantId: 'v1', unitPriceMinor: 1200, quantity: 2, maxQuantity: 2 })]);
+  it('applies server-confirmed prices and stock STATUSES after a failed checkout (no quantities are sent)', () => {
+    cartStore.add('s', line('v1', 1000, 99), 4);
+    cartStore.add('s', line('v2', 500, 99), 1);
+    cartStore.add('s', line('v3', 700, 99), 6);
+    cartStore.add('s', line('v4', 300, 99), 2);
+    cartStore.reconcile('s', { prices: { v1: 1200 }, stock: { v1: 'low_stock', v2: 'out_of_stock', v3: 'in_stock' } });
+    expect(cartStore.getLines('s')).toEqual([
+      expect.objectContaining({ variantId: 'v1', unitPriceMinor: 1200, quantity: 2, maxQuantity: 99 }),
+      expect.objectContaining({ variantId: 'v3', quantity: 5 }),
+      expect.objectContaining({ variantId: 'v4', quantity: 2 }),
+    ]);
+    // A low-stock line of 1 stays at 1 (the server decides on the next attempt).
+    cartStore.reconcile('s', { stock: { v1: 'low_stock' } });
+    cartStore.reconcile('s', { stock: { v1: 'low_stock' } });
+    expect(cartStore.getLines('s')[0]).toMatchObject({ variantId: 'v1', quantity: 1 });
   });
 
   it('ignores corrupted storage', () => {
@@ -68,8 +78,13 @@ describe('checkout idempotency key', () => {
 
 describe('checkout error mapping', () => {
   it('maps stock and price errors to cart corrections', () => {
-    const stock = describeCheckoutError(new ApiError(409, 'insufficient_stock', [{ variant_id: 'v1', available: 1 }]));
-    expect(stock.reconcile).toEqual({ available: { v1: 1 } });
+    const stock = describeCheckoutError(new ApiError(409, 'insufficient_stock', [{ variant_id: 'v1', stock_status: 'low_stock' }, { variant_id: 'v2', stock_status: 'out_of_stock' }]));
+    expect(stock.reconcile).toEqual({ stock: { v1: 'low_stock', v2: 'out_of_stock' } });
+    expect(stock.message).not.toMatch(/\d/);
+    // A stray numeric field from an old server is ignored, never shown or used as a quantity.
+    expect(describeCheckoutError(new ApiError(409, 'insufficient_stock', [{ variant_id: 'v1', available: 1 }])).reconcile).toEqual({ stock: {} });
+    const limited = describeCheckoutError(new ApiError(429, 'stock_check_limited', { retry_after_sec: 600 }));
+    expect(limited.message).toMatch(/10 мин/);
     const price = describeCheckoutError(new ApiError(409, 'price_changed', { total_minor: 1, prices: [{ variant_id: 'v1', unit_price_minor: 99 }] }));
     expect(price.reconcile).toEqual({ prices: { v1: 99 } });
     expect(describeCheckoutError(new ApiError(422, 'idempotency_conflict', null)).resetIdempotencyKey).toBe(true);

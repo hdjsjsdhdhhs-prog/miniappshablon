@@ -2,7 +2,8 @@ import { expect, test, type Page } from '@playwright/test';
 import { serviceClient } from '../scripts/lib/supabase-env.ts';
 
 // The five latest storefront changes, checked in a real browser against the local demo data:
-// no age gate / age notice, "Осталось: N", Benzin brand header + compact Telegram chip, DEMO banner contact.
+// no age gate / age notice, availability status (no stock numbers), Benzin brand header + compact Telegram chip,
+// DEMO banner contact.
 const db = serviceClient();
 const SHOP = '/s/noir-vapor/';
 
@@ -22,25 +23,29 @@ test('no age gate and no age/legal notice, while the age restriction stays in th
   await expect(page.getByText(/^18\+$/)).toHaveCount(0);
 });
 
-test('stock is written "Осталось: N" (not uppercase) in the quick sheet and on the product page', async ({ page }) => {
+// Buyers see an availability status only — never the exact number (20261102090100).
+const STATUS = /^\s?(В наличии|Осталось мало|Нет в наличии)$/;
+
+test('availability is a status ("В наличии" / "Осталось мало"), never a number, not uppercase — quick sheet and product page', async ({ page }) => {
   await openShop(page);
   await page.getByTestId('product-card').filter({ hasText: 'Noir Salt 30 мл' }).getByTestId('quick-add').click();
   const chips = page.getByTestId('quick-option-stock');
   await expect(chips.first()).toBeVisible();
   for (const chip of await chips.all()) {
-    await expect(chip).toHaveText(/^Осталось: \d+$/);
+    await expect(chip).toHaveText(STATUS);
     expect(await chip.evaluate((el) => getComputedStyle(el).textTransform)).toBe('none');
     // What the user actually sees (innerText applies CSS text-transform).
-    expect(await chip.evaluate((el) => (el as HTMLElement).innerText)).toMatch(/^Осталось: \d+$/);
+    expect(await chip.evaluate((el) => (el as HTMLElement).innerText)).toMatch(STATUS);
   }
+  await expect(page.getByTestId('quick-add-sheet')).not.toContainText(/Осталось:\s*\d/);
   await page.keyboard.press('Escape');
   await page.getByTestId('product-card').filter({ hasText: 'Noir Salt 30 мл' }).getByTestId('product-card-link').click();
   await page.getByRole('radio').first().click();
   const stock = page.getByTestId('product-stock');
   // (a space separates the check icon from the text)
-  await expect(stock).toHaveText(/^\s?(Осталось: \d+|Нет в наличии)$/);
-  expect(await stock.evaluate((el) => (el as HTMLElement).innerText)).not.toMatch(/ОСТАЛОСЬ/);
-  expect(await page.evaluate(() => document.body.innerText)).not.toMatch(/ОСТАЛОСЬ/);
+  await expect(stock).toHaveText(STATUS);
+  expect(await stock.evaluate((el) => (el as HTMLElement).innerText)).not.toMatch(/ОСТАЛОСЬ|\d/);
+  expect(await page.evaluate(() => document.body.innerText)).not.toMatch(/ОСТАЛОСЬ|Осталось:\s*\d/);
 });
 
 test('brand header uses the real Benzin-Semibold font (Latin + Cyrillic) and stays inside a 320 px screen', async ({ page }) => {

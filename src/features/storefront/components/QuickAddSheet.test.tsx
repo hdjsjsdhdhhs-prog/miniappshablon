@@ -2,17 +2,19 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { stockStatusOf } from '@/domain/stock';
 import { DARK_PREMIUM_THEME } from '@/domain/theme';
 import { cartStore } from '@/features/cart/cart-store';
 import type { ProductDetail, Shop, Variant } from '../api';
 import { ShopContext } from '../shop-context';
 import { QuickAddSheet } from './QuickAddSheet';
 
+// The storefront receives only the status; `stock` is just a readable way to pick it (thresholds as in SQL).
 const v = (id: string, flavor: string | null, color: string | null, stock: number): Variant => ({
   id,
   flavor,
   color,
-  stock_quantity: stock,
+  stock_status: stockStatusOf(stock),
   is_active: true,
   sort_order: 0,
 });
@@ -82,8 +84,8 @@ describe('QuickAddSheet', () => {
     ]);
     expect(within(group).queryByText('Вишня')).not.toBeInTheDocument();
     for (const r of within(group).getAllByRole('radio')) expect(r).toHaveAttribute('aria-checked', 'false');
-    // Chips carry only the name and the remaining stock — never a price (the price is shown once, in the header).
-    expect(within(group).getAllByTestId('quick-option-stock').map((s) => s.textContent)).toEqual(['Осталось: 3', 'Осталось: 8']);
+    // Chips carry only the name and an availability status — never a price or a quantity (the price is shown once, in the header).
+    expect(within(group).getAllByTestId('quick-option-stock').map((s) => s.textContent)).toEqual(['В наличии', 'В наличии']);
     for (const r of within(group).getAllByRole('radio')) expect(r.textContent).not.toMatch(/₽|\d\s?\d{3}/);
     // One fixed product price in the header even before a flavor is chosen — never "от".
     expect(screen.getByTestId('quick-price')).toHaveTextContent(/^690\s?₽$/);
@@ -142,12 +144,12 @@ describe('QuickAddSheet', () => {
     expect(lines()).toEqual([expect.objectContaining({ variantId: '1', variantLabel: 'Мята · Чёрный' })]);
   });
 
-  it('one price for every flavor when variants have no own price; chips show stock only', async () => {
+  it('one price for every flavor when variants have no own price; chips show a status only', async () => {
     open(make([v('a', 'Мята', null, 4), v('c', 'Черника', null, 12)]));
     const price = screen.getByTestId('quick-price');
     expect(price).toHaveTextContent('690');
     expect(price).not.toHaveTextContent('от');
-    expect(screen.getByRole('radio', { name: /Мята/ })).toHaveTextContent('Осталось: 4');
+    expect(screen.getByRole('radio', { name: /Мята/ })).toHaveTextContent('В наличии');
     await userEvent.click(screen.getByRole('radio', { name: /Черника/ }));
     expect(price).toHaveTextContent('690');
     await userEvent.click(confirmBtn());
@@ -166,9 +168,9 @@ describe('QuickAddSheet', () => {
       expect(within(sheet).getAllByText(/690/)).toHaveLength(1);
     }
     expect(within(sheet).getAllByTestId('quick-option-stock').map((s) => s.textContent)).toEqual([
-      'Осталось: 12',
-      'Осталось: 8',
-      'Осталось: 5',
+      'В наличии',
+      'В наличии',
+      'В наличии',
     ]);
     await userEvent.click(confirmBtn());
     expect(lines()).toEqual([expect.objectContaining({ variantId: 'c', unitPriceMinor: 69000, quantity: 1 })]);
@@ -181,19 +183,19 @@ describe('QuickAddSheet', () => {
     expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
     await userEvent.click(screen.getByRole('radio', { name: /Золото/ }));
     expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
-    expect(screen.getByRole('radio', { name: /Золото/ })).toHaveTextContent('Осталось: 2');
+    expect(screen.getByRole('radio', { name: /Золото/ })).toHaveTextContent('Осталось мало');
     await userEvent.click(screen.getByRole('radio', { name: /Графит/ }));
     expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
     await userEvent.click(confirmBtn());
     expect(lines()).toEqual([expect.objectContaining({ variantId: 'g', unitPriceMinor: 249000 })]);
   });
 
-  it('a flavor offered in several colors shows the stock that fits the current choice', async () => {
+  it('a flavor offered in several colors shows the status that fits the current choice', async () => {
     open(make([v('1', 'Мята', 'Чёрный', 2), v('2', 'Мята', 'Белый', 3), v('3', 'Вишня', 'Белый', 4)]));
-    expect(screen.getByRole('radio', { name: /Мята/ })).toHaveTextContent('Осталось: 5');
+    expect(screen.getByRole('radio', { name: /Мята/ })).toHaveTextContent('В наличии');
     await userEvent.click(screen.getByRole('radio', { name: /Мята/ }));
     const colors = screen.getByRole('radiogroup', { name: 'Цвет' });
-    expect(within(colors).getByRole('radio', { name: /Белый/ })).toHaveTextContent('Осталось: 3');
+    expect(within(colors).getByRole('radio', { name: /Белый/ })).toHaveTextContent('В наличии');
   });
 
   it('a product without options needs no empty flavor list: direct confirmation', async () => {

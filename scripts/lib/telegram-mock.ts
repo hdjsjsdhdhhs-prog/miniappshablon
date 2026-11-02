@@ -11,6 +11,7 @@
 // Tokens are never stored or printed: messages keep only the numeric bot id.
 import { execFileSync } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { localStack } from './local-stack.ts';
 
 export const TELEGRAM_MOCK_PORT = Number(process.env.TELEGRAM_MOCK_PORT ?? 54390);
 export const TELEGRAM_MOCK_URL = `http://127.0.0.1:${TELEGRAM_MOCK_PORT}`;
@@ -177,7 +178,8 @@ export async function ensureTelegramMock(log?: (line: string) => void): Promise<
 }
 
 /** TELEGRAM_API_BASE the running local Edge Runtime container was started with (null if unknown). */
-export function edgeRuntimeTelegramBase(container = 'supabase_edge_runtime_tma-shop-showcase'): string | null {
+/** Container of THIS checkout's stack (supabase/config.toml project_id), so an isolated copy checks its own runtime. */
+export function edgeRuntimeTelegramBase(container = localStack().edgeRuntimeContainer): string | null {
   try {
     const out = execFileSync('docker', ['inspect', container, '--format', '{{range .Config.Env}}{{println .}}{{end}}'], {
       encoding: 'utf8',

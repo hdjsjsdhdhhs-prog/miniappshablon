@@ -21,8 +21,8 @@ const noirSalt: ProductDetail = {
   categorySlug: 'liquids',
   images: [],
   variants: [
-    { id: 'mango', flavor: 'Манго-маракуйя', color: null, stock_quantity: 12, is_active: true, sort_order: 0 },
-    { id: 'blueberry', flavor: 'Черника', color: null, stock_quantity: 5, is_active: true, sort_order: 1 },
+    { id: 'mango', flavor: 'Манго-маракуйя', color: null, stock_status: 'in_stock' as const, is_active: true, sort_order: 0 },
+    { id: 'blueberry', flavor: 'Черника', color: null, stock_status: 'in_stock' as const, is_active: true, sort_order: 1 },
   ],
 };
 

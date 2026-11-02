@@ -95,6 +95,7 @@ const NOTIFICATION_ERRORS: Record<string, string> = {
   auth_required: 'Сессия истекла. Войдите снова.',
   notifications_disabled: 'Уведомления были выключены.',
   notifications_removed: 'Настройки уведомлений были удалены.',
+  owner_changed: 'Магазин сменил владельца: уведомления прежнего владельца отключены, неотправленные — отменены.',
 };
 
 /** Human text for an API error or a stored `last_error` ("code: description"). */
@@ -117,12 +118,25 @@ export interface PlatformMember {
   since: string;
 }
 
+/** Audit row of a DEMO deletion (private.shop_deletions): slug, initiator, times, attempts of the Storage cleanup. */
+export interface ShopDeletion {
+  slug: string;
+  requested_by: string;
+  requested_at: string;
+  completed_at: string | null;
+  attempts: number;
+  last_attempt_at: string | null;
+  last_error: string | null;
+}
+
 export interface PlatformShop {
   id: string;
   slug: string;
   name: string;
   mode: 'preview' | 'live';
-  status: 'active' | 'suspended';
+  /** 'deleting': a DEMO deletion started — the shop is already gone from the storefront, files are being removed. */
+  status: 'active' | 'suspended' | 'deleting';
+  deletion?: ShopDeletion | null;
   is_demo: boolean;
   logo_path: string | null;
   delivery_enabled: boolean;
@@ -133,13 +147,36 @@ export interface PlatformShop {
   last_handover_at: string | null;
   members: PlatformMember[];
   notifications: { enabled: boolean; status: NotificationStatus } | null;
+  /** Hand-over waiting for the client to confirm their e-mail (the shop stays DEMO until then). */
+  pending_handover?: PendingHandover | null;
 }
+
+export interface PendingHandover {
+  user_id: string;
+  email: string;
+  invitation: 'sent' | 'link';
+  created_at: string;
+  expires_at: string;
+  expired: boolean;
+  last_error: string | null;
+}
+
+/** Server-side account state (auth.users): only `confirmed` accounts can own a shop. */
+export type AccountState = 'confirmed' | 'invited' | 'unconfirmed' | 'blocked' | 'missing';
 
 export interface PlatformUser {
   user_id: string;
   email: string;
   is_platform_admin: boolean;
+  state?: AccountState;
+  email_confirmed?: boolean;
   shops: Array<{ slug: string; name: string; role: string }>;
+}
+
+/** What the ownership change did to the shop's Telegram notifications (always revoked when the owner changes). */
+export interface NotificationsReset {
+  settings_removed: boolean;
+  queued_dropped: number;
 }
 
 export interface TransferResult {
@@ -147,6 +184,7 @@ export interface TransferResult {
   owner: { user_id: string; email: string };
   removed: Array<{ user_id: string; email: string | null; role: string }>;
   members: PlatformMember[];
+  notifications?: NotificationsReset;
   transferred_at: string;
 }
 
@@ -158,16 +196,72 @@ export interface CreatedDemoShop {
 /** Codes of private.shop_handover_problems. */
 export type HandoverProblem = 'shop_suspended' | 'not_demo' | 'age_restriction' | 'no_fulfillment' | 'no_categories' | 'no_products';
 
+/**
+ * Hand-over operation in progress (atomic reservation, audit S2-06). Left behind only by a crashed request; it
+ * expires by itself after its lease. The token is never sent to the browser.
+ */
+export interface HandoverReservation {
+  email: string;
+  created_at: string;
+  expires_at: string;
+  expired: boolean;
+  /** Seconds left at the time of the server response (0 once expired). */
+  remaining_sec: number;
+}
+
 export interface HandoverCheck {
   ready: boolean;
   problems: HandoverProblem[];
   shop: { id: string; slug: string; name: string; mode: string; is_demo: boolean };
+  pending_handover?: PendingHandover | null;
+  reservation?: HandoverReservation | null;
+}
+
+type HandoverShop = { id: string; slug: string; name: string; mode: string; is_demo: boolean };
+
+/** Completed: the client's account is confirmed; they own the shop and it is a regular live shop now. */
+export interface HandoverCompleted extends TransferResult {
+  status: 'completed';
+  shop: HandoverShop;
+  invitation: string;
+  legacy_test_orders: number;
+  cancelled_test_orders?: number;
+}
+
+/** Pending: invitation sent; the shop changes hands automatically once the client confirms the e-mail. */
+export interface HandoverPending {
+  status: 'pending';
+  shop: HandoverShop;
+  owner: { user_id: string; email: string };
+  removed: [];
+  members: PlatformMember[];
+  invitation: string;
+  expires_at: string;
 }
 
 export interface HandoverResult {
-  handover: TransferResult & { shop: { id: string; slug: string; name: string; mode: string; is_demo: boolean }; invitation: string; legacy_test_orders: number };
+  handover: HandoverCompleted | HandoverPending;
   /** sent: e-mail invitation sent; link: e-mail could not be sent, pass this one-time link securely; existing: no e-mail needed. */
   invitation: { status: 'sent' | 'link' | 'existing'; link: string | null };
+}
+
+/** What "Удалить DEMO" shows before asking for the slug (platform_demo_delete_preview). */
+export interface DemoDeletePreview {
+  status: 'ready' | 'not_demo' | 'deleting' | 'deleted';
+  shop?: { id: string; slug: string; name: string; mode: 'preview' | 'live'; status: string; is_demo: boolean; created_at: string };
+  counts?: { products: number; categories: number; variants: number; images: number; media_files: number; orders: number; members: number };
+  members?: PlatformMember[];
+  has_owner?: boolean;
+  notifications?: boolean;
+  pending_handover?: PendingHandover | null;
+  reservation?: HandoverReservation | null;
+  deletion: ShopDeletion | null;
+}
+
+/** `deleted` only once every file is gone; `pending`: data deleted and shop blocked, files remain (resume). */
+export interface DemoDeleteResult {
+  deletion: { status: 'pending' | 'deleted'; remaining?: number; deletion?: ShopDeletion | null };
+  storage?: { removed: number; error: string | null };
 }
 
 export const platformApi = {
@@ -187,6 +281,17 @@ export const platformApi = {
       email,
       redirectTo: `${window.location.origin}/admin/set-password`,
     }),
+  /** Withdraws a pending hand-over (the invitation link then no longer transfers the shop). */
+  cancelHandover: (shopId: string) => callAdminFunction<{ cancelled: boolean }>('platform-admin', { action: 'handover-cancel', shopId }),
+  /** Removes an EXPIRED reservation; the server refuses a live one (handover_reservation_active). */
+  releaseStaleHandover: (shopId: string) =>
+    callAdminFunction<{ released: boolean; email?: string; expired_at?: string }>('platform-admin', { action: 'handover-release-stale', shopId }),
+  demoDeletePreview: (shopId: string) =>
+    callAdminFunction<{ preview: DemoDeletePreview }>('platform-admin', { action: 'demo-delete-preview', shopId }).then((r) => r.preview),
+  /** `confirmSlug` must be exactly the shop's slug; the server compares it and refuses anything but a DEMO shop. */
+  demoDelete: (shopId: string, confirmSlug: string) => callAdminFunction<DemoDeleteResult>('platform-admin', { action: 'demo-delete', shopId, confirmSlug }),
+  /** Continues an interrupted deletion (Storage cleanup + completion). */
+  demoDeleteResume: (shopId: string) => callAdminFunction<DemoDeleteResult>('platform-admin', { action: 'demo-delete-resume', shopId }),
 };
 
 /** Public storefront link of a shop on the current deployment (https://miniappdemo.pages.dev/s/<slug>/ in production). */

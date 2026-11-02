@@ -8,6 +8,7 @@ import type { Database } from '../../src/lib/database.types.ts';
 import { DARK_PREMIUM_THEME } from '../../src/domain/theme.ts';
 import { signInitData } from '../../supabase/functions/_shared/telegram-init-data.ts';
 import { resolveSupabaseEnv, serviceClient } from '../../scripts/lib/supabase-env.ts';
+import { totp } from '../../scripts/lib/totp.ts';
 
 export type Db = SupabaseClient<Database>;
 
@@ -108,8 +109,57 @@ export async function createOwner(shopId: string): Promise<{ client: Db; userId:
   return { client, userId: data.user.id, email, password };
 }
 
-/** Local-only platform admin (row in public.platform_admins, written with the service role). */
-export async function createPlatformAdmin(): Promise<{ client: Db; userId: string; email: string }> {
+/** Claims of the client's current access token (already issued by the local Supabase Auth). */
+export async function sessionClaims(client: Db): Promise<{ aal?: string; session_id?: string; sub?: string }> {
+  const token = (await client.auth.getSession()).data.session?.access_token;
+  if (!token) return {};
+  return JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString('utf8')) as { aal?: string; session_id?: string; sub?: string };
+}
+
+/** Real Supabase MFA: enrolls a TOTP factor for the signed-in client and verifies it (session → aal2). */
+export async function enrollAndVerifyTotp(client: Db): Promise<{ factorId: string; secret: string }> {
+  const { data, error } = await client.auth.mfa.enroll({ factorType: 'totp', friendlyName: `it-${randomBytes(3).toString('hex')}` });
+  if (error) throw error;
+  await verifyTotp(client, data.id, data.totp.secret);
+  return { factorId: data.id, secret: data.totp.secret };
+}
+
+/** challenge + verify with the current code of `secret` (session → aal2). */
+export async function verifyTotp(client: Db, factorId: string, secret: string): Promise<void> {
+  const { error } = await client.auth.mfa.challengeAndVerify({ factorId, code: totp(secret) });
+  if (error) throw error;
+}
+
+/**
+ * Service-role client that forwards an aal2 session the way the Edge Functions do (x-platform-session). The SQL
+ * accepts it only for a live aal2 session of the RPC's p_actor; null → no session at all.
+ */
+export function serviceAs(sessionId: string | null): Db {
+  return createClient<Database>(env.url, env.serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: sessionId ? { 'x-platform-session': sessionId } : {} },
+  });
+}
+
+export interface PlatformAdmin {
+  client: Db;
+  userId: string;
+  email: string;
+  password: string;
+  /** TOTP secret (null when created with mfa: false). */
+  totpSecret: string | null;
+  factorId: string | null;
+  /** Supabase Auth session id of `client` (aal2 unless mfa: false). */
+  sessionId: string;
+  /** Service-role client acting in this admin's session (what platform-admin / notification-settings do). */
+  svc: Db;
+}
+
+/**
+ * Local-only platform admin (row in public.platform_admins, written with the service role). By default it passes the
+ * real Supabase MFA flow, so `client` is aal2; `mfa: false` leaves a password-only (aal1) session without any factor.
+ */
+export async function createPlatformAdmin(opts: { mfa?: boolean } = {}): Promise<PlatformAdmin> {
   const email = `platform-${randomBytes(4).toString('hex')}@it.local`;
   const password = randomBytes(12).toString('base64url');
   const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
@@ -120,7 +170,21 @@ export async function createPlatformAdmin(): Promise<{ client: Db; userId: strin
   const client = anon();
   const { error: se } = await client.auth.signInWithPassword({ email, password });
   if (se) throw se;
-  return { client, userId: data.user.id, email };
+  const factor = opts.mfa === false ? null : await enrollAndVerifyTotp(client);
+  const claims = await sessionClaims(client);
+  if ((opts.mfa === false ? 'aal1' : 'aal2') !== claims.aal || !claims.session_id) {
+    throw new Error(`createPlatformAdmin: unexpected session ${JSON.stringify(claims)}`);
+  }
+  return {
+    client,
+    userId: data.user.id,
+    email,
+    password,
+    totpSecret: factor?.secret ?? null,
+    factorId: factor?.factorId ?? null,
+    sessionId: claims.session_id,
+    svc: serviceAs(claims.session_id),
+  };
 }
 
 /** Adds a member with the given role to a shop and signs them in. */
@@ -153,7 +217,7 @@ export async function callAdminFunction(
     body: JSON.stringify(body),
   });
   const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-  return { status: res.status, body: json, text: JSON.stringify(json) };
+  return { status: res.status, body: json, text: JSON.stringify(json), headers: res.headers };
 }
 
 /** Fake BotFather-format token; the local mock decides behaviour from the secret part. Never valid in Telegram. */

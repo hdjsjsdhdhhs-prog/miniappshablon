@@ -3,6 +3,8 @@ import { expect, test, type Page } from '@playwright/test';
 import { DARK_PREMIUM_THEME } from '../src/domain/theme.ts';
 import { serviceClient } from '../scripts/lib/supabase-env.ts';
 import { mockMessages } from '../scripts/lib/telegram-mock.ts';
+import { totp } from '../scripts/lib/totp.ts';
+import { completeMfa, createAccount, platformAdmin, type Account } from './shops';
 import { openAsTelegramUser } from './telegram';
 
 // Local stack only (playwright.config.ts + global-setup.ts guards). Throw-away shops and accounts; Telegram goes
@@ -11,17 +13,11 @@ const db = serviceClient();
 const run = randomBytes(3).toString('hex');
 const created = { users: [] as string[], shops: [] as string[] };
 
-async function account(label: string, opts: { platformAdmin?: boolean } = {}) {
-  const email = `e2e-${label}-${run}@e2e.local`;
-  const password = randomBytes(12).toString('base64url');
-  const { data, error } = await db.auth.admin.createUser({ email, password, email_confirm: true });
-  if (error) throw error;
-  created.users.push(data.user.id);
-  if (opts.platformAdmin) {
-    const { error: pe } = await db.from('platform_admins').insert({ user_id: data.user.id });
-    if (pe) throw pe;
-  }
-  return { id: data.user.id, email, password };
+/** Client account, or a platform admin (with a verified TOTP factor unless `mfa: false`, see e2e/shops.ts). */
+async function account(label: string, opts: { platformAdmin?: boolean; mfa?: boolean } = {}): Promise<Account> {
+  const a = await createAccount(`${label}-${run}`, opts);
+  created.users.push(a.id);
+  return a;
 }
 
 async function shopOwnedBy(ownerId: string, label: string) {
@@ -45,13 +41,21 @@ async function shopOwnedBy(ownerId: string, label: string) {
   return { id: shop.id, slug, name };
 }
 
-async function login(page: Page, u: { email: string; password: string }) {
+async function submitPassword(page: Page, u: { email: string; password: string }) {
   await page.goto('/admin');
   await page.getByLabel('Email').fill(u.email);
   await page.getByLabel('Пароль').fill(u.password);
   await page.getByRole('button', { name: 'Войти' }).click();
+}
+
+async function login(page: Page, u: { email: string; password: string; totpSecret?: string }) {
+  await submitPassword(page, u);
+  // Platform admins: mandatory TOTP step (20261102090000).
+  await completeMfa(page, u);
   await expect(page.getByRole('heading', { name: 'Мои магазины' })).toBeVisible();
 }
+
+const pageToken = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getItem('tma-shop-auth') ?? '{}').access_token as string);
 
 async function expectNoHorizontalScroll(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
@@ -65,16 +69,16 @@ test.afterAll(async () => {
   for (const id of created.users) await db.auth.admin.deleteUser(id);
 });
 
-test('creator: "Мои магазины" vs "Все магазины платформы" and a safe hand-over to a client', async ({ page, browser }) => {
-  const creator = await account('creator', { platformAdmin: true });
+test('platform admin (aal2): "Все магазины платформы" and a safe transfer from one client to another', async ({ page, browser }) => {
+  // Platform admin and shop owners are separate accounts (20261102090000): the admin owns no shop itself.
+  const operator = await account('operator', { platformAdmin: true });
+  const former = await account('former');
   const client = await account('client');
-  const shop = await shopOwnedBy(creator.id, 'handover');
+  const shop = await shopOwnedBy(former.id, 'handover');
   const productsBefore = (await db.from('products').select('id', { count: 'exact', head: true }).eq('shop_id', shop.id)).count;
 
-  await login(page, creator);
-  const mine = page.getByTestId('my-shop').filter({ hasText: shop.name });
-  await expect(mine).toBeVisible();
-  await expect(mine.getByRole('link', { name: 'Уведомления' })).toHaveAttribute('href', `/admin/shops/${shop.slug}/notifications`);
+  await login(page, operator);
+  await expect(page.getByTestId('my-shop')).toHaveCount(0);
 
   await page.getByRole('link', { name: 'Все магазины платформы' }).click();
   await expect(page).toHaveURL(/\/admin\/platform$/);
@@ -82,14 +86,16 @@ test('creator: "Мои магазины" vs "Все магазины платф�
   await page.getByRole('searchbox', { name: 'Поиск магазинов' }).fill(shop.slug);
   const row = page.getByTestId('platform-shop');
   await expect(row).toHaveCount(1);
-  await expect(row.getByTestId('platform-shop-owner')).toContainText(creator.email);
+  await expect(row.getByTestId('platform-shop-owner')).toContainText(former.email);
+  // A LIVE shop offers no "Удалить DEMO".
+  await expect(row.getByTestId('platform-demo-delete')).toHaveCount(0);
   await expectNoHorizontalScroll(page);
 
   await row.getByTestId('platform-transfer').click();
   const dialog = page.getByTestId('transfer-dialog');
   await dialog.getByLabel('Email учётной записи нового владельца').fill(client.email);
   await dialog.getByRole('button', { name: 'Найти' }).click();
-  await expect(dialog.getByTestId('transfer-review')).toContainText(`Потеряют доступ: ${creator.email}`);
+  await expect(dialog.getByTestId('transfer-review')).toContainText(`Потеряют доступ: ${former.email}`);
   await dialog.getByTestId('transfer-confirm').click();
   await expect(dialog.getByTestId('transfer-result')).toContainText(`Владелец: ${client.email}`);
   await dialog.getByRole('button', { name: 'Готово' }).click();
@@ -101,11 +107,16 @@ test('creator: "Мои магазины" vs "Все магазины платф�
   expect(members).toEqual([{ user_id: client.id, role: 'owner' }]);
   expect((await db.from('products').select('id', { count: 'exact', head: true }).eq('shop_id', shop.id)).count).toBe(productsBefore);
 
-  // Gone from the creator's own list; the creator can still open its admin panel from the platform list.
-  await page.getByRole('link', { name: 'Мои магазины' }).click();
-  await expect(page.getByTestId('my-shop').filter({ hasText: shop.name })).toHaveCount(0);
+  // The aal2 platform admin can still open the shop's admin panel from the platform list.
   await page.goto(`/admin/shops/${shop.slug}`);
   await expect(page.getByRole('heading', { level: 1, name: shop.name })).toBeVisible();
+
+  // The former owner lost it.
+  const fctx = await browser.newContext({ locale: 'ru-RU', viewport: { width: 390, height: 844 } });
+  const fp = await fctx.newPage();
+  await login(fp, former);
+  await expect(fp.getByTestId('my-shop').filter({ hasText: shop.name })).toHaveCount(0);
+  await fctx.close();
 
   // The client sees the shop as its own, but no platform section.
   const ctx = await browser.newContext({ locale: 'ru-RU', viewport: { width: 390, height: 844 } });
@@ -115,6 +126,47 @@ test('creator: "Мои магазины" vs "Все магазины платф�
   await expect(cp.getByRole('link', { name: 'Все магазины платформы' })).toHaveCount(0);
   await cp.goto('/admin/platform');
   await expect(cp.getByText('Этот раздел доступен только администратору платформы.')).toBeVisible();
+  await ctx.close();
+});
+
+test('MFA: first sign-in enrolls TOTP; until a code is verified nothing opens; later sign-ins need the current code', async ({ page, browser }) => {
+  const pa = await account('mfa-first', { platformAdmin: true, mfa: false });
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  // Password only (aal1, no factor): the only page is /admin/mfa, with the enrollment.
+  await submitPassword(page, pa);
+  await expect(page).toHaveURL(/\/admin\/mfa$/);
+  await page.goto('/admin/platform');
+  await expect(page).toHaveURL(/\/admin\/mfa$/);
+  await page.getByTestId('mfa-enroll').click();
+  await expect(page.getByTestId('mfa-enrollment')).toBeVisible();
+  const secret = (await page.getByTestId('mfa-secret').textContent())!.trim();
+  expect(secret).toMatch(/^[A-Z2-7]{16,}$/);
+  // Enrolled but not verified: the server still refuses everything.
+  const before = await platformAdmin(await pageToken(page), { action: 'list' });
+  expect([before.status, (before.body?.error as { code?: string } | undefined)?.code]).toEqual([403, 'mfa_required']);
+  await page.getByTestId('mfa-code').fill('000000');
+  await page.getByTestId('mfa-submit').click();
+  await expect(page.getByTestId('mfa-error')).toBeVisible();
+  await page.getByTestId('mfa-code').fill(totp(secret));
+  await page.getByTestId('mfa-submit').click();
+  await expect(page.getByTestId('mfa-page')).toHaveCount(0);
+  await page.goto('/admin/platform');
+  await expect(page.getByRole('heading', { name: 'Все магазины платформы' })).toBeVisible();
+  expect((await platformAdmin(await pageToken(page), { action: 'list' })).status).toBe(200);
+
+  // Next sign-in (another device): password → code required, no enrollment offered, platform closed until then.
+  const ctx = await browser.newContext({ locale: 'ru-RU', viewport: { width: 390, height: 844 } });
+  const p2 = await ctx.newPage();
+  await submitPassword(p2, pa);
+  await expect(p2.getByTestId('mfa-page')).toBeVisible();
+  await expect(p2.getByTestId('mfa-enroll')).toHaveCount(0);
+  await expect(p2.getByTestId('mfa-recovery')).toContainText('Обходного входа без кода нет');
+  const aal1 = await platformAdmin(await pageToken(p2), { action: 'list' });
+  expect((aal1.body?.error as { code?: string } | undefined)?.code).toBe('mfa_required');
+  await completeMfa(p2, { totpSecret: secret });
+  await p2.goto('/admin/platform');
+  await expect(p2.getByRole('heading', { name: 'Все магазины платформы' })).toBeVisible();
   await ctx.close();
 });
 

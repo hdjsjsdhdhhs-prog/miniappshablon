@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 import { resolveSupabaseEnv, serviceClient } from '../scripts/lib/supabase-env.ts';
-import { createAccount, deleteShops, deleteUsers, latestMailTo, mailHtml, type Account } from './shops';
+import { completeMfa, createAccount, deleteShops, deleteUsers, latestMailTo, mailHtml, type Account } from './shops';
 import { signInitData } from '../supabase/functions/_shared/telegram-init-data.ts';
 import { LOCAL_BOT_TOKEN, openAsTelegramUser } from './telegram';
 
@@ -16,11 +16,13 @@ const clientEmail = `e2e-client-${run}@e2e.local`;
 const created = { shops: [] as string[], users: [] as string[] };
 let platform: Account;
 
-async function login(page: Page, a: { email: string; password: string }) {
+async function login(page: Page, a: { email: string; password: string; totpSecret?: string }) {
   await page.goto('/admin');
   await page.getByLabel('Email').fill(a.email);
   await page.getByLabel('Пароль').fill(a.password);
   await page.getByRole('button', { name: 'Войти' }).click();
+  // Platform admins: mandatory TOTP step (20261102090000).
+  await completeMfa(page, a);
   await expect(page.getByRole('heading', { name: 'Мои магазины' })).toBeVisible();
 }
 
@@ -219,15 +221,19 @@ test('"Передать клиенту": invitation e-mail → client sets a pas
   await dialog.getByTestId('handover-paid').click();
   await dialog.getByTestId('handover-confirm').click();
   const result = dialog.getByTestId('handover-result');
-  await expect(result).toContainText(`владелец ${clientEmail}, режим live, DEMO выключен`, { timeout: 30_000 });
+  // F-01/F-08 (stage 3A): a brand-new account is only invited; the shop changes hands when the client confirms the
+  // e-mail (invitation link), never before. Until then it stays DEMO and has no owner at all.
+  await expect(result.getByTestId('handover-pending')).toContainText(`Ожидает подтверждения: магазин перейдёт к ${clientEmail}`, { timeout: 30_000 });
+  await expect(result).not.toContainText('режим live, DEMO выключен');
   await expect(result.getByTestId('handover-invitation')).toContainText('Письмо-приглашение отправлено');
   await dialog.getByRole('button', { name: 'Готово' }).click();
 
   const row = page.getByTestId('platform-shop');
-  await expect(row.getByTestId('platform-shop-owner')).toContainText(clientEmail);
-  await expect(row).not.toContainText('DEMO');
-  await expect(row.getByTestId('platform-transfer')).toBeVisible();
-  expect(await shopRow()).toMatchObject({ slug, is_demo: false, mode: 'live', status: 'active' });
+  await expect(row.getByTestId('platform-handover-pending')).toContainText(clientEmail);
+  await expect(row).toContainText('DEMO');
+  const pendingShop = (await shopRow())!;
+  expect(pendingShop).toMatchObject({ slug, is_demo: true });
+  expect((await db.from('shop_memberships').select('user_id').eq('shop_id', pendingShop.id)).data).toEqual([]);
 
   // The invitation arrives in the local Mailpit; its link leads to /admin/set-password.
   await expect.poll(async () => (await latestMailTo(clientEmail))?.ID ?? null, { timeout: 20_000 }).not.toBeNull();
@@ -253,6 +259,15 @@ test('"Передать клиенту": invitation e-mail → client sets a pas
   expect(cp.url()).not.toContain('access_token');
   await expect(cp.getByTestId('my-shop')).toHaveCount(1);
   await expect(cp.getByTestId('my-shop')).toContainText(name);
+  // The invitation link confirmed the e-mail → the pending hand-over completed: regular live shop, client is the only owner.
+  expect(await shopRow()).toMatchObject({ slug, is_demo: false, mode: 'live', status: 'active' });
+  expect((await db.from('shop_memberships').select('role').eq('shop_id', pendingShop.id)).data).toEqual([{ role: 'owner' }]);
+  await page.reload();
+  await page.getByRole('searchbox', { name: 'Поиск магазинов' }).fill(slug);
+  await expect(row.getByTestId('platform-shop-owner')).toContainText(clientEmail);
+  await expect(row).not.toContainText('DEMO');
+  await expect(row.getByTestId('platform-handover-pending')).toHaveCount(0);
+  await expect(row.getByTestId('platform-transfer')).toBeVisible();
   await expect(cp.getByRole('link', { name: 'Все магазины платформы' })).toHaveCount(0);
   await cp.goto('/admin/platform');
   await expect(cp.getByText('Этот раздел доступен только администратору платформы.')).toBeVisible();

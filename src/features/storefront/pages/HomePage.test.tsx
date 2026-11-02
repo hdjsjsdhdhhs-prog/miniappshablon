@@ -25,8 +25,8 @@ const product = (id: string, name: string, categoryId: string): ProductDetail =>
   images: [],
   // Several flavors per product: the card still shows ONE fixed product price.
   variants: [
-    { id: `${id}-a`, flavor: 'Мята', color: null, stock_quantity: 5, is_active: true, sort_order: 0 },
-    { id: `${id}-b`, flavor: 'Черника', color: null, stock_quantity: 2, is_active: true, sort_order: 1 },
+    { id: `${id}-a`, flavor: 'Мята', color: null, stock_status: 'in_stock' as const, is_active: true, sort_order: 0 },
+    { id: `${id}-b`, flavor: 'Черника', color: null, stock_status: 'low_stock' as const, is_active: true, sort_order: 1 },
   ],
 });
 

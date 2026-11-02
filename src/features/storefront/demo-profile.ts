@@ -1,5 +1,6 @@
 import type { OrderStatus } from '@/domain/order-status';
 import { lineTotalMinor, orderTotalMinor, productPriceMinor } from '@/domain/pricing';
+import { isAvailable } from '@/domain/stock';
 import { variantLabel } from '@/domain/variants';
 import type { ProductSummary, Shop } from './api';
 
@@ -54,7 +55,7 @@ export function buildDemoOrder(products: readonly ProductSummary[], currency: st
   const picked = products.slice(0, QUANTITIES.length);
   const base = picked.length
     ? picked.map((p, i) => {
-        const v = p.variants.find((x) => x.is_active && x.stock_quantity > 0) ?? p.variants[0];
+        const v = p.variants.find((x) => x.is_active && isAvailable(x.stock_status)) ?? p.variants[0];
         return {
           key: `demo-${p.id}`,
           name: p.name,

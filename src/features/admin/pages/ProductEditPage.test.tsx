@@ -16,6 +16,7 @@ const variant = (id: string, flavor: string, price: number | null) => ({
   sku: null,
   price_override_minor: price,
   stock_quantity: 5,
+  stock_status: 'in_stock',
   is_active: true,
   sort_order: 0,
   seed_key: null,

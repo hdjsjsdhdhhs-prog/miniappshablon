@@ -45,8 +45,9 @@ const EXPECTED: Record<string, Roles> = {
   'public.is_supported_currency(text)': r(false, true, true),
   'public.order_status_transition_allowed(text,text)': r(false, false, true),
   'public.order_to_json(uuid)': r(false, false, true),
+  // Old contract: kept for its signature/grants, but since 20261030090100 it only raises contract_removed.
   'public.create_order(text,bigint,jsonb,jsonb,uuid,text,text,text,text,text,bigint)': r(false, false, true),
-  // Fulfillment checkout (20261026090000), next to the unchanged create_order of the old contract.
+  // Fulfillment checkout (20261026090000); the only function that creates orders.
   'public.create_order_v2(text,bigint,jsonb,jsonb,uuid,text,text,text,text,text,bigint)': r(false, false, true),
   'public.get_customer_orders(text,bigint,uuid,integer)': r(false, false, true),
   'public.set_updated_at()': r(false, false, false),
@@ -69,7 +70,29 @@ const EXPECTED: Record<string, Roles> = {
   'public.platform_publish_demo_shop(uuid,uuid)': r(false, false, true),
   'public.platform_discard_demo_shop(uuid,uuid)': r(false, false, true),
   'public.platform_handover_check(uuid,uuid)': r(false, false, true),
-  'public.platform_handover_shop(uuid,uuid,uuid,text)': r(false, false, true),
+  // 20261031090000 added p_reservation (S2-06); the 4-argument version was dropped.
+  'public.platform_handover_shop(uuid,uuid,uuid,text,uuid)': r(false, false, true),
+  // Ownership-change security (20261030090000): pending hand-over cancel, pre-send re-validation of a claimed job.
+  'public.platform_cancel_handover(uuid,uuid)': r(false, false, true),
+  'public.notify_begin_send(bigint,integer,uuid)': r(false, false, true),
+  // Hand-over reservation before any Auth call (20261031090000, audit S2-06): platform-admin Edge Function only.
+  'public.platform_reserve_handover(uuid,uuid,text)': r(false, false, true),
+  'public.platform_release_handover(uuid,uuid,uuid)': r(false, false, true),
+  // Invitation re-send cooldown and release of an expired reservation (20261101090000): platform-admin Edge Function only.
+  'public.platform_claim_handover_invitation(uuid,uuid,uuid)': r(false, false, true),
+  'public.platform_release_stale_handover(uuid,uuid)': r(false, false, true),
+  // Stock projection (20261102090100): exact stock for members of that shop only (re-checked inside); the checkout
+  // probing guard is called by the checkout Edge Function only.
+  'public.admin_variant_stock(uuid)': r(false, true, true),
+  'public.checkout_stock_probe_guard(text,bigint)': r(false, false, true),
+  'public.checkout_record_stock_refusal(text,bigint)': r(false, false, true),
+  // DEMO deletion (20261102090200): platform-admin Edge Function only, aal2 actor re-checked inside.
+  'public.platform_demo_delete_preview(uuid,uuid)': r(false, false, true),
+  'public.platform_demo_delete_begin(uuid,uuid,text)': r(false, false, true),
+  'public.platform_demo_delete_objects(uuid,uuid,integer)': r(false, false, true),
+  'public.platform_demo_delete_finalize(uuid,uuid,text)': r(false, false, true),
+  // MFA recovery (20261102090300): operator scripts only (pnpm platform-admin:mfa-reset), platform admin accounts only.
+  'public.platform_admin_revoke_sessions(uuid)': r(false, false, true),
 };
 
 /** Functions that existed on the hosted project when the hardening migration was written (17.10.2026). */

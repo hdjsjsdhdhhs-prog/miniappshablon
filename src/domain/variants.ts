@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { isAvailable, type StockStatus } from './stock';
 
+/** A variant as the storefront sees it: availability is a status, never a quantity (see ./stock). */
 export interface VariantLike {
   id: string;
   flavor: string | null;
   color: string | null;
-  stock_quantity: number;
+  stock_status: StockStatus;
   is_active: boolean;
 }
 
@@ -13,6 +15,10 @@ export interface VariantSelection {
   color: string | null;
 }
 
+/**
+ * Business limit of one cart line (the checkout API accepts 1–99 per line, create_order_v2 re-checks the real stock
+ * and the per-order unit limit). It is independent of the stock, so the quantity picker reveals nothing about it.
+ */
 export const MAX_LINE_QUANTITY = 99;
 
 export function variantLabel(v: Pick<VariantLike, 'flavor' | 'color'>): string {
@@ -47,21 +53,24 @@ export function isOptionAvailable(
       v[kind] === value &&
       (other === null || (kind === 'flavor' ? v.color === other : v.flavor === other)),
   );
-  return { exists: matches.length > 0, inStock: matches.some((v) => v.stock_quantity > 0) };
+  return { exists: matches.length > 0, inStock: matches.some((v) => isAvailable(v.stock_status)) };
 }
 
-/** Initial selection: first in-stock active variant, otherwise first active one. */
+/** Initial selection: first available active variant, otherwise first active one. */
 export function defaultSelection(variants: readonly VariantLike[]): VariantSelection {
   const active = variants.filter((v) => v.is_active);
-  const pick = active.find((v) => v.stock_quantity > 0) ?? active[0];
+  const pick = active.find((v) => isAvailable(v.stock_status)) ?? active[0];
   return { flavor: pick?.flavor ?? null, color: pick?.color ?? null };
 }
 
 export type AddToCartCheck =
   | { ok: true; variant: VariantLike }
-  | { ok: false; reason: 'no_variant' | 'out_of_stock' | 'invalid_quantity' | 'exceeds_stock' };
+  | { ok: false; reason: 'no_variant' | 'out_of_stock' | 'invalid_quantity' | 'exceeds_limit' };
 
-/** Client-side guard before adding to cart (the server re-checks everything at checkout). */
+/**
+ * Client-side guard before adding to cart (the server re-checks everything at checkout). Out of stock → refused;
+ * otherwise only the business limit applies: whether the exact quantity is there is decided by create_order_v2.
+ */
 export function canAddToCart(
   variants: readonly VariantLike[],
   sel: VariantSelection,
@@ -73,10 +82,8 @@ export function canAddToCart(
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_LINE_QUANTITY) {
     return { ok: false, reason: 'invalid_quantity' };
   }
-  if (variant.stock_quantity <= 0) return { ok: false, reason: 'out_of_stock' };
-  if (quantity + alreadyInCart > Math.min(variant.stock_quantity, MAX_LINE_QUANTITY)) {
-    return { ok: false, reason: 'exceeds_stock' };
-  }
+  if (!isAvailable(variant.stock_status)) return { ok: false, reason: 'out_of_stock' };
+  if (quantity + alreadyInCart > MAX_LINE_QUANTITY) return { ok: false, reason: 'exceeds_limit' };
   return { ok: true, variant };
 }
 

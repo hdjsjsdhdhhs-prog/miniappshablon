@@ -7,6 +7,7 @@ const SECRET = TOKEN.split(':')[1]!;
 const job = (id: number): NotificationJob => ({
   notification_id: id,
   attempt: 1,
+  channel_id: 'c0ffee00-0000-4000-8000-000000000001',
   shop_name: 'Noir Vapor',
   chat_id: '@orders_chat',
   bot_token: TOKEN,
@@ -21,10 +22,11 @@ const job = (id: number): NotificationJob => ({
   },
 });
 
-function fakeRpc(jobs: NotificationJob[]) {
+function fakeRpc(jobs: NotificationJob[], maySend: boolean | 'error' = true) {
   const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
   const rpc: Rpc = async (fn, args) => {
     calls.push({ fn, args });
+    if (fn === 'notify_begin_send') return maySend === 'error' ? { data: null, error: { message: 'boom' } } : { data: maySend, error: null };
     return { data: fn === 'notify_claim' ? jobs : null, error: null };
   };
   return { rpc, calls };
@@ -42,8 +44,21 @@ describe('dispatchNotifications', () => {
     expect(body.text).toContain('@buyer (Telegram ID 555)');
     expect(calls).toEqual([
       { fn: 'notify_claim', args: { p_order_id: 'o1', p_shop_id: null, p_limit: 1 } },
+      { fn: 'notify_begin_send', args: { p_notification_id: 1, p_attempt: 1, p_channel_id: 'c0ffee00-0000-4000-8000-000000000001' } },
       { fn: 'notify_complete', args: { p_notification_id: 1, p_ok: true, p_message_id: 77, p_error: null } },
     ]);
+  });
+
+  it.each([
+    ['the channel was revoked or replaced after the claim (e.g. the shop changed hands)', false],
+    ['the re-validation itself fails (fail closed)', 'error'],
+  ] as const)('does not send when %s', async (_label, maySend) => {
+    const { rpc, calls } = fakeRpc([job(3)], maySend);
+    const fetchImpl = vi.fn();
+    const res = await dispatchNotifications(rpc, { fetchImpl: fetchImpl as unknown as typeof fetch, apiBase: 'http://mock', log: () => {} });
+    expect(res).toEqual({ sent: 0, failed: 0, skipped: 1 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(calls.map((c) => c.fn)).toEqual(['notify_claim', 'notify_begin_send']);
   });
 
   it('a Telegram failure is recorded (for retry), never thrown, and neither the record nor the log contain the token', async () => {

@@ -18,9 +18,9 @@ const product: ProductDetail = {
   categorySlug: 'liquids',
   images: [],
   variants: [
-    { id: 'a', flavor: 'Мята', color: null, stock_quantity: 3, is_active: true, sort_order: 0 },
-    { id: 'b', flavor: 'Черника', color: null, stock_quantity: 5, is_active: true, sort_order: 1 },
-    { id: 'c', flavor: 'Ледяная вишня', color: null, stock_quantity: 0, is_active: true, sort_order: 2 },
+    { id: 'a', flavor: 'Мята', color: null, stock_status: 'in_stock' as const, is_active: true, sort_order: 0 },
+    { id: 'b', flavor: 'Черника', color: null, stock_status: 'in_stock' as const, is_active: true, sort_order: 1 },
+    { id: 'c', flavor: 'Ледяная вишня', color: null, stock_status: 'out_of_stock' as const, is_active: true, sort_order: 2 },
   ],
 };
 
@@ -30,8 +30,8 @@ const aurumPod: ProductDetail = {
   name: 'Aurum Pod',
   basePriceMinor: 249000,
   variants: [
-    { id: 'g', flavor: null, color: 'Графит', stock_quantity: 4, is_active: true, sort_order: 0 },
-    { id: 'au', flavor: null, color: 'Золото', stock_quantity: 2, is_active: true, sort_order: 1 },
+    { id: 'g', flavor: null, color: 'Графит', stock_status: 'in_stock' as const, is_active: true, sort_order: 0 },
+    { id: 'au', flavor: null, color: 'Золото', stock_status: 'low_stock' as const, is_active: true, sort_order: 1 },
   ],
 };
 
@@ -72,10 +72,11 @@ describe('ProductPage: one price per product', () => {
     const price = screen.getByTestId('product-price');
     expect(price).toHaveTextContent(/^690\s?₽$/);
     expect(screen.getByRole('main')).not.toHaveTextContent(/(^|\s)от\s/);
-    expect(screen.getByTestId('product-stock')).toHaveTextContent(/^Осталось: 3$/);
+    // A status only, never a number (20261102090100).
+    expect(screen.getByTestId('product-stock')).toHaveTextContent(/^В наличии$/);
     await userEvent.click(screen.getByRole('radio', { name: 'Черника' }));
     expect(price).toHaveTextContent(/^690\s?₽$/);
-    expect(screen.getByTestId('product-stock')).toHaveTextContent(/^Осталось: 5$/);
+    expect(screen.getByTestId('product-stock')).toHaveTextContent(/^В наличии$/);
     await userEvent.click(screen.getByRole('radio', { name: /Ледяная вишня/ }));
     expect(price).toHaveTextContent(/^690\s?₽$/);
     expect(screen.getByTestId('product-stock')).toHaveTextContent('Нет в наличии');
@@ -90,6 +91,9 @@ describe('ProductPage: one price per product', () => {
     await userEvent.click(screen.getByTestId('add-to-cart'));
     await userEvent.click(screen.getByRole('radio', { name: 'Золото' }));
     expect(price).toHaveTextContent(/^2\s?490\s?₽$/);
+    // 1–2 left: shown as «Осталось мало», still selectable and addable.
+    expect(screen.getByTestId('product-stock')).toHaveTextContent(/^Осталось мало$/);
+    expect(screen.getByTestId('add-to-cart')).toBeEnabled();
     await userEvent.click(screen.getByTestId('add-to-cart'));
     expect(cartStore.getLines(shop.id).map((l) => [l.variantLabel, l.unitPriceMinor])).toEqual([
       ['Графит', 249000],

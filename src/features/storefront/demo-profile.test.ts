@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { stockStatusOf } from '@/domain/stock';
 import type { ProductSummary } from './api';
 import { buildDemoOrder, DEMO_ORDER_TITLE, shouldShowDemoProfile } from './demo-profile';
 
@@ -14,7 +15,7 @@ const v = (id: string, flavor: string | null, color: string | null, stock: numbe
   id,
   flavor,
   color,
-  stock_quantity: stock,
+  stock_status: stockStatusOf(stock),
   is_active: true,
   sort_order: 0,
 });

@@ -6,6 +6,7 @@ import { EmptyState, ErrorState, PageSpinner, StaleDataNotice } from '@/componen
 import { Button } from '@/components/ui/button';
 import { formatMoney } from '@/domain/money';
 import { productPriceMinor } from '@/domain/pricing';
+import { isAvailable, STOCK_STATUS_LABELS } from '@/domain/stock';
 import { canAddToCart, defaultSelection, findVariant, MAX_LINE_QUANTITY, variantLabel, type VariantSelection } from '@/domain/variants';
 import { useCart } from '@/features/cart/useCart';
 import { NotFoundError } from '../api';
@@ -19,7 +20,7 @@ const REASONS: Record<string, string> = {
   no_variant: 'Такого сочетания нет',
   out_of_stock: 'Нет в наличии',
   invalid_quantity: 'Некорректное количество',
-  exceeds_stock: 'Больше нет в наличии',
+  exceeds_limit: `Не больше ${MAX_LINE_QUANTITY} шт.`,
 };
 
 export function ProductPage() {
@@ -57,9 +58,10 @@ export function ProductPage() {
   const variant = findVariant(variants, sel);
   // One price per product: choosing a flavor/color never changes it.
   const price = productPriceMinor(p);
-  const stock = variant?.stock_quantity ?? 0;
+  // Buyers see only the status; the exact quantity is checked by the server at checkout.
+  const status = variant?.stock_status ?? 'out_of_stock';
   const inCart = cart.lines.find((l) => l.variantId === variant?.id)?.quantity ?? 0;
-  const maxQty = Math.max(1, Math.min(stock - inCart, MAX_LINE_QUANTITY));
+  const maxQty = Math.max(1, MAX_LINE_QUANTITY - inCart);
   const check = canAddToCart(variants, sel, qty, inCart);
 
   const add = () => {
@@ -75,7 +77,7 @@ export function ProductPage() {
         variantLabel: variantLabel(check.variant),
         unitPriceMinor: price,
         imagePath: p.images[0]?.storage_path ?? null,
-        maxQuantity: check.variant.stock_quantity,
+        maxQuantity: MAX_LINE_QUANTITY,
       },
       qty,
     );
@@ -127,12 +129,12 @@ export function ProductPage() {
           <p className="text-sm" data-testid="product-stock">
             {!variant ? (
               <span className="text-muted-foreground">Выберите вариант</span>
-            ) : stock > 0 ? (
+            ) : isAvailable(status) ? (
               <span className="inline-flex items-center gap-1 text-success">
-                <CheckCircleIcon aria-hidden weight="fill" /> Осталось: {stock}
+                <CheckCircleIcon aria-hidden weight="fill" /> {STOCK_STATUS_LABELS[status]}
               </span>
             ) : (
-              <span className="text-destructive">Нет в наличии</span>
+              <span className="text-destructive">{STOCK_STATUS_LABELS.out_of_stock}</span>
             )}
           </p>
         </div>

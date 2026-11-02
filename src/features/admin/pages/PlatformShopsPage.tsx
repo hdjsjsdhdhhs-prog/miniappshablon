@@ -1,4 +1,4 @@
-import { ArrowSquareOutIcon, PlusIcon } from '@phosphor-icons/react';
+import { ArrowSquareOutIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
@@ -13,6 +13,8 @@ import { ShopModeBadge } from '../components/ShopQuickLinks';
 import { ShopSearchInput } from '../components/ShopSearchInput';
 import { CopyLinkButton } from '../components/CopyLinkButton';
 import { CreateDemoDialog } from '../components/CreateDemoDialog';
+import { DeleteDemoDialog } from '../components/DeleteDemoDialog';
+import { MFA_REQUIRED_TEXT } from '../mfa';
 import { HandoverDialog } from '../components/HandoverDialog';
 import { TransferShopDialog } from '../components/TransferShopDialog';
 import { AdminApiError, platformApi, publicShopUrl, type PlatformShop } from '../functions-api';
@@ -40,12 +42,14 @@ export function PlatformShopsPage() {
   const [query, setQuery] = useState('');
   const [transferring, setTransferring] = useState<PlatformShop | null>(null);
   const [handingOver, setHandingOver] = useState<PlatformShop | null>(null);
+  const [deleting, setDeleting] = useState<PlatformShop | null>(null);
   const [creating, setCreating] = useState(false);
   const visible = useMemo(
     () => (shops.data ?? []).filter((s) => matchesShopSearch(query, s.name, s.slug, ...s.members.map((m) => m.email))),
     [shops.data, query],
   );
-  const denied = isAdmin.data === false || (shops.error instanceof AdminApiError && shops.error.status === 403);
+  const mfaRequired = shops.error instanceof AdminApiError && shops.error.code === 'mfa_required';
+  const denied = isAdmin.data === false || (shops.error instanceof AdminApiError && shops.error.status === 403 && !mfaRequired);
 
   return (
     <main className="mx-auto max-w-5xl space-y-5 p-4">
@@ -70,6 +74,16 @@ export function PlatformShopsPage() {
 
       {denied ? (
         <EmptyState title="Нет доступа" description="Этот раздел доступен только администратору платформы." />
+      ) : mfaRequired ? (
+        <EmptyState
+          title="Нужна двухфакторная аутентификация"
+          description={MFA_REQUIRED_TEXT}
+          action={
+            <Button asChild>
+              <Link to="/admin/mfa">Подтвердить вход кодом</Link>
+            </Button>
+          }
+        />
       ) : isAdmin.isPending || shops.isPending ? (
         <PageSpinner />
       ) : shops.isError ? (
@@ -89,7 +103,18 @@ export function PlatformShopsPage() {
                       <span className="font-medium">{s.name}</span>
                       <ShopModeBadge mode={s.mode} />
                       {s.is_demo && <Badge variant="outline">DEMO</Badge>}
-                      {s.status !== 'active' && <Badge variant="destructive">{s.status}</Badge>}
+                      {s.status === 'deleting' ? (
+                        <Badge variant="destructive" data-testid="platform-shop-deleting" title={s.deletion?.last_error ?? undefined}>
+                          Удаляется: файлы не очищены
+                        </Badge>
+                      ) : (
+                        s.status !== 'active' && <Badge variant="destructive">{s.status}</Badge>
+                      )}
+                      {s.pending_handover && !s.pending_handover.expired && (
+                        <Badge variant="secondary" data-testid="platform-handover-pending" title={s.pending_handover.last_error ?? undefined}>
+                          Ждёт подтверждения: {s.pending_handover.email}
+                        </Badge>
+                      )}
                     </p>
                     <p className="truncate font-mono text-xs text-muted-foreground" data-testid="platform-shop-url">
                       {publicShopUrl(s.slug)}
@@ -117,10 +142,20 @@ export function PlatformShopsPage() {
                   <Button asChild size="sm" variant="outline">
                     <Link to={`/admin/shops/${s.slug}`}>Админка</Link>
                   </Button>
-                  {s.is_demo ? (
-                    <Button size="sm" onClick={() => setHandingOver(s)} data-testid="platform-handover">
-                      Передать клиенту
+                  {s.status === 'deleting' ? (
+                    <Button size="sm" variant="destructive" onClick={() => setDeleting(s)} data-testid="platform-demo-delete-resume">
+                      Продолжить удаление
                     </Button>
+                  ) : s.is_demo ? (
+                    <>
+                      <Button size="sm" onClick={() => setHandingOver(s)} data-testid="platform-handover">
+                        Передать клиенту
+                      </Button>
+                      {/* Only DEMO shops (is_demo, whatever the mode); the server refuses any other shop. */}
+                      <Button size="sm" variant="destructive" onClick={() => setDeleting(s)} data-testid="platform-demo-delete">
+                        <TrashIcon aria-hidden /> Удалить DEMO
+                      </Button>
+                    </>
                   ) : (
                     <Button size="sm" onClick={() => setTransferring(s)} data-testid="platform-transfer">
                       Передать
@@ -134,6 +169,7 @@ export function PlatformShopsPage() {
       )}
       {transferring && <TransferShopDialog shop={transferring} open onOpenChange={(o) => !o && setTransferring(null)} />}
       {handingOver && <HandoverDialog shop={handingOver} open onOpenChange={(o) => !o && setHandingOver(null)} />}
+      {deleting && <DeleteDemoDialog shop={deleting} open onOpenChange={(o) => !o && setDeleting(null)} />}
       {creating && shops.data && <CreateDemoDialog shops={shops.data} open onOpenChange={setCreating} />}
     </main>
   );

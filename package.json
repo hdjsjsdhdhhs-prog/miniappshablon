@@ -23,6 +23,8 @@
     "test:e2e": "playwright test",
     "check:bundle-secrets": "tsx scripts/check-bundle-secrets.ts",
     "check:tenant-names": "tsx scripts/check-tenant-names.ts",
+    "check:migration-integrity": "tsx scripts/check-migration-integrity.ts",
+    "check:edge-functions": "tsx scripts/check-edge-functions.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm check:tenant-names",
     "db:types": "supabase gen types typescript --local > src/lib/database.types.ts",
     "db:start": "tsx scripts/supabase-start.ts",
@@ -34,6 +36,7 @@
     "tenant:publish": "tsx scripts/tenant/publish.ts",
     "tenant:verify": "tsx scripts/tenant/verify.ts",
     "owner:add": "tsx scripts/owner-add.ts",
+    "platform-admin:mfa-reset": "tsx scripts/platform-admin-mfa-reset.ts",
     "dev:tg-link": "tsx scripts/dev-telegram-link.ts",
     "telegram:mock": "tsx scripts/telegram-mock.ts",
     "dev:demo-accounts": "tsx scripts/dev-demo-accounts.ts"

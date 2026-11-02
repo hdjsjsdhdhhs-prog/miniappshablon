@@ -5,6 +5,7 @@ import { ProductImage } from '@/components/product-image';
 import { Button } from '@/components/ui/button';
 import { formatMoney } from '@/domain/money';
 import { productPriceMinor } from '@/domain/pricing';
+import { isAvailable } from '@/domain/stock';
 import { cn } from '@/lib/utils';
 import type { ProductDetail } from '../api';
 
@@ -20,7 +21,7 @@ export const ProductCard = memo(function ProductCard({
   /** Opens the quick flavor picker. Never adds anything by itself. */
   onAddToCart?: (product: ProductDetail) => void;
 }) {
-  const inStock = product.variants.some((v) => v.stock_quantity > 0);
+  const inStock = product.variants.some((v) => isAvailable(v.stock_status));
   const image = product.images[0];
   return (
     /*

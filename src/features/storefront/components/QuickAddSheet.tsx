@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { DialogClose, DialogDescription, DialogOverlay, DialogTitle } from '@/components/ui/dialog';
 import { formatMoney } from '@/domain/money';
 import { productPriceMinor } from '@/domain/pricing';
+import { bestStockStatus, isAvailable, STOCK_STATUS_LABELS, type StockStatus } from '@/domain/stock';
 import {
   canAddToCart,
   findVariant,
@@ -27,7 +28,7 @@ const REASONS: Record<string, string> = {
   no_variant: 'Этот вариант закончился',
   out_of_stock: 'Этот вариант закончился',
   invalid_quantity: 'Некорректное количество',
-  exceeds_stock: 'Больше нет в наличии',
+  exceeds_limit: `Не больше ${MAX_LINE_QUANTITY} шт.`,
 };
 
 function uniq(values: Array<string | null>): string[] {
@@ -35,16 +36,17 @@ function uniq(values: Array<string | null>): string[] {
 }
 
 /**
- * Stock behind an option chip: the exact variant when the chip resolves to one, otherwise the sum of the sellable
- * variants with that value that still fit the other choice (e.g. a flavor offered in several colors).
+ * Availability behind an option chip: the exact variant's status when the chip resolves to one, otherwise the best
+ * status of the sellable variants with that value that still fit the other choice (e.g. a flavor in several colors).
+ * Only a status, never a quantity: buyers do not receive stock numbers.
  */
-function optionStock(sellable: readonly VariantLike[], kind: 'flavor' | 'color', value: string, selection: VariantSelection): number {
+function optionStatus(sellable: readonly VariantLike[], kind: 'flavor' | 'color', value: string, selection: VariantSelection): StockStatus {
   const exact = findVariant(sellable, { ...selection, [kind]: value });
-  if (exact) return exact.stock_quantity;
+  if (exact) return exact.stock_status;
   const other = kind === 'flavor' ? 'color' : 'flavor';
   const withValue = sellable.filter((v) => v[kind] === value);
   const matching = withValue.filter((v) => selection[other] === null || v[other] === selection[other]);
-  return (matching.length ? matching : withValue).reduce((sum, v) => sum + v.stock_quantity, 0);
+  return bestStockStatus((matching.length ? matching : withValue).map((v) => v.stock_status));
 }
 
 function OptionGroup({
@@ -68,8 +70,8 @@ function OptionGroup({
       <div role="radiogroup" aria-label={legend} className="grid grid-cols-2 gap-2">
         {values.map((value) => {
           const active = selection[kind] === value;
-          // The price lives once in the header; a chip shows only its name and remaining stock.
-          const stock = optionStock(sellable, kind, value, selection);
+          // The price lives once in the header; a chip shows only its name and availability status.
+          const status = optionStatus(sellable, kind, value, selection);
           return (
             <button
               key={value}
@@ -86,8 +88,8 @@ function OptionGroup({
               )}
             >
               <span className="line-clamp-2 leading-snug break-words">{value}</span>
-              <span className="mt-0.5 text-xs font-normal text-muted-foreground tabular-nums" data-testid="quick-option-stock">
-                Осталось: {stock}
+              <span className="mt-0.5 text-xs font-normal text-muted-foreground" data-testid="quick-option-stock">
+                {STOCK_STATUS_LABELS[status]}
               </span>
               {active && (
                 <CheckIcon aria-hidden weight="bold" className="absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-primary" />
@@ -115,7 +117,7 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
   const [error, setError] = useState<string | null>(null);
 
   // Only active variants come from the API; of those, only the ones that can actually be bought are offered.
-  const sellable = useMemo(() => (gone ? [] : p.variants.filter((v) => v.is_active && v.stock_quantity > 0)), [p, gone]);
+  const sellable = useMemo(() => (gone ? [] : p.variants.filter((v) => v.is_active && isAvailable(v.stock_status))), [p, gone]);
   const hasFlavor = p.variants.some((v) => v.flavor !== null);
   const hasColor = p.variants.some((v) => v.color !== null);
   const needsChoice = hasFlavor || hasColor;
@@ -134,7 +136,8 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
   const price = productPriceMinor(p);
 
   const inCart = variant ? (cart.lines.find((l) => l.variantId === variant.id)?.quantity ?? 0) : 0;
-  const room = variant ? Math.min(variant.stock_quantity, MAX_LINE_QUANTITY) - inCart : 0;
+  // Business limit only (the exact stock is the server's business at checkout).
+  const room = variant ? MAX_LINE_QUANTITY - inCart : 0;
   const maxQty = Math.max(1, room);
   const quantity = Math.min(qty, maxQty);
 
@@ -150,7 +153,7 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
           ? 'Выберите цвет'
           : 'Выберите вариант'
       : room <= 0
-        ? 'В корзине весь остаток'
+        ? `В корзине уже ${MAX_LINE_QUANTITY} шт.`
         : null;
 
   const pick = (kind: 'flavor' | 'color', value: string) => {
@@ -199,7 +202,7 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
         variantLabel: variantLabel(check.variant),
         unitPriceMinor: productPriceMinor(data),
         imagePath: data.images[0]?.storage_path ?? null,
-        maxQuantity: check.variant.stock_quantity,
+        maxQuantity: MAX_LINE_QUANTITY,
       },
       quantity,
     );

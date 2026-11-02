@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { localStack } from '../../scripts/lib/local-stack.ts';
 import { mockFailNext, mockMessages } from '../../scripts/lib/telegram-mock.ts';
 import {
   admin,
@@ -269,7 +270,7 @@ describe('order notification after checkout', () => {
 describe('no token in logs', () => {
   it('Edge Runtime logs of this run contain none of the fake tokens', () => {
     // The container's stdout and stderr both matter (console.error goes to stderr).
-    const out = spawnSync('docker', ['logs', '--since', startedAt.toISOString(), 'supabase_edge_runtime_tma-shop-showcase'], {
+    const out = spawnSync('docker', ['logs', '--since', startedAt.toISOString(), localStack().edgeRuntimeContainer], {
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
     });

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { localStack } from '../../scripts/lib/local-stack.ts';
 import {
   admin,
   anon,
@@ -52,7 +53,7 @@ async function shopsCount(): Promise<number> {
 async function mailFor(email: string): Promise<number | null> {
   // Local Mailpit (supabase/config.toml [local_smtp]); null when its API is not reachable.
   try {
-    const res = await fetch(`http://127.0.0.1:54324/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`);
+    const res = await fetch(`${localStack().mailUrl}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`);
     if (!res.ok) return null;
     return ((await res.json()) as { messages_count?: number }).messages_count ?? 0;
   } catch {
@@ -211,26 +212,46 @@ describe('hand over to a paying client', () => {
     expect(data).toEqual({ is_demo: true, mode: 'live' });
   });
 
-  it('invites a new client, makes them the only owner and turns the shop into a regular live one with the same slug', async () => {
+  // Audit F-01 (20261030090000): a new client's account becomes the owner only after it confirmed its e-mail through
+  // the invitation. Until then the hand-over is pending and the shop stays DEMO (previously it changed hands at once).
+  it('invites a new client (pending), and once the invitation is accepted makes them the only owner of a regular live shop', async () => {
     const mailsBefore = await mailFor(clientEmail);
     const res = await callAdminFunction('platform-admin', platform.client, { action: 'handover', shopId, email: clientEmail.toUpperCase(), redirectTo: REDIRECT });
     expect(res.status, res.text).toBe(200);
-    const body = res.body as { handover: { owner: { user_id: string; email: string }; shop: { slug: string; is_demo: boolean; mode: string } }; invitation: { status: string; link: string | null } };
+    const body = res.body as { handover: { status: string; owner: { user_id: string; email: string }; shop: { slug: string; is_demo: boolean; mode: string } }; invitation: { status: string; link: string | null } };
     clientId = body.handover.owner.user_id;
     track('user', clientId);
+    expect(body.handover.status).toBe('pending');
     expect(body.handover.owner.email).toBe(clientEmail);
-    expect(body.handover.shop).toMatchObject({ slug: slugA, is_demo: false, mode: 'live' });
+    expect(body.handover.shop).toMatchObject({ slug: slugA, is_demo: true, mode: 'live' });
     expect(['sent', 'link']).toContain(body.invitation.status);
-    if (body.invitation.status === 'sent') {
-      expect(body.invitation.link).toBeNull();
-      const after = await mailFor(clientEmail);
-      if (after !== null && mailsBefore !== null) expect(after).toBeGreaterThan(mailsBefore);
-    }
     // The response never leaks the service role key.
     expect(res.text).not.toContain(env.serviceRoleKey);
+    expect((await admin.from('shop_memberships').select('user_id').eq('shop_id', shopId)).data).toEqual([]);
+    expect((await admin.from('shops').select('is_demo').eq('id', shopId).single()).data).toEqual({ is_demo: true });
+
+    // The client follows the invitation link (Supabase Auth verifies it and confirms the e-mail).
+    let link = body.invitation.link;
+    if (body.invitation.status === 'sent') {
+      expect(link).toBeNull();
+      const until = Date.now() + 15_000;
+      let after = await mailFor(clientEmail);
+      while (after !== null && mailsBefore !== null && after <= mailsBefore && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 250));
+        after = await mailFor(clientEmail);
+      }
+      if (after !== null && mailsBefore !== null) expect(after).toBeGreaterThan(mailsBefore);
+      const search = (await (await fetch(`${localStack().mailUrl}/api/v1/search?query=${encodeURIComponent(`to:${clientEmail}`)}`)).json()) as { messages: Array<{ ID: string }> };
+      const msg = (await (await fetch(`${localStack().mailUrl}/api/v1/message/${search.messages[0]!.ID}`)).json()) as { HTML: string; Text: string };
+      link = /https?:\/\/[^\s"'<>]+\/auth\/v1\/verify\?[^\s"'<>]+/.exec(`${msg.HTML}\n${msg.Text}`)?.[0]?.replace(/&amp;/g, '&') ?? null;
+    }
+    expect(link).toBeTruthy();
+    const verify = await fetch(link!, { redirect: 'manual' });
+    expect([302, 303]).toContain(verify.status);
 
     const { data: u } = await admin.auth.admin.getUserById(clientId);
     expect(u.user!.invited_at).toBeTruthy();
+    expect(u.user!.email_confirmed_at).toBeTruthy();
     expect((await admin.from('shop_memberships').select('user_id, role').eq('shop_id', shopId)).data).toEqual([{ user_id: clientId, role: 'owner' }]);
     expect((await admin.from('platform_admins').select('user_id').eq('user_id', clientId)).data).toEqual([]);
     const { data: shop } = await admin.from('shops').select('slug, is_demo, mode, status').eq('id', shopId).single();

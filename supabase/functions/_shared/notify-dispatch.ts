@@ -9,6 +9,8 @@ export type Rpc = (fn: string, args: Record<string, unknown>) => PromiseLike<{ d
 export interface NotificationJob {
   notification_id: number;
   attempt: number;
+  /** Delivery channel (token + chat) the job was claimed for; re-validated right before sending. */
+  channel_id: string;
   shop_name: string;
   chat_id: string;
   bot_token: string;
@@ -30,6 +32,30 @@ export interface DispatchOptions {
 export interface DispatchResult {
   sent: number;
   failed: number;
+  /** Claimed jobs that were NOT sent because the channel was revoked or replaced meanwhile (e.g. new shop owner). */
+  skipped?: number;
+}
+
+/**
+ * Asks the database whether the claimed job may still be sent: the shop may have changed hands (settings deleted,
+ * job dead), or the owner replaced / disabled the channel after the claim. Fails closed: any error → do not send.
+ */
+async function maySend(rpc: Rpc, job: NotificationJob, log: (m: string) => void): Promise<boolean> {
+  try {
+    const { data, error } = await rpc('notify_begin_send', {
+      p_notification_id: job.notification_id,
+      p_attempt: job.attempt,
+      p_channel_id: job.channel_id ?? null,
+    });
+    if (error) {
+      log(`notify_begin_send failed for ${job.notification_id}: ${error.message}`);
+      return false;
+    }
+    return data === true;
+  } catch {
+    log(`notify_begin_send threw for ${job.notification_id}`);
+    return false;
+  }
 }
 
 export async function dispatchNotifications(rpc: Rpc, options: DispatchOptions = {}): Promise<DispatchResult> {
@@ -54,6 +80,13 @@ export async function dispatchNotifications(rpc: Rpc, options: DispatchOptions =
 
   for (const job of jobs) {
     if (!job) continue;
+    // Nothing is completed for a skipped job: it is dead already (ownership change) or will be re-claimed for the
+    // current channel once its claim expires.
+    if (!(await maySend(rpc, job, log))) {
+      result.skipped = (result.skipped ?? 0) + 1;
+      log(`order notification ${job.notification_id} not sent: channel revoked or replaced`);
+      continue;
+    }
     let ok = false;
     let messageId: number | null = null;
     let errorText: string | null = null;

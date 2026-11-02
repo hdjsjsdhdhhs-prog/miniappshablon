@@ -10,12 +10,14 @@ import {
   variantOptions,
   type VariantLike,
 } from './variants';
+import { stockStatusOf } from './stock';
 
+// The storefront gets only the status; `stock` here is just a readable way to pick it (same thresholds as SQL).
 const v = (id: string, flavor: string | null, color: string | null, stock: number, active = true): VariantLike => ({
   id,
   flavor,
   color,
-  stock_quantity: stock,
+  stock_status: stockStatusOf(stock),
   is_active: active,
 });
 
@@ -48,14 +50,23 @@ describe('variants', () => {
     expect(defaultSelection([])).toEqual({ flavor: null, color: null });
   });
 
-  it('blocks adding non-existent, out-of-stock or over-stock quantities', () => {
+  it('blocks adding non-existent or out-of-stock variants and quantities over the business limit', () => {
     expect(canAddToCart(variants, { flavor: 'Вишня', color: 'Белый' }, 1)).toEqual({ ok: false, reason: 'no_variant' });
     expect(canAddToCart(variants, { flavor: 'Мята', color: 'Белый' }, 1)).toEqual({ ok: false, reason: 'out_of_stock' });
     expect(canAddToCart(variants, { flavor: 'Мята', color: 'Чёрный' }, 0)).toEqual({ ok: false, reason: 'invalid_quantity' });
     expect(canAddToCart(variants, { flavor: 'Мята', color: 'Чёрный' }, 1.5)).toEqual({ ok: false, reason: 'invalid_quantity' });
-    expect(canAddToCart(variants, { flavor: 'Мята', color: 'Чёрный' }, 2, 2)).toEqual({ ok: false, reason: 'exceeds_stock' });
+    expect(canAddToCart(variants, { flavor: 'Мята', color: 'Чёрный' }, 98, 2)).toEqual({ ok: false, reason: 'exceeds_limit' });
     const ok = canAddToCart(variants, { flavor: 'Мята', color: 'Чёрный' }, 3);
     expect(ok.ok && ok.variant.id).toBe('a');
+  });
+
+  it('stock boundaries: 0 cannot be added; 1 and 2 (low stock) can; the cap does not depend on the stock', () => {
+    for (const [stock, ok] of [[0, false], [1, true], [2, true], [3, true]] as const) {
+      const list = [v('x', 'A', null, stock)];
+      expect(canAddToCart(list, { flavor: 'A', color: null }, 1).ok, `stock ${stock}`).toBe(ok);
+      // Never capped at the stock: the server decides whether the quantity is there.
+      if (ok) expect(canAddToCart(list, { flavor: 'A', color: null }, 5).ok, `stock ${stock}`).toBe(true);
+    }
   });
 
   it('labels and detects duplicate combinations case-insensitively', () => {

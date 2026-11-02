@@ -12,6 +12,9 @@ const ERRORS: Record<string, string> = {
   user_not_found: 'Учётная запись не найдена.',
   shop_not_found: 'Магазин не найден.',
   transfer_verification_failed: 'Проверка членства не прошла — передача отменена, изменений нет.',
+  owner_unconfirmed: 'Email этой учётной записи не подтверждён — передать ей магазин нельзя.',
+  owner_is_platform_admin: 'Это учётная запись администратора платформы — владельцем магазина она быть не может.',
+  owner_blocked: 'Учётная запись заблокирована.',
   invalid_body: 'Проверьте email.',
   auth_required: 'Сессия истекла. Войдите снова.',
 };
@@ -53,6 +56,14 @@ export function TransferShopDialog({ shop, open, onOpenChange }: { shop: Platfor
   };
 
   const losing = user ? shop.members.filter((m) => m.user_id !== user.user_id) : [];
+  // Mirrors the server rule (platform_transfer_shop re-checks it): only a confirmed, non-admin account.
+  const ineligible = user
+    ? user.is_platform_admin
+      ? ERRORS.owner_is_platform_admin
+      : user.state && user.state !== 'confirmed'
+        ? ERRORS[user.state === 'blocked' ? 'owner_blocked' : 'owner_unconfirmed']
+        : null
+    : null;
 
   return (
     <Dialog open={open} onOpenChange={reset}>
@@ -138,6 +149,14 @@ export function TransferShopDialog({ shop, open, onOpenChange }: { shop: Platfor
                     ? `Потеряют доступ: ${losing.map((m) => m.email ?? m.user_id).join(', ')}`
                     : 'Других участников у магазина нет.'}
                 </p>
+                <p className="text-muted-foreground">
+                  Telegram-уведомления о заказах прежнего владельца будут отключены, неотправленные — отменены. Новый владелец подключит свои.
+                </p>
+                {ineligible && (
+                  <p className="text-destructive" data-testid="transfer-ineligible">
+                    {ineligible}
+                  </p>
+                )}
               </div>
             )}
 
@@ -157,7 +176,7 @@ export function TransferShopDialog({ shop, open, onOpenChange }: { shop: Platfor
               <Button variant="ghost" onClick={() => reset(false)}>
                 Отмена
               </Button>
-              <Button disabled={!user || transfer.isPending} onClick={() => transfer.mutate()} data-testid="transfer-confirm">
+              <Button disabled={!user || !!ineligible || transfer.isPending} onClick={() => transfer.mutate()} data-testid="transfer-confirm">
                 {transfer.isPending ? 'Передаём…' : 'Передать магазин'}
               </Button>
             </>

@@ -5,6 +5,15 @@ name: Supabase deploy (manual)
 on:
   workflow_dispatch:
 
+# One production deployment at a time. The group is a fixed string (no ref / run id), so EVERY run of this workflow,
+# from any branch, waits for the one in progress; a running deployment is never cancelled (it may be inside db push).
+# GitHub keeps at most one run waiting per group: a newer dispatch replaces an older one that has not started yet —
+# that run did nothing, the newer one re-reads the state from scratch. CI (ci.yml) uses its own group and is not
+# affected. Checked by scripts/lib/workflows.test.ts.
+concurrency:
+  group: supabase-deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -22,6 +31,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # SHA-256 of every reviewed migration (scripts/lib/migration-integrity-manifest.ts) before anything touches the
+      # database: exact file set, valid UTF-8, CRLF→LF canonical content equal to the approved hash.
+      - name: Verify migration file integrity (SHA-256)
+        run: pnpm check:migration-integrity
       - run: pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
       - name: Validate Session Pooler target
         env:
@@ -46,10 +59,14 @@ jobs:
           NODE
       - name: Show pending migrations
         run: pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no
-      # Gate (scripts/lib/migration-plan.ts): remote history AND dry-run, both as JSON, must agree on one state:
-      #   apply — 20261026090000, 20261026100000 pending, nothing else pending, dry-run plans exactly them in order;
-      #   skip  — both confirmed applied in history, nothing pending, dry-run up to date (repeat run).
-      # Anything else (partial, extra, out of order, inconsistent history, CLI error) stops before db push.
+      # Gate (scripts/lib/migration-plan.ts): local file names, remote history AND dry-run (JSON) must agree on one state.
+      # `db push` has no version/stage selector: it applies EVERY local migration missing from the remote history, so
+      # the gate derives the pending whole stages and requires the dry-run to plan exactly their reviewed files:
+      #   apply — baseline (incl. 2026-10-26) applied; pending = whole stages 3A+3B (one push, 3A first) or 3B only;
+      #   skip  — baseline, 3A and 3B confirmed applied, nothing pending, dry-run up to date (repeat run).
+      # Anything else (partial stage, 3B before 3A, unknown/missing/renamed file, inconsistent history, CLI error)
+      # stops before db push. Every `check-production-migration-plan.ts` call also re-reads and re-hashes all
+      # migration files first (SHA-256 integrity), so content changed after any earlier step stops the job too.
       - name: Read migration history and dry-run plan
         run: |
           pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no --output-format json \
@@ -62,7 +79,20 @@ jobs:
         run: pnpm exec tsx scripts/check-production-migration-plan.ts plan "$RUNNER_TEMP/migration-list.json" "$RUNNER_TEMP/db-push-dry-run.json"
       - name: Apply migrations
         if: steps.plan.outputs.mode == 'apply'
-        run: pnpm exec supabase db push --db-url "$SUPABASE_DB_URL"
+        env:
+          PLANNED_STAGES: ${{ steps.plan.outputs.stages }}
+        run: |
+          # Re-check right before the push: file integrity (re-hashed from disk, no cached result), then history and
+          # dry-run; it must still be an apply of exactly the planned stages. The `plan --expect-stages` call hashes
+          # the files once more, as the last step before `db push`.
+          pnpm check:migration-integrity
+          pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no --output-format json \
+            > "$RUNNER_TEMP/migration-list-recheck.json" || { cat "$RUNNER_TEMP/migration-list-recheck.json"; exit 1; }
+          pnpm exec supabase db push --dry-run --db-url "$SUPABASE_DB_URL" --agent no --output-format json \
+            > "$RUNNER_TEMP/db-push-dry-run-recheck.json" || { cat "$RUNNER_TEMP/db-push-dry-run-recheck.json"; exit 1; }
+          pnpm exec tsx scripts/check-production-migration-plan.ts plan "$RUNNER_TEMP/migration-list-recheck.json" \
+            "$RUNNER_TEMP/db-push-dry-run-recheck.json" --expect-stages "$PLANNED_STAGES"
+          pnpm exec supabase db push --db-url "$SUPABASE_DB_URL"
       - name: Verify migration history after push
         run: |
           pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no --output-format json \

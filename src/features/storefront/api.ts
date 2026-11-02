@@ -1,3 +1,4 @@
+import type { StockStatus } from '@/domain/stock';
 import { shopInformationSchema, shopSettingsSchema } from '@/domain/tenant-config';
 import { parseTheme, type ShopTheme } from '@/domain/theme';
 import { supabase } from '@/lib/supabase';
@@ -33,12 +34,15 @@ export interface Category {
   imagePath: string | null;
 }
 
-/** A sellable flavor/color row. It has no price: every variant sells at the product price (basePriceMinor). */
+/**
+ * A sellable flavor/color row. It has no price: every variant sells at the product price (basePriceMinor).
+ * Availability is a status only — the exact stock is not readable by buyers (20261102090100).
+ */
 export interface Variant {
   id: string;
   flavor: string | null;
   color: string | null;
-  stock_quantity: number;
+  stock_status: StockStatus;
   is_active: boolean;
   sort_order: number;
 }
@@ -74,7 +78,7 @@ const SHOP_COLUMNS =
 const PRODUCT_COLUMNS =
   'id, name, base_price_minor, category_id, description, ' +
   'categories!inner(name, slug, is_active, archived_at), ' +
-  'product_variants(id, flavor, color, stock_quantity, is_active, sort_order), ' +
+  'product_variants(id, flavor, color, stock_status, is_active, sort_order), ' +
   'product_images(id, storage_path, is_primary, sort_order, alt_text)';
 
 /**
@@ -179,7 +183,7 @@ export async function fetchProductsPage(
   // Storefront listing shows only products with at least one active variant in stock. Filtering on
   // the server keeps pagination correct (no half-empty pages after client-side filtering).
   let q = publicProductsQuery(shopId, LIST_COLUMNS)
-    .gt('in_stock.stock_quantity', 0)
+    .neq('in_stock.stock_status', 'out_of_stock')
     .eq('in_stock.is_active', true);
   if (params.categoryId) q = q.eq('category_id', params.categoryId);
   const search = normalizeSearch(params.search);

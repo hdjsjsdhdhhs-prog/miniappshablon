@@ -3,6 +3,9 @@ import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router';
 import { PageSpinner } from '@/components/state-views';
 import { useSession } from './auth';
 import { AdminShopLayout } from './AdminShopLayout';
+import { useAssurance } from './mfa';
+import { MfaPage } from './pages/MfaPage';
+import { useIsPlatformAdmin } from './use-platform-admin';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
@@ -18,8 +21,16 @@ import { ShopsPage } from './pages/ShopsPage';
 function RequireAuth() {
   const { session, loading } = useSession();
   const location = useLocation();
+  const isAdmin = useIsPlatformAdmin();
+  const aal = useAssurance();
   if (loading) return <PageSpinner />;
   if (!session) return <Navigate to="/admin" replace state={{ from: location.pathname }} />;
+  // A platform admin works only in an aal2 (MFA) session: until then the only page is /admin/mfa. The database
+  // enforces the same on its own (20261102090000); this redirect just shows the way.
+  if (isAdmin.isPending || (isAdmin.data && aal.isPending)) return <PageSpinner />;
+  if (isAdmin.data && aal.data?.currentLevel !== 'aal2' && location.pathname !== '/admin/mfa') {
+    return <Navigate to="/admin/mfa" replace state={{ from: location.pathname }} />;
+  }
   return <Outlet />;
 }
 
@@ -50,6 +61,7 @@ export default function AdminRoutes() {
             <Route path="notifications" element={<NotificationsPage />} />
           </Route>
           <Route path="platform" element={<PlatformShopsPage />} />
+          <Route path="mfa" element={<MfaPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

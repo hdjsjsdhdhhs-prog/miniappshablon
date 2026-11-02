@@ -1,12 +1,12 @@
 // POST /functions/v1/notification-settings
-// Telegram order-notification settings of one shop, for its owner (or a platform admin).
+// Telegram order-notification settings of one shop, for its owner (or a platform admin in an aal2 / MFA session).
 // Body: { action: 'get' | 'save' | 'check' | 'enable' | 'disable' | 'delete' | 'retry', shopId, botToken?, chatId? }
 //
 // The bot token is accepted here, verified against the Bot API and stored in Supabase Vault through a
 // service-role RPC. It is never returned (only a masked hint) and never logged.
 import { z } from 'npm:zod@4.6.7';
-import { RPC_ERRORS, telegramApiBase, verifyAdminUser } from '../_shared/admin-auth.ts';
-import { serviceClient } from '../_shared/auth.ts';
+import { actorClient, RPC_ERRORS, telegramApiBase, verifyAdminUser } from '../_shared/admin-auth.ts';
+import type { serviceClient } from '../_shared/auth.ts';
 import { corsHeaders, errorResponse, json } from '../_shared/http.ts';
 import { dispatchNotifications } from '../_shared/notify-dispatch.ts';
 import { formatTestMessage } from '../_shared/order-notification.ts';
@@ -55,7 +55,8 @@ Deno.serve(async (req) => {
     return errorResponse(req, 400, 'invalid_body');
   }
 
-  const db = serviceClient();
+  // A platform admin acts only in an aal2 session (forwarded to the SQL); an owner's rights do not depend on it.
+  const db = actorClient(auth);
   const actor = { p_shop_id: body.shopId, p_actor: auth.userId };
   const apiBase = telegramApiBase();
 
