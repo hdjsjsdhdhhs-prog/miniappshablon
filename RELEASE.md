@@ -140,3 +140,50 @@ production-проекта из репозитория не виден (SETUP.md:
 
 До реализации п. 1–4 оператор обязан сам сделать и проверить копию (варианты 1 или 2 + 4) и указать её в
 `backup_reference`; preflight выводит это как `ATTESTED … NOT verified by this pipeline`.
+
+### Целевая архитектура backup (проект, не реализовано)
+
+Статус: **operator attestation**. Ничего из перечисленного ниже не создано и не запускалось; production backup
+не делался. Блокер закрывается только после реализации шагов 1–5 и успешного тестового восстановления (шаг 6).
+
+1. **Защищённое хранилище.** Отдельный приватный bucket (R2 `miniapp-db-backups` или S3) только для копий БД:
+   без public access и custom domain; Bucket Lock / Object Lock (retention 35 дней) — копию нельзя удалить или
+   перезаписать даже с токеном записи; lifecycle удаляет объекты старше 35 дней. Токен bucket — только на этот bucket,
+   хранится в environment `production-backup` (Required reviewers = владелец, deployment branch = `main`). Ключ объекта:
+   `prod/<YYYYMMDDTHHMMSSZ>-<release_sha>.tar.age`. Файлы Storage (`shop-media`) — отдельный префикс
+   `prod-storage/<дата>/`.
+2. **Содержимое и шифрование.** `supabase db dump` трижды (`--role-only`, схема, `--data-only --use-copy`) →
+   `roles.sql`, `schema.sql`, `data.sql` + `counts.json` (`count(*)` по `shops`, `products`, `product_variants`,
+   `orders`) + `migrations.json` (`migration list`) → `tar` → `age -r <recipient>`. Открытый текст живёт только во
+   временном каталоге runner и удаляется в том же step; в Artifacts, логи и cache ничего не попадает. Recipient —
+   публичный ключ (variable). Приватный ключ `age` только у владельца, офлайн, в двух местах (менеджер паролей +
+   офлайн-носитель); в GitHub его нет, runner расшифровать копию не может.
+3. **Контроль SHA-256.** Job считает SHA-256 зашифрованного архива и SHA-256 открытого `tar` (до шифрования). Оба
+   пишутся в metadata объекта (`sha256-cipher`, `sha256-plain`) и в sidecar-объект `<key>.sha256`. Upload — с
+   checksum SHA-256 на стороне хранилища, если оно его поддерживает (для R2 проверить при реализации), иначе только
+   metadata + read-back из шага 4.
+4. **Проверка существования объекта.** После upload отдельными запросами: `HeadObject` — объект есть, размер равен
+   локальному, metadata совпадает; затем `GetObject` во временный файл и повторный SHA-256 — должен совпасть с
+   `sha256-cipher`. Любое расхождение — job падает, `supabase` не стартует. Output job:
+   `backup_reference = <bucket>/<key>@sha256:<cipher-hex>` формирует job, а не оператор. В `release.yml`:
+   `supabase.needs: [preflight, backup]`, input `backup_verified` удаляется, preflight больше не печатает `ATTESTED`.
+5. **Процедура восстановления production** (решение владельца, с простоем):
+   1. Остановить запись: frontend на страницу обслуживания / предыдущий deployment без checkout.
+   2. Скачать объект по `backup_reference`, сверить SHA-256 зашифрованного файла, расшифровать `age -d`, сверить
+      SHA-256 открытого `tar`.
+   3. Предпочтительно — восстановление в **новый** Supabase-проект (`psql` по порядку `roles.sql`, `schema.sql`,
+      `data.sql` с `session_replication_role = replica`, как в инструкции Supabase «Restore from dump»), проверки
+      шага 6, затем переключение `VITE_SUPABASE_*`, Edge Functions и их секретов на новый проект. Если доступен
+      PITR — сначала рассмотреть его (Dashboard → Database → PITR).
+   4. Сверить `counts.json` и `migrations.json`; восстановить файлы Storage из `prod-storage/`.
+   5. Release-smoke API против восстановленного проекта, затем вернуть frontend.
+6. **Тестовое восстановление в отдельном проекте** (обязательно до первого релиза, затем не реже раза в 30 дней и
+   после изменения процедуры; результат старше 30 дней снова открывает блокер):
+   - цель — отдельный Supabase-проект `miniapp-restore-drill` (не production ref, без `supabase link` в этом
+     репозитории) или disposable локальный стек с отдельным `project_id` и портами; никогда production;
+   - шаги 5.2–5.4 на этой цели; проверки: оба SHA-256 совпали; `migration list` = manifest релиза;
+     `count(*)` = `counts.json`; RLS: anon не читает `orders`;
+   - журнал: дата, `backup_reference`, SHA релиза, результаты проверок, исполнитель. После проверки drill-проект
+     и расшифрованные файлы удаляются.
+
+Пока шаги 1–6 не выполнены, `backup_verified=true` означает только «оператор утверждает», а не «копия проверена».
