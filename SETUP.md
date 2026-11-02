@@ -89,9 +89,9 @@ pnpm db:start        # = supabase start + локальные секреты Edge
 > Vercel Hobby (https://vercel.com/docs/plans/hobby) разрешён только для **некоммерческого личного** использования.
 > Продаваемому сервису нужен Pro; смена плана выполняется владельцем вручную.
 
-**Cloudflare Pages.** Workflow `.github/workflows/ci.yml` (job `deploy-cloudflare-pages`) деплоит `dist` при push в `main`, если заданы
-variable `CLOUDFLARE_PAGES_PROJECT`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` и secrets `CLOUDFLARE_API_TOKEN`,
-`CLOUDFLARE_ACCOUNT_ID`. SPA fallback задаётся в `public/_redirects`.
+**Cloudflare Pages.** Push в `main` frontend **не** деплоит: новый frontend не должен попасть в production раньше,
+чем там применены его Expand-миграции. Деплой `dist` — отдельное ручное действие оператора, только после Supabase
+(миграции + Edge Functions). SPA fallback задаётся в `public/_redirects`.
 
 Заголовок `X-Frame-Options` намеренно не ставится: Telegram Web открывает Mini App в iframe.
 
@@ -111,3 +111,4 @@ variable `CLOUDFLARE_PAGES_PROJECT`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KE
 
 `ci.yml`: lint → typecheck → unit → валидация всех tenants → build → проверка бандла на секреты, затем локальный
 Supabase в Docker → проверка воспроизводимости миграций → seed/publish/verify demo → integration → Playwright.
+CI ничего не деплоит.
