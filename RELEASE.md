@@ -116,7 +116,11 @@ Migration Gate увидит, что все стадии применены (`ski
    `pnpm build` (в контексте `production-frontend`) и в `smoke-api` / `smoke-web` до первого запроса. Несовпадение,
    пустое или некорректное значение останавливает релиз; значения в ошибках не печатаются. Смена проекта — только
    изменением этой константы через PR. Опционально `PRODUCTION_APP_URL`, если production-домен не
-   `https://<PRODUCTION_CLOUDFLARE_PAGES_PROJECT>.pages.dev`. Старые repository secrets `CLOUDFLARE_API_TOKEN`,
+   `https://<PRODUCTION_CLOUDFLARE_PAGES_PROJECT>.pages.dev` (это единственный документированный fallback).
+   `smoke-web` проверяет **оба** адреса, оба обязательны и проверяются до первого запроса: уникальный URL деплоя
+   (output `deployment-url` wrangler-action) должен быть ровно `https://<id>.<project>.pages.dev`; production-адрес —
+   голый https-origin, а на `pages.dev` — ровно `https://<project>.pages.dev`. Пустой `deployment-url` (wrangler не
+   вернул адрес) больше не пропускается молча: `smoke-web` падает. Старые repository secrets `CLOUDFLARE_API_TOKEN`,
    `CLOUDFLARE_ACCOUNT_ID` и variable `CLOUDFLARE_PAGES_PROJECT` удалить **после** merge PR #1 и PR #2 в `main`: до
    этого их ещё использует job `deploy-cloudflare-pages` в `ci.yml` текущего `main`.
 4. Production branch проекта Cloudflare Pages должен быть `main` (деплой идёт с `--branch=main`).

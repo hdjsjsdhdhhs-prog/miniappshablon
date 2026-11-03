@@ -9,9 +9,11 @@
 //     PREVIOUS frontend (main 741d478: stock_quantity embed, filter, select('*')) still work — fail-closed, an Expand
 //     release must not break them —, the stock RPC exists and is refused to anon, every Edge Function deployed by
 //     supabase-deploy.yml answers, checkout requires Telegram.
-//   tsx scripts/release-smoke.ts web <app-url>... [--slug <shop>]
-//     env: SUPABASE_URL. Every URL: app shell on the public pages, JS bundle downloadable, new stock_status contract,
-//     expected Supabase project.
+//   tsx scripts/release-smoke.ts web --deployment-url <url> --production-url <url> --pages-project <name> [--slug <shop>]
+//     env: SUPABASE_URL. Both URLs are required and validated before any request (an empty value fails, it is never
+//     skipped): the deployment URL must be https://<id>.<project>.pages.dev, the production URL a bare https origin
+//     (on pages.dev exactly https://<project>.pages.dev). Each URL: app shell on the public pages, JS bundle
+//     downloadable, new stock_status contract, expected Supabase project.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deployedFunctions, REPO_ROOT } from './lib/edge-functions.ts';
@@ -27,15 +29,16 @@ import {
   assertStorefrontQuery,
   assertSupabaseReachable,
   assetScripts,
-  DEFAULT_SMOKE_SLUG,
   LEGACY_FRONTEND_QUERIES,
+  parseWebArgs,
   PUBLIC_PAGES,
   STOCK_RPC,
   STOREFRONT_PRODUCT_COLUMNS,
+  WEB_USAGE,
   type HttpResult,
 } from './lib/release-smoke.ts';
 
-const USAGE = 'Usage: release-smoke.ts api | web <app-url>... [--slug <shop>]';
+const USAGE = `Usage: release-smoke.ts api | ${WEB_USAGE.replace('Usage: release-smoke.ts ', '')}`;
 const MAX_CHUNKS = 120;
 
 function env(name: string): string {
@@ -133,11 +136,9 @@ const [command, ...rest] = process.argv.slice(2);
 try {
   if (command === 'api' && rest.length === 0) await smokeApi();
   else if (command === 'web') {
-    const slugAt = rest.indexOf('--slug');
-    const slug = slugAt >= 0 ? rest[slugAt + 1] : DEFAULT_SMOKE_SLUG;
-    const urls = rest.filter((_, i) => slugAt < 0 || (i !== slugAt && i !== slugAt + 1)).filter((u) => u.trim() !== '');
-    if (!slug || !/^[a-z0-9-]+$/.test(slug) || urls.length === 0) throw new Error(USAGE);
-    await smokeWeb(urls, slug);
+    // Every target is validated before any request; an empty or missing one stops the check instead of being dropped.
+    const { deploymentUrl, productionUrl, slug } = parseWebArgs(rest);
+    await smokeWeb([deploymentUrl, productionUrl], slug);
   } else throw new Error(USAGE);
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);

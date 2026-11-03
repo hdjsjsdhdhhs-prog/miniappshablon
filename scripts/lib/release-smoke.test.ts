@@ -9,8 +9,11 @@ import {
   assertAppShell,
   assertBundleContract,
   assertCheckoutRequiresTelegram,
+  assertDeploymentUrl,
   assertFunctionDeployed,
   assertLegacyFrontendQuery,
+  assertPagesProject,
+  assertProductionUrl,
   assertRpcProtected,
   assertStockStatusReadable,
   assertStorefrontQuery,
@@ -19,6 +22,7 @@ import {
   LEGACY_FRONTEND_QUERIES,
   LEGACY_PRODUCT_COLUMNS,
   LEGACY_VARIANT_EMBED,
+  parseWebArgs,
   PUBLIC_PAGES,
   referencesOrigin,
   STOREFRONT_PRODUCT_COLUMNS,
@@ -26,8 +30,11 @@ import {
   type HttpResult,
 } from './release-smoke';
 
-/** Arguments of `release-smoke.ts web` for one app URL. */
-const WEB_ARGS = (app: string) => ['web', app];
+const PROJECT = 'shop-app';
+const DEPLOY = `https://a1b2c3d4.${PROJECT}.pages.dev`;
+const PROD = `https://${PROJECT}.pages.dev`;
+/** Valid arguments of `release-smoke.ts web` (the URLs are never contacted by the tests that use them). */
+const WEB_ARGS = () => ['web', '--deployment-url', DEPLOY, '--production-url', PROD, '--pages-project', PROJECT];
 
 const res = (status: number, body: unknown, contentType = 'application/json'): HttpResult => ({
   status,
@@ -225,10 +232,130 @@ describe('release-smoke.ts validates SUPABASE_URL before any request', () => {
   it('web: wrong, missing or malformed SUPABASE_URL → exit 1, no request to the app either', async () => {
     for (const url of badUrls()) {
       requests.length = 0;
-      const r = await smoke(WEB_ARGS(local), url === undefined ? {} : { SUPABASE_URL: url });
+      const r = await smoke(WEB_ARGS(), url === undefined ? {} : { SUPABASE_URL: url });
       expect(r.code, String(url)).toBe(1);
       expect(r.stderr, String(url)).toMatch(/Supabase URL/);
       expect(requests, String(url)).toEqual([]);
     }
   }, 120_000);
+
+  // L3: web targets are validated before SUPABASE_URL and before any request; nothing is silently dropped.
+  it('web: a valid URL pair is accepted (the run reaches the SUPABASE_URL check)', async () => {
+    const r = await smoke(WEB_ARGS(), {});
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/Supabase URL is not set/);
+    expect(r.stderr).not.toMatch(/Usage|deployment URL|production URL/);
+  }, 60_000);
+
+  it('web: an empty, missing or wrong target fails before any request, even with a valid SUPABASE_URL', async () => {
+    const SUPABASE_URL = 'https://xcbugcjmddtubytpvffa.supabase.co';
+    const without = (flag: string) => {
+      const a = WEB_ARGS();
+      a.splice(a.indexOf(flag), 2);
+      return a;
+    };
+    const withValue = (flag: string, value: string) => {
+      const a = WEB_ARGS();
+      a[a.indexOf(flag) + 1] = value;
+      return a;
+    };
+    const cases: Array<[string[], RegExp]> = [
+      [withValue('--deployment-url', ''), /deployment URL is empty/],
+      [withValue('--production-url', ''), /production URL is empty/],
+      [withValue('--pages-project', ''), /Pages project name is empty/],
+      [without('--deployment-url'), /missing --deployment-url/],
+      [without('--production-url'), /missing --production-url/],
+      [without('--pages-project'), /missing --pages-project/],
+      [['web', local], /unexpected argument/], // the old positional form
+      [['web', DEPLOY, PROD], /unexpected argument/],
+      [withValue('--deployment-url', local), /deployment URL does not use https/],
+      [withValue('--deployment-url', `https://a1b2c3d4.other.pages.dev`), /not a deployment of the Cloudflare Pages project shop-app/],
+      [withValue('--production-url', 'https://other.pages.dev'), /must be https:\/\/shop-app\.pages\.dev/],
+      [[...WEB_ARGS(), '--deployment-url', DEPLOY], /more than once/],
+      [[...WEB_ARGS(), '--slug'], /--slug has no value/],
+    ];
+    for (const [args, error] of cases) {
+      requests.length = 0;
+      const r = await smoke(args, { SUPABASE_URL });
+      expect(r.code, args.join(' ')).toBe(1);
+      expect(r.stderr, args.join(' ')).toMatch(error);
+      expect(requests, args.join(' ')).toEqual([]);
+    }
+  }, 180_000);
+});
+
+describe('smoke-web targets (L3)', () => {
+  it('pages project: lowercase name, required', () => {
+    expect(assertPagesProject('shop-app')).toBe('shop-app');
+    for (const bad of [undefined, '', 'Shop', '-shop', 'shop-', 'shop.app', 'a'.repeat(59), 'shop app']) {
+      expect(() => assertPagesProject(bad), String(bad)).toThrow(/Pages project name/);
+    }
+  });
+
+  it('deployment URL: exactly https://<id>.<project>.pages.dev', () => {
+    expect(assertDeploymentUrl(DEPLOY, PROJECT)).toBe(DEPLOY);
+    expect(assertDeploymentUrl(`${DEPLOY}/`, PROJECT)).toBe(DEPLOY);
+    const cases: Array<[string | undefined, RegExp]> = [
+      [undefined, /deployment URL is empty/],
+      ['', /deployment URL is empty/],
+      [` ${DEPLOY}`, /whitespace/],
+      ['not-a-url', /malformed/],
+      [`http://a1b2c3d4.${PROJECT}.pages.dev`, /https/],
+      [`https://u:p@a1b2c3d4.${PROJECT}.pages.dev`, /credentials/],
+      [`${DEPLOY}:443`, /bare https origin/],
+      [`${DEPLOY}/s/noir-vapor`, /bare https origin/],
+      [`${DEPLOY}?x=1`, /bare https origin/],
+      [`${DEPLOY}#x`, /bare https origin/],
+      [PROD, /not a deployment of the Cloudflare Pages project/], // the production domain is not the unique deployment
+      [`https://a.b.${PROJECT}.pages.dev`, /not a deployment/],
+      [`https://a1b2c3d4.other.pages.dev`, /not a deployment/],
+      [`https://a1b2c3d4.x${PROJECT}.pages.dev`, /not a deployment/],
+      [`https://a1b2c3d4.${PROJECT}.pages.dev.evil.example`, /not a deployment/],
+      ['https://shop.example.com', /not a deployment/],
+      [`https://.${PROJECT}.pages.dev`, /malformed|invalid host/],
+    ];
+    for (const [url, error] of cases) expect(() => assertDeploymentUrl(url, PROJECT), String(url)).toThrow(error);
+    expect(() => assertDeploymentUrl(DEPLOY, '')).toThrow(/Pages project name is empty/);
+  });
+
+  it('production URL: a bare https origin; on pages.dev only the project domain (documented fallback)', () => {
+    expect(assertProductionUrl(PROD, PROJECT)).toBe(PROD);
+    expect(assertProductionUrl('https://shop.example.com', PROJECT)).toBe('https://shop.example.com'); // vars.PRODUCTION_APP_URL
+    const cases: Array<[string | undefined, RegExp]> = [
+      [undefined, /production URL is empty/],
+      ['', /production URL is empty/],
+      ['https://.pages.dev', /malformed|invalid host/], // fallback with an empty project name
+      ['https://pages.dev', /must be https:\/\/shop-app\.pages\.dev/],
+      ['https://other.pages.dev', /must be https:\/\/shop-app\.pages\.dev/],
+      [DEPLOY, /must be https:\/\/shop-app\.pages\.dev/],
+      ['http://shop.example.com', /https/],
+      ['https://shop.example.com:8443', /bare https origin/],
+      ['https://shop.example.com/app', /bare https origin/],
+      ['https://localhost', /invalid host/],
+      ['https://user@shop.example.com', /credentials/],
+    ];
+    for (const [url, error] of cases) expect(() => assertProductionUrl(url, PROJECT), String(url)).toThrow(error);
+  });
+
+  it('parseWebArgs: all three targets required, named, once each; slug optional', () => {
+    expect(parseWebArgs(WEB_ARGS().slice(1))).toEqual({ deploymentUrl: DEPLOY, productionUrl: PROD, pagesProject: PROJECT, slug: 'noir-vapor' });
+    expect(parseWebArgs([...WEB_ARGS().slice(1), '--slug', 'mint-lab']).slug).toBe('mint-lab');
+    expect(() => parseWebArgs([])).toThrow(/missing --deployment-url/);
+    expect(() => parseWebArgs([...WEB_ARGS().slice(1), '--slug', 'Bad Slug'])).toThrow(/--slug is malformed/);
+    expect(() => parseWebArgs([DEPLOY, PROD])).toThrow(/unexpected argument/);
+    expect(() => parseWebArgs(['--deployment-url', '--production-url', PROD, '--pages-project', PROJECT])).toThrow();
+  });
+
+  it('errors never echo the configured value', () => {
+    for (const url of ['https://s3cr3t@shop.example.com', 'http://s3cr3t.example.com', 'https://s3cr3t.other.pages.dev']) {
+      let message = '';
+      try {
+        assertDeploymentUrl(url, PROJECT);
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message, url).not.toBe('');
+      expect(message, url).not.toContain('s3cr3t');
+    }
+  });
 });

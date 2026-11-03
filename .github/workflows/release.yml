@@ -214,11 +214,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # The deployment itself (unique Pages URL) and the production address (vars.PRODUCTION_APP_URL, otherwise the
-      # project's pages.dev domain).
+      # The deployment itself (unique Pages URL, required: an empty wrangler output fails, it is never skipped) and the
+      # production address (vars.PRODUCTION_APP_URL, otherwise — the documented fallback — the project's pages.dev
+      # domain). Both are validated against the Pages project before any request.
       - name: Deployed app (shell, public pages, stock_status contract)
         env:
           SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           DEPLOYMENT_URL: ${{ needs.frontend.outputs.deployment_url }}
+          PAGES_PROJECT: ${{ needs.frontend.outputs.pages_project }}
           PRODUCTION_APP_URL: ${{ vars.PRODUCTION_APP_URL || format('https://{0}.pages.dev', needs.frontend.outputs.pages_project) }}
-        run: pnpm exec tsx scripts/release-smoke.ts web "$DEPLOYMENT_URL" "$PRODUCTION_APP_URL"
+        run: pnpm exec tsx scripts/release-smoke.ts web --deployment-url "$DEPLOYMENT_URL" --production-url "$PRODUCTION_APP_URL" --pages-project "$PAGES_PROJECT"

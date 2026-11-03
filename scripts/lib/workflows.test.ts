@@ -336,8 +336,19 @@ describe('release.yml', () => {
   it('smoke-web checks the deployment URL and the production address after the frontend deploy', () => {
     const web = job('smoke-web');
     expect(web).toContain('DEPLOYMENT_URL: ${{ needs.frontend.outputs.deployment_url }}');
-    expect(web).toContain('run: pnpm exec tsx scripts/release-smoke.ts web "$DEPLOYMENT_URL" "$PRODUCTION_APP_URL"');
+    expect(web).toContain('PAGES_PROJECT: ${{ needs.frontend.outputs.pages_project }}');
+    // Named, required arguments: an empty DEPLOYMENT_URL reaches the CLI as an empty value and fails there.
+    expect(web).toContain(
+      'run: pnpm exec tsx scripts/release-smoke.ts web --deployment-url "$DEPLOYMENT_URL" --production-url "$PRODUCTION_APP_URL" --pages-project "$PAGES_PROJECT"\n',
+    );
+    expect(web.match(/release-smoke\.ts web/g)).toHaveLength(1);
     expect(job('frontend')).toContain('deployment_url: ${{ steps.deploy.outputs.deployment-url }}');
+  });
+
+  it('the smoke CLI no longer drops empty targets', () => {
+    const smoke = readFileSync(join(REPO_ROOT, 'scripts', 'release-smoke.ts'), 'utf8');
+    expect(smoke).not.toMatch(/\.filter\(\(u\) => u\.trim\(\) !== ''\)/);
+    expect(smoke).toContain('parseWebArgs(rest)');
   });
 });
 

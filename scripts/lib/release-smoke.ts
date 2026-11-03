@@ -63,6 +63,102 @@ function fail(reason: string): never {
   throw new Error(`Smoke: ${reason}`);
 }
 
+/** Cloudflare Pages project name: lowercase letters, digits and inner dashes, at most 58 characters. */
+const PAGES_PROJECT = /^[a-z0-9](?:[a-z0-9-]{0,56}[a-z0-9])?$/;
+/** A lowercase DNS label. */
+const LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
+const HOSTNAME = new RegExp(`^(?=.{1,253}$)${LABEL}(?:\\.${LABEL})+$`);
+
+export const WEB_USAGE = 'Usage: release-smoke.ts web --deployment-url <url> --production-url <url> --pages-project <name> [--slug <shop>]';
+
+export function assertPagesProject(name: string | undefined): string {
+  if (name === undefined || name === '') fail('the Cloudflare Pages project name is empty');
+  if (!PAGES_PROJECT.test(name)) fail('the Cloudflare Pages project name is malformed');
+  return name;
+}
+
+/**
+ * An app address as a bare HTTPS origin: `https://<host>` (optional trailing `/`), lowercase DNS host, no userinfo,
+ * port, path, query or fragment, no whitespace. Returns the origin. The configured value is never echoed.
+ */
+function appOrigin(raw: string | undefined, what: string): URL {
+  const wrong = (reason: string): never => fail(`${what} ${reason}`);
+  if (raw === undefined || raw === '') return wrong('is empty (a required smoke target must never be skipped)');
+  if (/\s/.test(raw)) return wrong('contains whitespace');
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return wrong('is malformed');
+  }
+  if (url.protocol !== 'https:') return wrong('does not use https');
+  if (url.username !== '' || url.password !== '') return wrong('must not contain credentials');
+  if (!HOSTNAME.test(url.hostname)) return wrong('has an invalid host');
+  if (raw !== `https://${url.hostname}` && raw !== `https://${url.hostname}/`) return wrong('must be a bare https origin (no port, path, query or fragment)');
+  return url;
+}
+
+/**
+ * The unique URL of this deployment (wrangler-action output `deployment-url`): `https://<id>.<project>.pages.dev`,
+ * exactly one label in front of the Pages project's own domain. Anything else — empty, another project, the
+ * production domain itself, a custom domain — fails.
+ */
+export function assertDeploymentUrl(raw: string | undefined, project: string): string {
+  assertPagesProject(project);
+  const url = appOrigin(raw, 'deployment URL');
+  const suffix = `.${project}.pages.dev`;
+  const id = url.hostname.endsWith(suffix) ? url.hostname.slice(0, -suffix.length) : '';
+  if (!new RegExp(`^${LABEL}$`).test(id)) fail(`deployment URL is not a deployment of the Cloudflare Pages project ${project} (https://<id>${suffix})`);
+  return url.origin;
+}
+
+/**
+ * The production address: vars.PRODUCTION_APP_URL (a custom domain) or, when that is not set, the documented default
+ * `https://<project>.pages.dev`. A *.pages.dev address must be exactly the project's own domain.
+ */
+export function assertProductionUrl(raw: string | undefined, project: string): string {
+  assertPagesProject(project);
+  const url = appOrigin(raw, 'production URL');
+  if ((url.hostname === 'pages.dev' || url.hostname.endsWith('.pages.dev')) && url.hostname !== `${project}.pages.dev`) {
+    fail(`production URL on pages.dev must be https://${project}.pages.dev`);
+  }
+  return url.origin;
+}
+
+export interface WebArgs {
+  deploymentUrl: string;
+  productionUrl: string;
+  pagesProject: string;
+  slug: string;
+}
+
+/**
+ * `web` arguments, all named. --deployment-url, --production-url and --pages-project are required and each given
+ * exactly once with a value (an empty value is passed on and rejected by the URL checks); --slug is optional. Unknown
+ * flags or positional arguments are refused, so a target can never be silently dropped.
+ */
+export function parseWebArgs(argv: readonly string[]): WebArgs {
+  const known = ['--deployment-url', '--production-url', '--pages-project', '--slug'];
+  const values = new Map<string, string>();
+  for (let i = 0; i < argv.length; i += 2) {
+    const flag = argv[i]!;
+    if (!known.includes(flag)) fail(`unexpected argument at position ${i + 1}. ${WEB_USAGE}`);
+    if (values.has(flag)) fail(`${flag} is given more than once. ${WEB_USAGE}`);
+    if (i + 1 >= argv.length) fail(`${flag} has no value. ${WEB_USAGE}`);
+    values.set(flag, argv[i + 1]!);
+  }
+  for (const flag of known.slice(0, 3)) if (!values.has(flag)) fail(`missing ${flag}. ${WEB_USAGE}`);
+  const pagesProject = assertPagesProject(values.get('--pages-project'));
+  const slug = values.get('--slug') ?? DEFAULT_SMOKE_SLUG;
+  if (!/^[a-z0-9-]+$/.test(slug)) fail(`--slug is malformed. ${WEB_USAGE}`);
+  return {
+    deploymentUrl: assertDeploymentUrl(values.get('--deployment-url'), pagesProject),
+    productionUrl: assertProductionUrl(values.get('--production-url'), pagesProject),
+    pagesProject,
+    slug,
+  };
+}
+
 function parseJson(r: HttpResult, what: string): unknown {
   try {
     return JSON.parse(r.body);
