@@ -570,6 +570,45 @@ describe('Supabase project ref is validated before link and build', () => {
   });
 });
 
+// L5: the Edge Functions are deployed by sequential, unconditional steps of ONE job, after the migrations are verified.
+// RELEASE.md "Частичный деплой Edge Functions" describes failure and retry on exactly this structure (a re-run of the
+// job repeats every step, so all four functions are redeployed); a change here must update that section.
+describe('supabase-deploy.yml: Edge Functions deployment structure (partial deployment runbook)', () => {
+  const deploy = read('supabase-deploy.yml');
+  const job = jobBlock(deploy, 'deploy');
+  const steps = stepsOf(job);
+  const FUNCTIONS = ['checkout', 'my-orders', 'notification-settings', 'platform-admin'];
+
+  it('one deploy job, no matrix: a re-run always repeats the whole job', () => {
+    expect(jobNames(deploy)).toEqual(['deploy']);
+    expect(job).not.toMatch(/^\s*(strategy|matrix):/m);
+  });
+
+  it('the functions are deployed after verify-applied, one step each, in a fixed order, then listed last', () => {
+    const labels = steps.map((s) => s.label);
+    const verify = labels.indexOf('Verify migration history after push');
+    expect(verify).toBeGreaterThan(labels.indexOf('Apply migrations'));
+    expect(labels.slice(verify + 1)).toEqual([...FUNCTIONS.map((f) => `Deploy Edge Function ${f}`), 'List deployed Edge Functions']);
+    expect([...deploy.matchAll(/supabase functions deploy ([a-z0-9-]+)/g)].map((m) => m[1])).toEqual(FUNCTIONS);
+  });
+
+  it('every function step is unconditional and cannot be skipped or soft-failed', () => {
+    for (const s of steps.filter((x) => x.label.startsWith('Deploy Edge Function ') || x.label === 'List deployed Edge Functions')) {
+      expect(s.text, s.label).not.toMatch(/^ {8}if:/m);
+      for (const bypass of ['continue-on-error', '|| true', '|| exit 0']) expect(s.text, s.label).not.toContain(bypass);
+      expect(s.text, s.label).toMatch(/run: pnpm exec supabase functions (deploy [a-z0-9-]+|list) --project-ref "\$SUPABASE_PROJECT_REF"/);
+    }
+  });
+
+  it('RELEASE.md documents the partial deployment without claiming atomicity', () => {
+    const doc = readFileSync(join(REPO_ROOT, 'RELEASE.md'), 'utf8');
+    expect(doc).toContain('## Частичный деплой Edge Functions');
+    expect(doc).toContain('**Деплой функций не атомарный.**');
+    for (const f of FUNCTIONS) expect(doc).toContain(`\`${f}\``);
+    expect(deploy).toContain('RELEASE.md "Частичный деплой Edge Functions"');
+  });
+});
+
 // L1: every job that runs on a runner has an upper bound below GitHub's 360-minute default; database steps are bounded
 // only by their (generous) job timeout, never by a short step timeout that could kill `db push` midway.
 describe('job and step timeouts', () => {

@@ -163,7 +163,7 @@ jobs:
             > "$RUNNER_TEMP/migration-list-after.json" || { cat "$RUNNER_TEMP/migration-list-after.json"; exit 1; }
           pnpm exec tsx scripts/check-production-migration-plan.ts verify-applied "$RUNNER_TEMP/migration-list-after.json"
       # Edge Functions: one step per function, in sequence, no database access. Not atomic as a set: a failure stops the
-      # job after the functions before it are already live (RELEASE.md "Partial Edge Functions deployment").
+      # job after the functions before it are already live (RELEASE.md "Частичный деплой Edge Functions").
       - name: Deploy Edge Function checkout
         timeout-minutes: 10
         env:
