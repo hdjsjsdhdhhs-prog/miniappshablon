@@ -26,6 +26,7 @@ import {
   REQUIRED_CI_CHECKS,
   type BranchPolicy,
   type CheckRun,
+  type CompareResult,
   type Environment,
   type WorkflowRun,
 } from './lib/release.ts';
@@ -74,8 +75,9 @@ async function preflight(): Promise<void> {
   // "Backup" — open blocker until an automated, verified backup step exists).
   console.log(`ATTESTED  backup reference given by the operator, NOT verified by this pipeline: ${backup}`);
 
-  const compare = await gh<{ status: string }>(`/compare/${sha}...${RELEASE_BRANCH}`);
-  assertCommitOnMain(compare?.status);
+  // base = the release SHA, head = main; the whole response is judged (status AND behind_by), not only the status.
+  const compare = await gh<CompareResult>(`/compare/${sha}...${RELEASE_BRANCH}`);
+  assertCommitOnMain(compare);
   console.log(`OK  ${sha} is in the history of ${RELEASE_BRANCH} (${compare?.status})`);
 
   const runs = await gh<{ workflow_runs: WorkflowRun[] }>(`/actions/runs?head_sha=${sha}&event=push&branch=${RELEASE_BRANCH}&per_page=100`);

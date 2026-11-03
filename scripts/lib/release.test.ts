@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { spawn } from 'node:child_process';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MIGRATION_STAGES } from './migration-plan';
 import {
   assertAllowedStages,
@@ -47,11 +51,117 @@ describe('release SHA', () => {
     expect(() => assertReleaseSha(OTHER, SHA)).toThrow(/not the commit this run was started for/);
     expect(() => assertReleaseSha(SHA, undefined)).toThrow(/GITHUB_SHA/);
   });
-  it('requires the commit to be in the history of main', () => {
-    expect(() => assertCommitOnMain('identical')).not.toThrow();
-    expect(() => assertCommitOnMain('behind')).not.toThrow();
-    for (const status of ['ahead', 'diverged', undefined]) expect(() => assertCommitOnMain(status), String(status)).toThrow(/history of main/);
+});
+
+// GitHub compare `<sha>...main`: base = the release SHA, head = main; status / *_by describe main relative to the SHA.
+describe('release SHA is in the history of main (compare <sha>...main)', () => {
+  it('passes when main is the SHA (identical, behind_by 0)', () => {
+    expect(() => assertCommitOnMain({ status: 'identical', ahead_by: 0, behind_by: 0 })).not.toThrow();
   });
+  it('passes when main only moved forward on top of the SHA (ahead, behind_by 0)', () => {
+    expect(() => assertCommitOnMain({ status: 'ahead', ahead_by: 3, behind_by: 0 })).not.toThrow();
+  });
+  it('rejects a SHA that main does not contain: behind (main is an ancestor of the SHA)', () => {
+    expect(() => assertCommitOnMain({ status: 'behind', ahead_by: 0, behind_by: 2 })).toThrow(/not in the history of main[\s\S]*"behind"/);
+  });
+  it('rejects a SHA on a diverged history', () => {
+    expect(() => assertCommitOnMain({ status: 'diverged', ahead_by: 4, behind_by: 1 })).toThrow(/not in the history of main[\s\S]*"diverged"/);
+  });
+  it('rejects a non-zero behind_by even when the status claims identical / ahead (inconsistent answer)', () => {
+    for (const status of ['identical', 'ahead']) {
+      expect(() => assertCommitOnMain({ status, ahead_by: 1, behind_by: 1 }), status).toThrow(/not in the history of main/);
+    }
+  });
+  it('fails closed on a missing, null, non-numeric or invalid behind_by', () => {
+    for (const behind_by of [undefined, null, '0', 0.5, -1, Number.NaN]) {
+      expect(() => assertCommitOnMain({ status: 'ahead', ahead_by: 1, behind_by }), String(behind_by)).toThrow(/malformed compare result/);
+    }
+    expect(() => assertCommitOnMain({ status: 'identical' })).toThrow(/malformed compare result: behind_by missing/);
+  });
+  it('fails closed on no response (404 → null) and on unknown / missing statuses', () => {
+    expect(() => assertCommitOnMain(null)).toThrow(/no compare result/);
+    expect(() => assertCommitOnMain(undefined)).toThrow(/no compare result/);
+    for (const status of [undefined, '', 'IDENTICAL', 'unknown']) {
+      expect(() => assertCommitOnMain({ status, behind_by: 0 }), String(status)).toThrow(/not in the history of main/);
+    }
+  });
+});
+
+/**
+ * The preflight CLI against a local stand-in for the GitHub API (GITHUB_API_URL): the real fetch → gh() →
+ * assertCommitOnMain path. Only /compare is answered; every other path is 404, so a compare that PASSES is followed by
+ * the CI-run check failing with "no CI run" — proof that the run got past the ancestry check, and still exits non-zero.
+ */
+describe('release-preflight.ts preflight: the compare call fails closed', () => {
+  type Answer = { status: number; body: string };
+  let answer: Answer = { status: 500, body: '' };
+  const requests: string[] = [];
+  const server: Server = createServer((req, res) => {
+    requests.push(req.url ?? '');
+    const isCompare = (req.url ?? '').startsWith(`/repos/o/r/compare/${SHA}...main`);
+    const { status, body } = isCompare ? answer : { status: 404, body: '{"message":"Not Found"}' };
+    res.writeHead(status, { 'Content-Type': 'application/json' }).end(body);
+  });
+  let api = '';
+  beforeAll(async () => {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    api = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  const preflight = (a: Answer) =>
+    new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      answer = a;
+      const child = spawn(process.execPath, [join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs'), 'scripts/release-preflight.ts', 'preflight'], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          GITHUB_API_URL: api,
+          GITHUB_REPOSITORY: 'o/r',
+          GITHUB_TOKEN: 'test-token',
+          GITHUB_REF: 'refs/heads/main',
+          GITHUB_EVENT_NAME: 'workflow_dispatch',
+          GITHUB_SHA: SHA,
+          RELEASE_SHA: SHA,
+          BACKUP_VERIFIED: 'true',
+          BACKUP_REFERENCE: 'backup-test-1',
+        },
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
+      child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ code, stdout, stderr }));
+    });
+  const PASSED = 'is in the history of main';
+
+  it('ahead with behind_by 0 passes the ancestry check (then stops at the next check)', async () => {
+    const r = await preflight({ status: 200, body: JSON.stringify({ status: 'ahead', ahead_by: 2, behind_by: 0 }) });
+    expect(r.stdout, r.stderr).toContain(`OK  ${SHA} ${PASSED} (ahead)`);
+    expect(r.stderr).toMatch(/no CI run/);
+    expect(r.code).toBe(1);
+    expect(requests.some((u) => u.startsWith(`/repos/o/r/compare/${SHA}...main`))).toBe(true);
+  }, 60_000);
+
+  const rejected: Array<[string, Answer, RegExp]> = [
+    ['behind', { status: 200, body: JSON.stringify({ status: 'behind', ahead_by: 0, behind_by: 3 }) }, /not in the history of main[\s\S]*"behind"/],
+    ['diverged', { status: 200, body: JSON.stringify({ status: 'diverged', ahead_by: 1, behind_by: 2 }) }, /"diverged"/],
+    ['missing behind_by', { status: 200, body: JSON.stringify({ status: 'ahead', ahead_by: 1 }) }, /malformed compare result/],
+    ['HTTP 500', { status: 500, body: '{"message":"Server Error"}' }, /GitHub API \/compare\/[0-9a-f]{40}\.\.\.main answered 500/],
+    ['HTTP 403', { status: 403, body: '{"message":"Forbidden"}' }, /answered 403/],
+    ['HTTP 404 (unknown commit)', { status: 404, body: '{"message":"Not Found"}' }, /no compare result/],
+    ['body is not JSON', { status: 200, body: '<html>oops</html>' }, /JSON/],
+  ];
+  for (const [what, a, error] of rejected) {
+    it(`rejects: ${what}`, async () => {
+      const r = await preflight(a);
+      expect(r.code, r.stdout).toBe(1);
+      expect(r.stderr).toMatch(error);
+      expect(r.stderr).toContain('Release stopped: nothing was deployed by this step.');
+      expect(r.stdout).not.toContain(PASSED);
+    }, 60_000);
+  }
 });
 
 describe('backup confirmation', () => {

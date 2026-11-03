@@ -5,8 +5,9 @@
  * Release SHA policy (documented in RELEASE.md): the operator types the full SHA of the commit to release and starts
  * the workflow from `main`. The SHA must be exactly the commit the run was started for (`github.sha`, i.e. the main
  * HEAD at dispatch time) — never a "nearby" or abbreviated commit — and it must still be in the history of `main`
- * when the preflight runs. If main moved in between, the run releases the typed commit (an ancestor of main), never
- * the newer one.
+ * when the preflight runs (assertCommitOnMain). If main only moved forward in between, the run releases the typed
+ * commit (still an ancestor of main), never the newer one; if the commit is no longer in main's history (history
+ * rewritten), the preflight stops.
  *
  * Nothing here reads secrets: the preflight runs before any environment approval, with a read-only GITHUB_TOKEN.
  */
@@ -68,10 +69,30 @@ export function assertBackupConfirmation(verified: string | undefined, reference
   return ref;
 }
 
-/** GitHub compare `<sha>...main`: the SHA is in the history of main when main is identical to or ahead of it. */
-export function assertCommitOnMain(compareStatus: string | undefined): void {
-  if (compareStatus !== 'identical' && compareStatus !== 'behind') {
-    fail(`commit is not in the history of ${RELEASE_BRANCH} (compare status "${compareStatus ?? ''}")`);
+/** The fields of `GET /repos/{owner}/{repo}/compare/{base}...{head}` the preflight relies on (untrusted: unknown). */
+export interface CompareResult {
+  status?: unknown;
+  ahead_by?: unknown;
+  behind_by?: unknown;
+}
+
+/**
+ * GitHub compare `<sha>...main` — base = the release SHA, head = the current main. `status`, `ahead_by` and
+ * `behind_by` describe HEAD (main) relative to BASE (the SHA):
+ *   identical — main is the SHA;                          ahead    — main has newer commits on top of the SHA;
+ *   behind    — main is an ancestor of the SHA (lacks it); diverged — both have commits the other lacks.
+ * The SHA is in the history of main exactly when main lacks none of its commits: status `identical` or `ahead` AND
+ * `behind_by === 0`. Everything else — behind, diverged, no response (404 → null), a malformed body, a missing or
+ * non-integer `behind_by` — fails closed.
+ */
+export function assertCommitOnMain(compare: CompareResult | null | undefined): void {
+  if (!compare || typeof compare !== 'object') fail(`commit is not in the history of ${RELEASE_BRANCH} (no compare result)`);
+  const { status, behind_by: behindBy } = compare;
+  if (typeof behindBy !== 'number' || !Number.isInteger(behindBy) || behindBy < 0) {
+    fail(`commit is not in the history of ${RELEASE_BRANCH} (malformed compare result: behind_by ${JSON.stringify(behindBy) ?? 'missing'})`);
+  }
+  if ((status !== 'identical' && status !== 'ahead') || behindBy !== 0) {
+    fail(`commit is not in the history of ${RELEASE_BRANCH} (compare status "${String(status ?? '')}", behind_by ${behindBy})`);
   }
 }
 
