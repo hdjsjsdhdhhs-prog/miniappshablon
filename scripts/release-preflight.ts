@@ -4,7 +4,8 @@
 // Usage:
 //   tsx scripts/release-preflight.ts preflight
 //     env: GITHUB_REF, GITHUB_EVENT_NAME, GITHUB_SHA, GITHUB_REPOSITORY, GITHUB_TOKEN, RELEASE_SHA, BACKUP_REFERENCE,
-//          BACKUP_VERIFIED. Checks ref, SHA, backup confirmation, SHA in main, CI run + the three required checks green,
+//          BACKUP_VERIFIED, DATA_LOSS_ACCEPTED. Checks ref, SHA, data protection (exactly one of BACKUP_VERIFIED or
+//          DATA_LOSS_ACCEPTED_NO_BACKUP), SHA in main, CI run + the three required checks green,
 //          the migration manifest has only release-allowed stages, both deployment environments exist and are protected.
 //   tsx scripts/release-preflight.ts environments
 //     → only the environment protection check (re-run right before the frontend job).
@@ -17,9 +18,9 @@
 import { MIGRATION_STAGES } from './lib/migration-plan.ts';
 import {
   assertAllowedStages,
-  assertBackupConfirmation,
   assertCiWorkflowRun,
   assertCommitOnMain,
+  assertDataProtection,
   assertEnvironmentProtected,
   assertProjectRef,
   assertReleaseRef,
@@ -77,10 +78,18 @@ async function preflight(): Promise<void> {
   console.log(`OK  started manually from ${process.env.GITHUB_REF}`);
   const sha = assertReleaseSha(process.env.RELEASE_SHA, process.env.GITHUB_SHA);
   console.log(`OK  release SHA ${sha} = the commit this run was started for`);
-  const backup = assertBackupConfirmation(process.env.BACKUP_VERIFIED, process.env.BACKUP_REFERENCE);
-  // An operator attestation only: nothing here proves that the backup exists, is intact or can be restored (RELEASE.md,
-  // "Backup" — open blocker until an automated, verified backup step exists).
-  console.log(`ATTESTED  backup reference given by the operator, NOT verified by this pipeline: ${backup}`);
+  const protection = assertDataProtection(process.env.BACKUP_VERIFIED, process.env.BACKUP_REFERENCE, process.env.DATA_LOSS_ACCEPTED);
+  if (protection.mode === 'BACKUP_VERIFIED') {
+    // An operator attestation only: nothing here proves that the backup exists, is intact or can be restored
+    // (RELEASE.md, "Backup" — open blocker until an automated, verified backup step exists).
+    console.log(`DATA PROTECTION: BACKUP_VERIFIED`);
+    console.log(`ATTESTED  backup reference given by the operator, NOT verified by this pipeline: ${protection.backupReference}`);
+  } else {
+    // No backup at all: the run proceeds only on the operator's explicit acceptance of losing the current data.
+    console.log(`DATA PROTECTION: DATA_LOSS_ACCEPTED_NO_BACKUP`);
+    console.log('ACCEPTED  no restorable backup exists; the operator accepted the loss of the current database data. There is no recovery point for this release.');
+    console.log('::warning title=DATA_LOSS_ACCEPTED_NO_BACKUP::No restorable database backup exists for this release; the operator accepted the loss of the current database data.');
+  }
 
   // base = the release SHA, head = main; the whole response is judged (status AND behind_by), not only the status.
   const compare = await gh<CompareResult>(`/compare/${sha}...${RELEASE_BRANCH}`);

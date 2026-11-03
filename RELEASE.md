@@ -13,7 +13,7 @@ preflight ──▶ supabase ──▶ smoke-api ──▶ frontend ──▶ sm
 
 | Job | Что делает | Доступ |
 | --- | --- | --- |
-| `preflight` | запуск вручную из `refs/heads/main`; `sha` — полный SHA и равен коммиту запуска; коммит в истории `main`; CI-run (`ci.yml`, push в `main`) и три обязательные проверки (`Lint · types · unit · build`, `Edge Functions · deno check`, `SQL/integration + Playwright (local Supabase in Docker)`) зелёные на этом SHA; `backup_verified = true` и непустой `backup_reference` (**только утверждение оператора**: pipeline не проверяет ни наличие, ни целостность, ни восстановимость копии — см. [Backup](#backup--открытый-блокер)); SHA-256 manifest миграций; в manifest только разрешённые стадии (3A, 3B); окружения `production` и `production-frontend` существуют и защищены | `GITHUB_TOKEN`: contents/actions/checks read. Секретов нет |
+| `preflight` | запуск вручную из `refs/heads/main`; `sha` — полный SHA и равен коммиту запуска; коммит в истории `main`; CI-run (`ci.yml`, push в `main`) и три обязательные проверки (`Lint · types · unit · build`, `Edge Functions · deno check`, `SQL/integration + Playwright (local Supabase in Docker)`) зелёные на этом SHA; ровно одно из двух: `backup_verified = true` и непустой `backup_reference` (режим `BACKUP_VERIFIED`, **только утверждение оператора**: pipeline не проверяет ни наличие, ни целостность, ни восстановимость копии) **или** `data_loss_accepted = true` при пустом `backup_reference` (режим `DATA_LOSS_ACCEPTED_NO_BACKUP`: копии нет, потеря текущих данных принята) — см. [Backup](#backup--открытый-блокер); SHA-256 manifest миграций; в manifest только разрешённые стадии (3A, 3B); окружения `production` и `production-frontend` существуют и защищены | `GITHUB_TOKEN`: contents/actions/checks read. Секретов нет |
 | `supabase` | `supabase-deploy.yml`: guard (main, вызов только из `release.yml@refs/heads/main`, SHA), integrity, Session Pooler, history + dry-run → Migration Gate, allowlist стадий, `db push` целыми стадиями с перепроверкой, `verify-applied`, деплой 4 Edge Functions | environment `production` (одобрение владельца, только `main`). Secrets не на уровне job: `SUPABASE_DB_URL` — только шаги Session Pooler / migration list / dry-run / db push / verify; `SUPABASE_ACCESS_TOKEN` — link и functions deploy/list; `SUPABASE_DB_PASSWORD` — только link. `pnpm install`, checkout и проверки Gate секретов не получают |
 | `smoke-api` | только безопасные запросы с публичным ключом: Auth health; `product_variants.stock_status` читается и содержит только `in_stock / low_stock / out_of_stock`; запросы витрины (embed и фильтр по `stock_status`); RPC `admin_variant_stock` существует и отказывает anon (42501); каждая Edge Function отвечает своим 405 на GET; `checkout` без Telegram initData → 401 `telegram_auth_failed` (до разбора тела и до БД). **Обратная совместимость, fail-closed:** точные запросы старого frontend (`main` 741d478) — embed `product_variants(… stock_quantity …)`, фильтр `in_stock.stock_quantity > 0`, `product_variants?select=*` (те же права, что у `select('*')` старой админки); каждый вариант обязан содержать числовой `stock_quantity`. Любая ошибка останавливает релиз до `frontend`. Перед frontend повторно проверяет защиту окружений | `GITHUB_TOKEN`: contents/actions read; `vars.VITE_SUPABASE_*` (публичные) |
 | `frontend` | checkout ровно выбранного SHA, `pnpm install --frozen-lockfile`, production build, `check:bundle-secrets`, `wrangler pages deploy … --branch=main --commit-hash=<sha>` | environment `production-frontend` (одобрение владельца). Только этот job и только шаг деплоя получают secrets окружения `PRODUCTION_CLOUDFLARE_API_TOKEN`, `PRODUCTION_CLOUDFLARE_ACCOUNT_ID`; variable окружения `PRODUCTION_CLOUDFLARE_PAGES_PROJECT`. Старые `CLOUDFLARE_*` не используются (без fallback) |
@@ -25,11 +25,27 @@ preflight ──▶ supabase ──▶ smoke-api ──▶ frontend ──▶ sm
 
 1. PR смёржен в `main`, CI для коммита `main` зелёный.
 2. Создайте и проверьте резервную копию production БД (Supabase Dashboard → Database → Backups / PITR или
-   `pg_dump` через Session Pooler). Запишите её идентификатор.
+   `pg_dump` через Session Pooler). Запишите её идентификатор. Если копии нет и владелец принимает потерю текущих
+   данных — см. путь B ниже; выдумывать идентификатор копии нельзя.
 3. Actions → **Production release** → Run workflow, ветка **main**:
    - `sha` — полный SHA текущего HEAD `main` (`git rev-parse origin/main`);
-   - `backup_reference` — идентификатор копии из шага 2 (одна строка, без секретов);
-   - `backup_verified` — отметьте, только если копия реально создана и проверена.
+   - **путь A — копия есть** (`BACKUP_VERIFIED`):
+     - `backup_reference` — идентификатор копии из шага 2 (одна строка, 3–200 символов, без секретов);
+     - `backup_verified` — отметьте, только если копия реально создана и проверена;
+     - `data_loss_accepted` — **не** отмечайте;
+   - **путь B — копии нет** (`DATA_LOSS_ACCEPTED_NO_BACKUP`):
+     - `backup_reference` — оставьте **пустым**;
+     - `backup_verified` — **не** отмечайте;
+     - `data_loss_accepted` — «I acknowledge that no restorable backup exists and accept the loss of current database
+       data.» Отмечайте, только если восстановимой копии действительно нет и владелец принимает потерю всех текущих
+       данных production БД. Точки восстановления у такого релиза нет.
+
+   Preflight останавливает релиз (до любого environment и секрета), если не выбран ни один путь, выбраны оба,
+   при `data_loss_accepted` указан `backup_reference`, либо на пути A `backup_reference` некорректен. В логе
+   preflight режим виден явно: `DATA PROTECTION: BACKUP_VERIFIED` (+ `ATTESTED … NOT verified by this pipeline`) или
+   `DATA PROTECTION: DATA_LOSS_ACCEPTED_NO_BACKUP` (+ предупреждение в аннотациях run). `data_loss_accepted` никогда
+   не засчитывается как `backup_verified`. Все проверки миграций (SHA-256, history + dry-run, allowlist и порядок
+   стадий, перепроверка перед `db push`, `verify-applied`) и одобрения окружений одинаковы на обоих путях.
 4. Одобрите `production` (Supabase). Дождитесь `smoke-api`.
 5. Одобрите `production-frontend` (Cloudflare). Дождитесь `smoke-web`.
 
@@ -184,7 +200,9 @@ SHA»).
   Штатный путь вернуть прежний код через pipeline — новый коммит в `main` (например, revert через PR) и обычный
   релиз этого HEAD — при условии, что он совместим с текущей схемой БД;
 - БД — восстановление из копии `backup_reference` вручную владельцем (PITR / restore). Затем история миграций
-  должна совпасть с manifest, иначе Gate остановит следующий релиз.
+  должна совпасть с manifest, иначе Gate остановит следующий релиз. Релиз в режиме `DATA_LOSS_ACCEPTED_NO_BACKUP`
+  восстановить **нельзя**: копии нет, остаётся только исправляющая миграция через PR и review или пересоздание БД
+  с потерей данных (принятой при запуске).
 
 ## Бюджет времени job `deploy`
 
@@ -245,7 +263,7 @@ pipeline не узнаёт.
    схеме (таблицы, функции, политики из этого файла).
 6. Если хоть одна стадия частична, история не совпадает с manifest или объекты файла не согласуются с историей —
    **стоп**: никаких дальнейших попыток миграции; разбор владельцем (восстановление из `backup_reference` или
-   исправляющая миграция через PR и review). Pipeline частичную стадию не «докатывает».
+   исправляющая миграция через PR и review; в режиме `DATA_LOSS_ACCEPTED_NO_BACKUP` восстанавливать не из чего). Pipeline частичную стадию не «докатывает».
 7. Только если каждая стадия применена целиком или не начата, активных сессий нет и причина прерывания понятна и
    устранена, допустим Re-run: он снова пройдёт integrity, history + dry-run, Gate и проверку бюджета времени до
    `db push`. Результаты шагов 2–6 записываются в журнал релиза.
@@ -290,6 +308,13 @@ pipeline не узнаёт.
 выбран и не реализован один из вариантов, этот пункт остаётся **открытым блокером первого production-релиза**.
 Production backup без отдельного согласования не создаётся; дампы БД **никогда** не загружаются в GitHub Artifacts.
 
+**Явное принятие потери данных (`data_loss_accepted`).** Отдельный путь для случая, когда восстановимой копии нет
+(например, в production только одноразовые тестовые данные): оператор не утверждает наличие копии, а прямо
+заявляет, что её **нет**, и принимает потерю текущих данных БД. Preflight печатает `DATA_LOSS_ACCEPTED_NO_BACKUP`,
+а не `BACKUP_VERIFIED`, и требует пустой `backup_reference`; одновременно с `backup_verified` флаг не принимается.
+Это **не** закрывает блокер backup и не является резервной копией: это осознанный релиз без точки восстановления.
+Как только в БД появятся данные, которые терять нельзя, этот путь использовать нельзя — нужен путь A.
+
 Важно для всех вариантов: резервная копия БД **не содержит файлов Storage** (bucket `shop-media`: логотипы, фото
 товаров), только их метаданные в `storage.objects`. Для полного восстановления нужна отдельная копия bucket.
 
@@ -318,7 +343,8 @@ production-проекта из репозитория не виден (SETUP.md:
 6. Отдельно решить копирование bucket `shop-media` (например, `rclone sync` в тот же R2 по расписанию).
 
 До реализации п. 1–4 оператор обязан сам сделать и проверить копию (варианты 1 или 2 + 4) и указать её в
-`backup_reference`; preflight выводит это как `ATTESTED … NOT verified by this pipeline`.
+`backup_reference`; preflight выводит это как `BACKUP_VERIFIED` / `ATTESTED … NOT verified by this pipeline`. Без
+копии — только явный путь `data_loss_accepted` (см. выше).
 
 ### Целевая архитектура backup (проект, не реализовано)
 

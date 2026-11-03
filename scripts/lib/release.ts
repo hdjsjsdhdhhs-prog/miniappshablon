@@ -117,6 +117,50 @@ export function assertBackupConfirmation(verified: string | undefined, reference
   return ref;
 }
 
+/**
+ * How the release covers the risk to the current production data — exactly one of two explicit operator statements:
+ *   BACKUP_VERIFIED              — backup_verified=true + a valid backup_reference (assertBackupConfirmation, unchanged);
+ *                                  still an operator attestation, NOT checked by this pipeline;
+ *   DATA_LOSS_ACCEPTED_NO_BACKUP — data_loss_accepted=true: NO restorable backup exists and the operator accepts the loss
+ *                                  of the current database data. Never reported as, or turned into, BACKUP_VERIFIED.
+ */
+export type DataProtection =
+  | { mode: 'BACKUP_VERIFIED'; backupReference: string }
+  | { mode: 'DATA_LOSS_ACCEPTED_NO_BACKUP'; backupReference: null };
+
+/** A workflow_dispatch boolean input as the shell sees it: 'true' / 'false' (empty = not given); anything else fails. */
+function dispatchFlag(name: string, value: string | undefined): boolean {
+  const v = value ?? '';
+  if (v === 'true') return true;
+  if (v === 'false' || v === '') return false;
+  fail(`${name} must be true or false`);
+}
+
+/**
+ * Fail closed unless exactly one path is chosen: both flags set is contradictory (a backup is claimed AND denied), and a
+ * backup_reference given together with data_loss_accepted would let the logs name a backup that is declared not to
+ * exist — both stop the release. Neither flag set stops it too.
+ */
+export function assertDataProtection(
+  backupVerified: string | undefined,
+  backupReference: string | undefined,
+  dataLossAccepted: string | undefined,
+): DataProtection {
+  const verified = dispatchFlag('backup_verified', backupVerified);
+  const accepted = dispatchFlag('data_loss_accepted', dataLossAccepted);
+  if (verified && accepted) {
+    fail('backup_verified and data_loss_accepted are both true: choose exactly one (a verified backup OR the accepted loss of data without a backup)');
+  }
+  if (verified) return { mode: 'BACKUP_VERIFIED', backupReference: assertBackupConfirmation(backupVerified, backupReference) };
+  if (accepted) {
+    if ((backupReference ?? '').trim() !== '') {
+      fail('backup_reference must be empty with data_loss_accepted=true (no restorable backup exists); for a verified backup use backup_verified instead');
+    }
+    return { mode: 'DATA_LOSS_ACCEPTED_NO_BACKUP', backupReference: null };
+  }
+  fail('no data protection confirmed: set backup_verified=true with backup_reference (a verified backup), or data_loss_accepted=true (no restorable backup exists, the loss of current database data is accepted)');
+}
+
 /** The fields of `GET /repos/{owner}/{repo}/compare/{base}...{head}` the preflight relies on (untrusted: unknown). */
 export interface CompareResult {
   status?: unknown;

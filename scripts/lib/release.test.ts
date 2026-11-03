@@ -9,6 +9,7 @@ import {
   assertBackupConfirmation,
   assertCiWorkflowRun,
   assertCommitOnMain,
+  assertDataProtection,
   assertEnvironmentProtected,
   assertProjectRef,
   assertReleaseRef,
@@ -112,7 +113,7 @@ describe('release-preflight.ts preflight: the compare call fails closed', () => 
   });
   afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
-  const preflight = (a: Answer) =>
+  const preflight = (a: Answer, extra: Record<string, string> = {}) =>
     new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
       answer = a;
       const child = spawn(process.execPath, [join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs'), 'scripts/release-preflight.ts', 'preflight'], {
@@ -128,6 +129,8 @@ describe('release-preflight.ts preflight: the compare call fails closed', () => 
           RELEASE_SHA: SHA,
           BACKUP_VERIFIED: 'true',
           BACKUP_REFERENCE: 'backup-test-1',
+          DATA_LOSS_ACCEPTED: 'false',
+          ...extra,
         },
       });
       let stdout = '';
@@ -146,6 +149,43 @@ describe('release-preflight.ts preflight: the compare call fails closed', () => 
     expect(r.code).toBe(1);
     expect(requests.some((u) => u.startsWith(`/repos/o/r/compare/${SHA}...main`))).toBe(true);
   }, 60_000);
+
+  const AHEAD: Answer = { status: 200, body: JSON.stringify({ status: 'ahead', ahead_by: 2, behind_by: 0 }) };
+
+  it('logs BACKUP_VERIFIED (as an operator attestation) for a verified backup', async () => {
+    const r = await preflight(AHEAD);
+    expect(r.stdout, r.stderr).toContain('DATA PROTECTION: BACKUP_VERIFIED\n');
+    expect(r.stdout).toContain('ATTESTED  backup reference given by the operator, NOT verified by this pipeline: backup-test-1');
+    expect(r.stdout).not.toContain('DATA_LOSS_ACCEPTED_NO_BACKUP');
+    expect(r.stdout).toContain(PASSED);
+  }, 60_000);
+
+  it('logs DATA_LOSS_ACCEPTED_NO_BACKUP and never BACKUP_VERIFIED / ATTESTED for an accepted data loss', async () => {
+    const r = await preflight(AHEAD, { BACKUP_VERIFIED: 'false', BACKUP_REFERENCE: '', DATA_LOSS_ACCEPTED: 'true' });
+    expect(r.stdout, r.stderr).toContain('DATA PROTECTION: DATA_LOSS_ACCEPTED_NO_BACKUP\n');
+    expect(r.stdout).toContain('no restorable backup exists');
+    expect(r.stdout).toContain('::warning title=DATA_LOSS_ACCEPTED_NO_BACKUP::');
+    expect(r.stdout).not.toContain('BACKUP_VERIFIED');
+    expect(r.stdout).not.toContain('ATTESTED');
+    expect(r.stdout).toContain(PASSED); // the remaining checks still run (then stop at the 404 CI-run stand-in)
+    expect(r.stderr).toMatch(/no CI run/);
+  }, 60_000);
+
+  for (const [what, extra, error] of [
+    ['neither confirmation', { BACKUP_VERIFIED: 'false', BACKUP_REFERENCE: '', DATA_LOSS_ACCEPTED: 'false' }, /no data protection confirmed/],
+    ['both confirmations', { BACKUP_VERIFIED: 'true', BACKUP_REFERENCE: 'backup-test-1', DATA_LOSS_ACCEPTED: 'true' }, /both true/],
+    ['data loss accepted with a backup reference', { BACKUP_VERIFIED: 'false', BACKUP_REFERENCE: 'backup-test-1', DATA_LOSS_ACCEPTED: 'true' }, /backup_reference must be empty/],
+    ['invalid backup reference', { BACKUP_VERIFIED: 'true', BACKUP_REFERENCE: 'ab', DATA_LOSS_ACCEPTED: 'false' }, /backup_reference is empty/],
+  ] as const) {
+    it(`stops before any GitHub API call: ${what}`, async () => {
+      const before = requests.length;
+      const r = await preflight(AHEAD, extra);
+      expect(r.code, r.stdout).toBe(1);
+      expect(r.stderr).toMatch(error);
+      expect(r.stdout).not.toContain('DATA PROTECTION:');
+      expect(requests.length).toBe(before);
+    }, 60_000);
+  }
 
   const rejected: Array<[string, Answer, RegExp]> = [
     ['behind', { status: 200, body: JSON.stringify({ status: 'behind', ahead_by: 0, behind_by: 3 }) }, /not in the history of main[\s\S]*"behind"/],
@@ -177,6 +217,57 @@ describe('backup confirmation', () => {
     expect(() => assertBackupConfirmation('true', 'backup\n::error::fake')).toThrow(/single line/);
     expect(() => assertBackupConfirmation('true', 'a\u0007b c')).toThrow(/single line/);
     expect(() => assertBackupConfirmation('true', 'x'.repeat(201))).toThrow(/200/);
+  });
+});
+
+describe('data protection: verified backup OR explicit data-loss acceptance', () => {
+  it('a valid verified backup passes as BACKUP_VERIFIED (data_loss_accepted false or not given)', () => {
+    for (const accepted of ['false', '', undefined]) {
+      expect(assertDataProtection('true', ' pitr-2026-11-02T10:00Z ', accepted), String(accepted)).toEqual({
+        mode: 'BACKUP_VERIFIED',
+        backupReference: 'pitr-2026-11-02T10:00Z',
+      });
+    }
+  });
+  it('explicit data-loss acceptance passes as DATA_LOSS_ACCEPTED_NO_BACKUP, without any backup reference', () => {
+    for (const verified of ['false', '', undefined]) {
+      for (const reference of ['', '   ', undefined]) {
+        expect(assertDataProtection(verified, reference, 'true'), `${verified}/${reference}`).toEqual({
+          mode: 'DATA_LOSS_ACCEPTED_NO_BACKUP',
+          backupReference: null,
+        });
+      }
+    }
+  });
+  it('data-loss acceptance never produces a BACKUP_VERIFIED result', () => {
+    const result = assertDataProtection('false', '', 'true');
+    expect(result.mode).not.toBe('BACKUP_VERIFIED');
+    expect(result.backupReference).toBeNull();
+    // Accepting the loss cannot be combined with a backup claim or a backup name: both fail closed instead.
+    expect(() => assertDataProtection('true', 'backup-1', 'true')).toThrow(/both true: choose exactly one/);
+    expect(() => assertDataProtection('true', '', 'true')).toThrow(/both true/);
+    expect(() => assertDataProtection('false', 'backup-1', 'true')).toThrow(/backup_reference must be empty with data_loss_accepted=true/);
+  });
+  it('neither condition fails closed', () => {
+    for (const [verified, reference, accepted] of [
+      ['false', '', 'false'],
+      ['false', 'backup-1', 'false'],
+      [undefined, undefined, undefined],
+      ['', '', ''],
+    ] as const) {
+      expect(() => assertDataProtection(verified, reference, accepted), `${verified}/${reference}/${accepted}`).toThrow(/no data protection confirmed/);
+    }
+  });
+  it('an invalid backup reference fails on the verified-backup path (same rules as before)', () => {
+    for (const r of ['', '  ', 'ab', undefined]) expect(() => assertDataProtection('true', r, 'false'), String(r)).toThrow(/backup_reference is empty/);
+    expect(() => assertDataProtection('true', 'backup\n::error::fake', 'false')).toThrow(/single line/);
+    expect(() => assertDataProtection('true', 'x'.repeat(201), 'false')).toThrow(/200/);
+  });
+  it('rejects flag values other than true / false (fail closed, no truthy guessing)', () => {
+    for (const v of ['TRUE', '1', 'yes', 'on']) {
+      expect(() => assertDataProtection('false', '', v), v).toThrow(/data_loss_accepted must be true or false/);
+      expect(() => assertDataProtection(v, 'backup-1', 'false'), v).toThrow(/backup_verified must be true or false/);
+    }
   });
 });
 

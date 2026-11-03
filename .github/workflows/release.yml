@@ -7,8 +7,9 @@ name: Production release
 #                  owner approval)     public key)    owner approval)
 #
 # * preflight — before ANY environment / secret: started from main, full SHA = this run's commit, commit in main,
-#   CI run + the three required checks green on it, backup ATTESTED by the operator (not verified by this pipeline,
-#   see RELEASE.md "Backup"), migration SHA-256 manifest intact, manifest
+#   CI run + the three required checks green on it, data protection stated by the operator — BACKUP_VERIFIED (backup
+#   ATTESTED, not verified by this pipeline) or DATA_LOSS_ACCEPTED_NO_BACKUP (no backup, loss of data accepted), see
+#   RELEASE.md "Backup"; migration SHA-256 manifest intact, manifest
 #   has only release-allowed (Expand) stages, both environments exist and are protected (scripts/release-preflight.ts).
 # * supabase  — the reusable .github/workflows/supabase-deploy.yml (Migration Gate: integrity, history, dry-run,
 #   stage allowlist, db push of whole stages, verify-applied, Edge Functions).
@@ -20,7 +21,8 @@ name: Production release
 # * smoke-web — the deployed app shell, public pages and the stock_status contract of the bundle.
 #
 # Partial release (DB updated, frontend refused / failed), retry and stop: RELEASE.md. There is no automatic database
-# rollback; recovery uses the backup named in `backup_reference`. Checked by scripts/lib/workflows.test.ts.
+# rollback; recovery uses the backup named in `backup_reference` — with DATA_LOSS_ACCEPTED_NO_BACKUP there is none.
+# Checked by scripts/lib/workflows.test.ts.
 on:
   workflow_dispatch:
     inputs:
@@ -28,12 +30,19 @@ on:
         description: Full 40-character SHA to release — the current HEAD of main this run is started from
         required: true
         type: string
+      # Data protection: exactly one of backup_verified (+ backup_reference) or data_loss_accepted (backup_reference
+      # empty). Neither, both, or a reference with data_loss_accepted stops the preflight (scripts/lib/release.ts).
       backup_reference:
-        description: Identifier of the production database backup taken and verified before this release
-        required: true
+        description: Identifier of the production database backup taken and verified before this release (leave empty with data_loss_accepted)
+        required: false
         type: string
       backup_verified:
         description: Operator attestation, NOT checked by this pipeline — I took this backup and verified it can be restored
+        required: true
+        type: boolean
+        default: false
+      data_loss_accepted:
+        description: I acknowledge that no restorable backup exists and accept the loss of current database data.
         required: true
         type: boolean
         default: false
@@ -88,6 +97,7 @@ jobs:
           RELEASE_SHA: ${{ steps.guard.outputs.sha }}
           BACKUP_REFERENCE: ${{ inputs.backup_reference }}
           BACKUP_VERIFIED: ${{ inputs.backup_verified }}
+          DATA_LOSS_ACCEPTED: ${{ inputs.data_loss_accepted }}
         run: pnpm exec tsx scripts/release-preflight.ts preflight
       - name: Verify migration file integrity (SHA-256)
         run: pnpm check:migration-integrity

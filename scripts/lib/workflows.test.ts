@@ -219,13 +219,21 @@ describe('release.yml', () => {
   const yaml = read('release.yml');
   const job = (name: string) => jobBlock(yaml, name);
 
-  it('is started manually only, with the SHA and the backup confirmation as required inputs', () => {
+  it('is started manually only, with the SHA and both data-protection flags as required inputs', () => {
     const on = topLevelBlock(yaml, 'on')!;
     expect(on.match(/^ {2}[a-z_]+:/gm)).toEqual(['  workflow_dispatch:']);
-    for (const input of ['sha', 'backup_reference', 'backup_verified']) {
+    expect(on.match(/^ {6}[a-z_]+:/gm)).toEqual(['      sha:', '      backup_reference:', '      backup_verified:', '      data_loss_accepted:']);
+    for (const input of ['sha', 'backup_verified', 'data_loss_accepted']) {
       expect(on).toMatch(new RegExp(`\\n {6}${input}:\\n(?: {8}.*\\n)*? {8}required: true\\n`));
     }
-    expect(on).toMatch(/ {6}backup_verified:\n(?: {8}.*\n)*? {8}type: boolean\n(?: {8}.*\n)*? {8}default: false\n/);
+    // Optional, so the data-loss path never needs a made-up backup name; the preflight still requires it for a backup.
+    expect(on).toMatch(/\n {6}backup_reference:\n(?: {8}.*\n)*? {8}required: false\n(?: {8}.*\n)*? {8}type: string\n/);
+    for (const flag of ['backup_verified', 'data_loss_accepted']) {
+      expect(on).toMatch(new RegExp(`\\n {6}${flag}:\\n(?: {8}.*\\n)*? {8}type: boolean\\n(?: {8}.*\\n)*? {8}default: false\\n`));
+    }
+    expect(on).toContain(
+      '      data_loss_accepted:\n        description: I acknowledge that no restorable backup exists and accept the loss of current database data.\n',
+    );
   });
 
   it('has the pipeline preflight → supabase → smoke-api → frontend → smoke-web with explicit needs', () => {
@@ -272,6 +280,7 @@ describe('release.yml', () => {
       'ref: ${{ steps.guard.outputs.sha }}',
       'BACKUP_REFERENCE: ${{ inputs.backup_reference }}',
       'BACKUP_VERIFIED: ${{ inputs.backup_verified }}',
+      'DATA_LOSS_ACCEPTED: ${{ inputs.data_loss_accepted }}',
       'run: pnpm exec tsx scripts/release-preflight.ts preflight',
       'run: pnpm check:migration-integrity',
     ]);
@@ -518,6 +527,11 @@ describe('release.yml: backup is labelled as an operator attestation, smoke-api 
   const yaml = read('release.yml');
   it('backup_verified says it is not checked by the pipeline', () => {
     expect(yaml).toContain('description: Operator attestation, NOT checked by this pipeline');
+  });
+  it('data_loss_accepted reaches only the preflight step, as its own variable (never as BACKUP_VERIFIED)', () => {
+    expect(yaml.match(/inputs\.data_loss_accepted/g)).toHaveLength(1);
+    expect(jobBlock(yaml, 'preflight')).toContain('          DATA_LOSS_ACCEPTED: ${{ inputs.data_loss_accepted }}\n');
+    expect(yaml).not.toMatch(/BACKUP_VERIFIED: .*data_loss_accepted|DATA_LOSS_ACCEPTED: .*backup_verified/);
   });
   it('smoke-api exports no legacy_frontend output (previous-frontend incompatibility fails the job)', () => {
     expect(yaml).not.toContain('legacy_frontend');
