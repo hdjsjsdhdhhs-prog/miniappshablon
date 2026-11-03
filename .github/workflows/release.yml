@@ -52,6 +52,7 @@ jobs:
   preflight:
     name: Preflight (main, SHA, CI, backup, integrity)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read # checkout, compare API
       actions: read # CI workflow runs, environment protection
@@ -95,6 +96,8 @@ jobs:
     name: Supabase
     needs: [preflight]
     if: github.ref == 'refs/heads/main'
+    # No timeout-minutes here: GitHub does not allow it on a job that calls a reusable workflow. The bound is on the
+    # called job (supabase-deploy.yml, job deploy).
     permissions:
       contents: read
     uses: ./.github/workflows/supabase-deploy.yml
@@ -105,6 +108,7 @@ jobs:
     name: Smoke API (read-only)
     needs: [preflight, supabase]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read # environment protection re-check
@@ -136,6 +140,7 @@ jobs:
     needs: [preflight, smoke-api]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: production-frontend
     permissions:
       contents: read
@@ -193,6 +198,7 @@ jobs:
     name: Smoke Web (read-only)
     needs: [preflight, frontend]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:

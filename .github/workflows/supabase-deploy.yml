@@ -23,6 +23,15 @@ jobs:
   deploy:
     name: Migrations + Edge Functions (production)
     runs-on: ubuntu-latest
+    # Upper bound so a hung CLI / network call cannot hold the production-release group for GitHub's 6 h default.
+    # Waiting for the environment approval does not count. Risk review: when the timeout fires, the runner kills the
+    # step — inside `db push` that is the same as a Cancel (RELEASE.md): a migration file in flight is rolled back with
+    # its transaction, files already committed stay, so a stage can be left partially applied and the next Gate run
+    # refuses it. The bound is therefore deliberately generous: the release has 9 small migration files (3A + 3B), every
+    # one sets lock_timeout = 5s (lock waits fail inside the database, not by a runner kill), and the whole job —
+    # link, list, two dry-runs, push, verify, four functions — is expected to take minutes. No database step has a
+    # step-level timeout of its own; only the Edge Function steps below (no database access) are bounded tighter.
+    timeout-minutes: 60
     # Secrets live in the `production` environment: they are released only after the owner's approval and only to
     # runs from main (environment deployment branch policy). The `if` keeps a run from any other ref from even asking.
     if: github.ref == 'refs/heads/main'
@@ -149,23 +158,30 @@ jobs:
           pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no --output-format json \
             > "$RUNNER_TEMP/migration-list-after.json" || { cat "$RUNNER_TEMP/migration-list-after.json"; exit 1; }
           pnpm exec tsx scripts/check-production-migration-plan.ts verify-applied "$RUNNER_TEMP/migration-list-after.json"
+      # Edge Functions: one step per function, in sequence, no database access. Not atomic as a set: a failure stops the
+      # job after the functions before it are already live (RELEASE.md "Partial Edge Functions deployment").
       - name: Deploy Edge Function checkout
+        timeout-minutes: 10
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: pnpm exec supabase functions deploy checkout --project-ref "$SUPABASE_PROJECT_REF"
       - name: Deploy Edge Function my-orders
+        timeout-minutes: 10
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: pnpm exec supabase functions deploy my-orders --project-ref "$SUPABASE_PROJECT_REF"
       - name: Deploy Edge Function notification-settings
+        timeout-minutes: 10
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: pnpm exec supabase functions deploy notification-settings --project-ref "$SUPABASE_PROJECT_REF"
       - name: Deploy Edge Function platform-admin
+        timeout-minutes: 10
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: pnpm exec supabase functions deploy platform-admin --project-ref "$SUPABASE_PROJECT_REF"
       - name: List deployed Edge Functions
+        timeout-minutes: 5
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: pnpm exec supabase functions list --project-ref "$SUPABASE_PROJECT_REF" --agent no

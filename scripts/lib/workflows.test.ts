@@ -512,3 +512,64 @@ describe('release.yml: backup is labelled as an operator attestation, smoke-api 
     expect(smoke).toContain('assertLegacyFrontendQuery(');
   });
 });
+
+// L1: every job that runs on a runner has an upper bound below GitHub's 360-minute default; database steps are bounded
+// only by their (generous) job timeout, never by a short step timeout that could kill `db push` midway.
+describe('job and step timeouts', () => {
+  const release = read('release.yml');
+  const deploy = read('supabase-deploy.yml');
+  const jobTimeout = (job: string) => /^ {4}timeout-minutes: (\d+)$/m.exec(job)?.[1] ?? null;
+  const stepTimeout = (step: string) => /^ {8}timeout-minutes: (\d+)$/m.exec(step)?.[1] ?? null;
+
+  it('release.yml: each runner job has its bound; the caller of the reusable workflow has none (not allowed with uses:)', () => {
+    expect(Object.fromEntries(jobNames(release).map((n) => [n, jobTimeout(jobBlock(release, n))]))).toEqual({
+      preflight: '15',
+      supabase: null,
+      'smoke-api': '15',
+      frontend: '30',
+      'smoke-web': '20',
+    });
+    const caller = jobBlock(release, 'supabase');
+    expect(caller).toContain('    uses: ./.github/workflows/supabase-deploy.yml\n');
+    expect(caller).not.toMatch(/^\s*timeout-minutes:/m);
+  });
+
+  it('supabase-deploy.yml: the deploy job is bounded at 60 minutes', () => {
+    expect(jobTimeout(jobBlock(deploy, 'deploy'))).toBe('60');
+  });
+
+  it('every job with runs-on has a timeout, none above 360 minutes', () => {
+    for (const [file, yaml] of [['release.yml', release], ['supabase-deploy.yml', deploy]] as const) {
+      for (const name of jobNames(yaml)) {
+        const job = jobBlock(yaml, name);
+        if (!/^ {4}runs-on:/m.test(job)) continue;
+        const minutes = Number(jobTimeout(job));
+        expect(minutes, `${file}: ${name}`).toBeGreaterThan(0);
+        expect(minutes, `${file}: ${name}`).toBeLessThanOrEqual(360);
+      }
+    }
+  });
+
+  it('only the Edge Function deploy steps and the listing have step timeouts; no database step has one', () => {
+    const steps = stepsOf(jobBlock(deploy, 'deploy'));
+    const bounded = Object.fromEntries(steps.filter((s) => stepTimeout(s.text) !== null).map((s) => [s.label, stepTimeout(s.text)]));
+    expect(bounded).toEqual({
+      'Deploy Edge Function checkout': '10',
+      'Deploy Edge Function my-orders': '10',
+      'Deploy Edge Function notification-settings': '10',
+      'Deploy Edge Function platform-admin': '10',
+      'List deployed Edge Functions': '5',
+    });
+    for (const label of ['Link the production project', 'Validate Session Pooler target', 'Show pending migrations', 'Read migration history and dry-run plan', 'Apply migrations', 'Verify migration history after push']) {
+      const step = steps.find((s) => s.label === label);
+      expect(step, label).toBeDefined();
+      expect(stepTimeout(step!.text), label).toBeNull();
+    }
+  });
+
+  it('release.yml has no step-level timeouts (job bounds only)', () => {
+    for (const name of jobNames(release)) {
+      for (const s of stepsOf(jobBlock(release, name))) expect(stepTimeout(s.text), `${name}: ${s.label}`).toBeNull();
+    }
+  });
+});
