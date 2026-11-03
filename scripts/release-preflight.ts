@@ -10,6 +10,10 @@
 //     → only the environment protection check (re-run right before the frontend job).
 //   tsx scripts/release-preflight.ts stages <planned-stages>
 //     → the migration gate's planned stages (`3A,3B`, `3B` or empty) must all be release-allowed (no Contract stage).
+//   tsx scripts/release-preflight.ts project-ref
+//     env: SUPABASE_PROJECT_REF → must be exactly PRODUCTION_SUPABASE_PROJECT_REF (before `supabase link`).
+//   tsx scripts/release-preflight.ts supabase-url
+//     env: SUPABASE_URL → must be exactly https://<PRODUCTION_SUPABASE_PROJECT_REF>.supabase.co (before the build).
 import { MIGRATION_STAGES } from './lib/migration-plan.ts';
 import {
   assertAllowedStages,
@@ -17,10 +21,13 @@ import {
   assertCiWorkflowRun,
   assertCommitOnMain,
   assertEnvironmentProtected,
+  assertProjectRef,
   assertReleaseRef,
   assertReleaseSha,
   assertRequiredChecks,
+  assertSupabaseProjectUrl,
   parseStageList,
+  PRODUCTION_SUPABASE_PROJECT_REF,
   RELEASE_BRANCH,
   RELEASE_ENVIRONMENTS,
   REQUIRED_CI_CHECKS,
@@ -31,7 +38,7 @@ import {
   type WorkflowRun,
 } from './lib/release.ts';
 
-const USAGE = 'Usage: release-preflight.ts preflight | environments | stages <planned-stages>';
+const USAGE = 'Usage: release-preflight.ts preflight | environments | stages <planned-stages> | project-ref | supabase-url';
 
 function env(name: string): string {
   const value = process.env[name];
@@ -102,6 +109,12 @@ try {
     const planned = parseStageList(args[0]);
     assertAllowedStages(planned);
     console.log(`OK  planned migration stages [${planned.join(', ')}] are all release-allowed`);
+  } else if (command === 'project-ref' && args.length === 0) {
+    assertProjectRef(process.env.SUPABASE_PROJECT_REF);
+    console.log(`OK  SUPABASE_PROJECT_REF is the approved production project ${PRODUCTION_SUPABASE_PROJECT_REF}`);
+  } else if (command === 'supabase-url' && args.length === 0) {
+    const origin = assertSupabaseProjectUrl(process.env.SUPABASE_URL, PRODUCTION_SUPABASE_PROJECT_REF);
+    console.log(`OK  Supabase URL is the approved production project ${origin}`);
   } else throw new Error(USAGE);
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);

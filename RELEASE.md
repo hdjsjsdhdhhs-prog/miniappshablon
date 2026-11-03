@@ -109,7 +109,13 @@ Migration Gate увидит, что все стадии применены (`ski
      его в `smoke-web` для адреса по умолчанию `https://<project>.pages.dev`).
    Fallback на старые имена нет: пока этих значений нет, job `frontend` падает до деплоя.
 3. Variables уровня репозитория остаются: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (публичные; их читают CI-сборка
-   и smoke-jobs без environment). Опционально `PRODUCTION_APP_URL`, если production-домен не
+   и smoke-jobs без environment). **Проект Supabase зафиксирован в коде**: `PRODUCTION_SUPABASE_PROJECT_REF`
+   (`scripts/lib/release.ts`, сейчас `xcbugcjmddtubytpvffa`). `vars.SUPABASE_PROJECT_REF` обязан совпадать с ним
+   (проверяется до `supabase link`), а `VITE_SUPABASE_URL` — быть ровно `https://xcbugcjmddtubytpvffa.supabase.co`
+   (без порта, пути, query, userinfo; допускается только завершающий `/`). URL проверяется в job `frontend` до
+   `pnpm build` (в контексте `production-frontend`) и в `smoke-api` / `smoke-web` до первого запроса. Несовпадение,
+   пустое или некорректное значение останавливает релиз; значения в ошибках не печатаются. Смена проекта — только
+   изменением этой константы через PR. Опционально `PRODUCTION_APP_URL`, если production-домен не
    `https://<PRODUCTION_CLOUDFLARE_PAGES_PROJECT>.pages.dev`. Старые repository secrets `CLOUDFLARE_API_TOKEN`,
    `CLOUDFLARE_ACCOUNT_ID` и variable `CLOUDFLARE_PAGES_PROJECT` удалить **после** merge PR #1 и PR #2 в `main`: до
    этого их ещё использует job `deploy-cloudflare-pages` в `ci.yml` текущего `main`.

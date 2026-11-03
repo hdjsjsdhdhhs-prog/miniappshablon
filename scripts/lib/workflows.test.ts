@@ -5,6 +5,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DENO_VERSION, REPO_ROOT } from './edge-functions';
+import { PRODUCTION_SUPABASE_PROJECT_REF } from './release';
 
 const read = (file: string) => readFileSync(join(REPO_ROOT, '.github', 'workflows', file), 'utf8').replace(/\r\n/g, '\n');
 
@@ -451,7 +452,7 @@ describe('supabase-deploy.yml: Supabase secrets are step-scoped', () => {
   });
 
   it('checkout, pnpm install, the integrity check and the gate checks get no secret', () => {
-    const clean = ['pnpm install --frozen-lockfile', 'actions/checkout@', 'pnpm/action-setup@', 'actions/setup-node@', 'Verify migration file integrity (SHA-256)', 'Validate migration plan', 'Planned stages are release-allowed (no Contract stage)'];
+    const clean = ['pnpm install --frozen-lockfile', 'actions/checkout@', 'pnpm/action-setup@', 'actions/setup-node@', 'Verify migration file integrity (SHA-256)', 'Project ref is the approved production project', 'Validate migration plan', 'Planned stages are release-allowed (no Contract stage)'];
     for (const needle of clean) {
       const step = steps.find((s) => s.text.includes(needle));
       expect(step, needle).toBeDefined();
@@ -510,6 +511,51 @@ describe('release.yml: backup is labelled as an operator attestation, smoke-api 
     const smoke = readFileSync(join(REPO_ROOT, 'scripts', 'release-smoke.ts'), 'utf8');
     expect(smoke).not.toMatch(/::warning|legacy_frontend|GITHUB_OUTPUT/);
     expect(smoke).toContain('assertLegacyFrontendQuery(');
+  });
+});
+
+// L2: the Supabase project is pinned to the approved ref before link, before the build and (in the CLI) before smoke.
+describe('Supabase project ref is validated before link and build', () => {
+  const deploy = read('supabase-deploy.yml');
+  const release = read('release.yml');
+
+  it('supabase-deploy.yml checks the configured ref after the integrity check and before supabase link, without secrets', () => {
+    const job = jobBlock(deploy, 'deploy');
+    const order = inOrder(job, [
+      'test "$(git rev-parse HEAD)" = "$RELEASE_SHA"',
+      'run: pnpm install --frozen-lockfile',
+      'run: pnpm check:migration-integrity',
+      '- name: Project ref is the approved production project\n        run: pnpm exec tsx scripts/release-preflight.ts project-ref\n',
+      'supabase link --project-ref "$SUPABASE_PROJECT_REF"',
+    ]);
+    expect(order.every((i) => i >= 0), JSON.stringify(order)).toBe(true);
+    const step = stepsOf(job).find((s) => s.label === 'Project ref is the approved production project')!;
+    expect(secretsIn(step.text)).toEqual([]);
+    expect(step.text).not.toMatch(/^\s*env:/m); // reads only the job-level SUPABASE_PROJECT_REF
+    expect(deploy.match(/release-preflight\.ts project-ref/g)).toHaveLength(1);
+  });
+
+  it('the Session Pooler check pins the same approved ref as scripts/lib/release.ts', () => {
+    expect(deploy).toContain(`if (process.env.SUPABASE_PROJECT_REF !== '${PRODUCTION_SUPABASE_PROJECT_REF}') {`);
+  });
+
+  it('frontend validates the exact VITE_SUPABASE_URL it builds with, in the same step, before pnpm build', () => {
+    const build = stepsOf(jobBlock(release, 'frontend')).find((s) => s.label === 'Production build')!;
+    const order = inOrder(build.text, [
+      'VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}',
+      'if [ -z "${!v}" ]',
+      'SUPABASE_URL="$VITE_SUPABASE_URL" pnpm exec tsx scripts/release-preflight.ts supabase-url\n',
+      'pnpm build',
+    ]);
+    expect(order.every((i) => i >= 0), JSON.stringify(order)).toBe(true);
+    expect(secretsIn(build.text)).toEqual([]);
+  });
+
+  it('the smoke CLI validates SUPABASE_URL against the approved ref in both modes', () => {
+    const smoke = readFileSync(join(REPO_ROOT, 'scripts', 'release-smoke.ts'), 'utf8').replace(/\r\n/g, '\n');
+    expect(smoke).toContain('assertSupabaseProjectUrl(process.env.SUPABASE_URL, PRODUCTION_SUPABASE_PROJECT_REF)');
+    expect(smoke).not.toContain("env('SUPABASE_URL')");
+    expect(smoke.match(/= supabaseOrigin\(\);/g)).toHaveLength(2);
   });
 });
 

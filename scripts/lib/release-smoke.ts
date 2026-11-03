@@ -172,8 +172,17 @@ export function assetScripts(text: string): string[] {
 }
 
 /**
+ * `https://<host>` as a whole origin in `text`: not followed by a character that would extend the host or add a port
+ * or userinfo, so `https://<host>.evil.example`, `https://<host>-x…` and `https://<host>:8443` do not count.
+ */
+export function referencesOrigin(text: string, host: string): boolean {
+  const escaped = `https://${host}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`${escaped}(?![A-Za-z0-9.:@_-])`).test(text);
+}
+
+/**
  * The deployed JS (entry + every referenced chunk) is the new frontend: it requests the stock_status embed, never the
- * legacy stock_quantity embed, and talks to the expected Supabase project.
+ * legacy stock_quantity embed, and talks to the expected Supabase project (`supabaseUrl` is validated by the caller).
  */
 export function assertBundleContract(chunks: ReadonlyArray<{ path: string; body: string }>, supabaseUrl: string): void {
   if (chunks.length === 0) fail('no JS chunk downloaded');
@@ -181,5 +190,5 @@ export function assertBundleContract(chunks: ReadonlyArray<{ path: string; body:
   if (!all.includes(STOREFRONT_VARIANT_EMBED)) fail(`deployed bundle does not request "${STOREFRONT_VARIANT_EMBED}" (old or wrong build)`);
   if (all.includes(LEGACY_VARIANT_EMBED)) fail('deployed bundle still requests the legacy stock_quantity embed');
   const host = new URL(supabaseUrl).host;
-  if (!all.includes(host)) fail(`deployed bundle does not reference the Supabase project ${host}`);
+  if (!referencesOrigin(all, host)) fail(`deployed bundle does not reference the Supabase project ${host}`);
 }

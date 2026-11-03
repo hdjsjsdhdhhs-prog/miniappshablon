@@ -1,6 +1,9 @@
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { REPO_ROOT } from './edge-functions';
 import {
   assertAppShell,
@@ -17,10 +20,14 @@ import {
   LEGACY_PRODUCT_COLUMNS,
   LEGACY_VARIANT_EMBED,
   PUBLIC_PAGES,
+  referencesOrigin,
   STOREFRONT_PRODUCT_COLUMNS,
   STOREFRONT_VARIANT_EMBED,
   type HttpResult,
 } from './release-smoke';
+
+/** Arguments of `release-smoke.ts web` for one app URL. */
+const WEB_ARGS = (app: string) => ['web', app];
 
 const res = (status: number, body: unknown, contentType = 'application/json'): HttpResult => ({
   status,
@@ -150,4 +157,78 @@ describe('smoke-web evaluators', () => {
     expect(() => assertBundleContract([...good, { path: '/assets/c.js', body: LEGACY_VARIANT_EMBED }], url)).toThrow(/legacy/);
     expect(() => assertBundleContract(good, 'https://other.supabase.co')).toThrow(/other\.supabase\.co/);
   });
+
+  it('bundle contract: the Supabase origin must appear as a whole origin, not as a prefix of another host', () => {
+    const url = 'https://xcbugcjmddtubytpvffa.supabase.co';
+    const embed = { path: '/assets/b.js', body: `"${STOREFRONT_VARIANT_EMBED}, "` };
+    for (const body of [`"${url}.evil.example"`, `"${url}-evil.example"`, `"${url}:8443"`, `"${url}@evil.example"`, `"${url}_x"`, `"http://xcbugcjmddtubytpvffa.supabase.co"`, '"xcbugcjmddtubytpvffa.supabase.co"']) {
+      expect(() => assertBundleContract([{ path: '/assets/a.js', body }, embed], url), body).toThrow(/does not reference the Supabase project/);
+    }
+    for (const body of [`"${url}"`, `'${url}/rest/v1'`, `\`${url}\``, `x=${url}`, `${url}`]) {
+      expect(() => assertBundleContract([{ path: '/assets/a.js', body }, embed], url), body).not.toThrow();
+    }
+  });
+
+  it('referencesOrigin: whole-origin match only', () => {
+    const host = 'xcbugcjmddtubytpvffa.supabase.co';
+    expect(referencesOrigin(`"https://${host}"`, host)).toBe(true);
+    expect(referencesOrigin(`"https://${host}/functions/v1/x"`, host)).toBe(true);
+    expect(referencesOrigin(`"https://${host}.evil.example"`, host)).toBe(false);
+    expect(referencesOrigin(`"https://${host.replace('.', 'X')}"`, host)).toBe(false); // the dot is not a wildcard
+  });
+});
+
+/**
+ * release-smoke.ts against a local server that records every request: a SUPABASE_URL that is not exactly the
+ * approved project stops the CLI before ANY request is sent (the server must see none).
+ */
+describe('release-smoke.ts validates SUPABASE_URL before any request', () => {
+  const requests: string[] = [];
+  const server: Server = createServer((req, res) => {
+    requests.push(req.url ?? '');
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}');
+  });
+  let local = '';
+  beforeAll(async () => {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    local = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  const smoke = (args: string[], extra: Record<string, string>) =>
+    new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('SUPABASE_')));
+      const child = spawn(process.execPath, [join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs'), 'scripts/release-smoke.ts', ...args], {
+        cwd: process.cwd(),
+        env: { ...base, SUPABASE_ANON_KEY: 'test-anon-key', ...extra },
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
+      child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ code, stdout, stderr }));
+    });
+
+  const badUrls = () => [undefined, '', local, 'https://abcdefghijklmnopqrst.supabase.co', 'https://xcbugcjmddtubytpvffa.supabase.co.evil.example', 'not a url'];
+
+  it('api: wrong, missing or malformed SUPABASE_URL → exit 1, no request', async () => {
+    for (const url of badUrls()) {
+      requests.length = 0;
+      const r = await smoke(['api'], url === undefined ? {} : { SUPABASE_URL: url });
+      expect(r.code, String(url)).toBe(1);
+      expect(r.stderr, String(url)).toMatch(/Supabase URL/);
+      expect(requests, String(url)).toEqual([]);
+    }
+  }, 120_000);
+
+  it('web: wrong, missing or malformed SUPABASE_URL → exit 1, no request to the app either', async () => {
+    for (const url of badUrls()) {
+      requests.length = 0;
+      const r = await smoke(WEB_ARGS(local), url === undefined ? {} : { SUPABASE_URL: url });
+      expect(r.code, String(url)).toBe(1);
+      expect(r.stderr, String(url)).toMatch(/Supabase URL/);
+      expect(requests, String(url)).toEqual([]);
+    }
+  }, 120_000);
 });

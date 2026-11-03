@@ -10,11 +10,14 @@ import {
   assertCiWorkflowRun,
   assertCommitOnMain,
   assertEnvironmentProtected,
+  assertProjectRef,
   assertReleaseRef,
   assertReleaseSha,
   assertRequiredChecks,
+  assertSupabaseProjectUrl,
   GITHUB_ACTIONS_APP_ID,
   parseStageList,
+  PRODUCTION_SUPABASE_PROJECT_REF,
   RELEASE_ALLOWED_STAGES,
   REQUIRED_CI_CHECKS,
   type CheckRun,
@@ -304,4 +307,150 @@ describe('deployment environment protection', () => {
       expect(() => assertEnvironmentProtected('production', protectedEnv('production', over), policies), JSON.stringify(over)).toThrow(error);
     }
   });
+});
+
+// L2: the Supabase project a release targets is pinned to one approved ref.
+const REF = PRODUCTION_SUPABASE_PROJECT_REF;
+const ORIGIN = `https://${REF}.supabase.co`;
+
+describe('approved Supabase project ref', () => {
+  it('is the reviewed production project', () => {
+    expect(REF).toBe('xcbugcjmddtubytpvffa');
+  });
+  it('accepts exactly the approved ref', () => {
+    expect(assertProjectRef(REF)).toBe(REF);
+  });
+  it('rejects a missing, malformed or different ref without printing it', () => {
+    const cases: Array<[string | undefined, RegExp]> = [
+      [undefined, /not set/],
+      ['', /not set/],
+      [` ${REF}`, /malformed/],
+      [`${REF}\n`, /malformed/],
+      [REF.toUpperCase(), /malformed/],
+      [REF.slice(0, 19), /malformed/],
+      [`${REF}a`, /malformed/],
+      ['abcdefghijklmnopqrst', /does not match the approved production project xcbugcjmddtubytpvffa/],
+    ];
+    for (const [ref, error] of cases) {
+      expect(() => assertProjectRef(ref), String(ref)).toThrow(error);
+      if (ref) {
+        try {
+          assertProjectRef(ref);
+        } catch (err) {
+          expect((err as Error).message.replace(REF, ''), String(ref)).not.toContain(ref.trim());
+        }
+      }
+    }
+  });
+  it('rejects an invalid approved ref (inconsistent configuration)', () => {
+    expect(() => assertProjectRef(REF, '')).toThrow(/approved Supabase project ref is not a valid/);
+    expect(() => assertProjectRef('abc', 'abc')).toThrow(/approved Supabase project ref is not a valid/);
+  });
+});
+
+describe('Supabase URL of the approved project', () => {
+  it('accepts exactly https://<ref>.supabase.co, with or without a trailing slash', () => {
+    expect(assertSupabaseProjectUrl(ORIGIN)).toBe(ORIGIN);
+    expect(assertSupabaseProjectUrl(`${ORIGIN}/`)).toBe(ORIGIN);
+    expect(assertSupabaseProjectUrl(ORIGIN, REF)).toBe(ORIGIN);
+  });
+  const rejected: Array<[string | undefined, RegExp]> = [
+    [undefined, /is not set/],
+    ['', /is not set/],
+    [` ${ORIGIN}`, /whitespace/],
+    [`${ORIGIN}\n`, /whitespace/],
+    ['not a url', /whitespace|malformed/],
+    ['xcbugcjmddtubytpvffa.supabase.co', /malformed/],
+    ['https://', /malformed/],
+    [`http://${REF}.supabase.co`, /does not use https/],
+    [`ftp://${REF}.supabase.co`, /does not use https/],
+    [`https://abcdefghijklmnopqrst.supabase.co`, /approved project host/],
+    [`https://${REF}.supabase.co.evil.example`, /approved project host/],
+    [`https://evil.${REF}.supabase.co`, /approved project host/],
+    [`https://${REF}.supabase.com`, /approved project host/],
+    [`https://${REF}.supabase.co.`, /approved project host/],
+    [`https://user:pw@${REF}.supabase.co`, /credentials/],
+    [`https://user@${REF}.supabase.co`, /credentials/],
+    [`https://${REF}.supabase.co:443`, /unexpected port, path, query or fragment/],
+    [`https://${REF}.supabase.co:8443`, /unexpected port, path, query or fragment/],
+    [`https://${REF}.supabase.co/rest/v1`, /unexpected port, path, query or fragment/],
+    [`https://${REF}.supabase.co//`, /unexpected port, path, query or fragment/],
+    [`https://${REF}.supabase.co?x=1`, /unexpected port, path, query or fragment/],
+    [`https://${REF}.supabase.co?`, /unexpected port, path, query or fragment/],
+    [`https://${REF}.supabase.co#x`, /unexpected port, path, query or fragment/],
+    [`https://${REF}.supabase.co#`, /unexpected port, path, query or fragment/],
+    [`https://${REF.toUpperCase()}.SUPABASE.CO`, /unexpected port, path, query or fragment/],
+  ];
+  for (const [url, error] of rejected) {
+    it(`rejects ${JSON.stringify(url)}`, () => {
+      expect(() => assertSupabaseProjectUrl(url)).toThrow(error);
+      expect(() => assertSupabaseProjectUrl(url)).toThrow(new RegExp(`it must be exactly https://${REF}\\.supabase\\.co`));
+    });
+  }
+  it('rejects a URL of another project when that project is not the approved one (inconsistent identifiers)', () => {
+    expect(() => assertSupabaseProjectUrl('https://abcdefghijklmnopqrst.supabase.co', 'abcdefghijklmnopqrst')).toThrow(/does not match the approved production project/);
+    expect(() => assertSupabaseProjectUrl(ORIGIN, '')).toThrow(/not set/);
+  });
+  it('never echoes the configured URL (it could carry credentials)', () => {
+    for (const url of [`https://admin:s3cr3t-pw@${REF}.supabase.co`, 'https://leakyhostname.supabase.co', `https://${REF}.supabase.co?apikey=s3cr3t-key`, 'http://s3cr3t-host']) {
+      let message = '';
+      try {
+        assertSupabaseProjectUrl(url);
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message, url).not.toBe('');
+      expect(message, url).not.toMatch(/s3cr3t|leakyhostname/);
+    }
+  });
+});
+
+/** release-preflight.ts with a given env; inherits nothing from SUPABASE_* of the developer's shell. */
+function runPreflight(args: string[], extra: Record<string, string>) {
+  return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('SUPABASE_')));
+    const child = spawn(process.execPath, [join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs'), 'scripts/release-preflight.ts', ...args], {
+      cwd: process.cwd(),
+      env: { ...base, ...extra },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
+    child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+describe('release-preflight.ts project-ref / supabase-url (workflow entry points)', () => {
+  it('project-ref passes only for the approved ref', async () => {
+    const ok = await runPreflight(['project-ref'], { SUPABASE_PROJECT_REF: REF });
+    expect(ok.code, ok.stderr).toBe(0);
+    expect(ok.stdout).toContain(`OK  SUPABASE_PROJECT_REF is the approved production project ${REF}`);
+    for (const [env, error] of [[{}, /not set/], [{ SUPABASE_PROJECT_REF: 'abcdefghijklmnopqrst' }, /does not match/], [{ SUPABASE_PROJECT_REF: 'x' }, /malformed/]] as const) {
+      const r = await runPreflight(['project-ref'], env);
+      expect(r.code, JSON.stringify(env)).toBe(1);
+      expect(r.stderr).toMatch(error);
+      expect(r.stderr).toContain('Release stopped: nothing was deployed by this step.');
+    }
+  }, 60_000);
+
+  it('supabase-url passes only for the approved origin', async () => {
+    const ok = await runPreflight(['supabase-url'], { SUPABASE_URL: ORIGIN });
+    expect(ok.code, ok.stderr).toBe(0);
+    expect(ok.stdout).toContain(`OK  Supabase URL is the approved production project ${ORIGIN}`);
+    const envs: Array<Record<string, string>> = [{}, { SUPABASE_URL: '' }, { SUPABASE_URL: 'https://abcdefghijklmnopqrst.supabase.co' }, { SUPABASE_URL: `https://u:s3cr3t@${REF}.supabase.co` }];
+    for (const env of envs) {
+      const r = await runPreflight(['supabase-url'], env);
+      expect(r.code, JSON.stringify(env)).toBe(1);
+      expect(r.stderr).toMatch(/Supabase URL/);
+      expect(`${r.stdout}${r.stderr}`).not.toContain('s3cr3t');
+    }
+  }, 60_000);
+
+  it('rejects extra arguments', async () => {
+    const r = await runPreflight(['project-ref', REF], { SUPABASE_PROJECT_REF: REF });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/Usage/);
+  }, 60_000);
 });

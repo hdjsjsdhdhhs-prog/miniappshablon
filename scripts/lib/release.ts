@@ -36,8 +36,56 @@ export const RELEASE_ALLOWED_STAGES: readonly string[] = ['3A', '3B'];
 /** Deployment environments of the release, each of which must exist and be protected before anything runs. */
 export const RELEASE_ENVIRONMENTS = ['production', 'production-frontend'] as const;
 
+/**
+ * The only Supabase project a release may target (not a secret). Every configured identifier is checked against it:
+ * vars.SUPABASE_PROJECT_REF before `supabase link`, vars.VITE_SUPABASE_URL before the frontend build and before every
+ * smoke request; the Session Pooler step of supabase-deploy.yml pins the same value (kept equal by workflows.test.ts).
+ */
+export const PRODUCTION_SUPABASE_PROJECT_REF = 'xcbugcjmddtubytpvffa';
+
 function fail(reason: string): never {
   throw new Error(`Release preflight: ${reason}`);
+}
+
+/** Supabase project refs are 20 lowercase letters. */
+const PROJECT_REF = /^[a-z]{20}$/;
+
+/**
+ * A configured project ref must be exactly the approved one. Fail-closed on a missing, malformed or different value;
+ * the configured value itself is never printed.
+ */
+export function assertProjectRef(ref: string | undefined, approved: string = PRODUCTION_SUPABASE_PROJECT_REF): string {
+  if (!PROJECT_REF.test(approved)) fail('the approved Supabase project ref is not a valid project ref');
+  if (ref === undefined || ref === '') fail('Supabase project ref is not set');
+  if (!PROJECT_REF.test(ref)) fail('Supabase project ref is malformed (expected 20 lowercase letters)');
+  if (ref !== approved) fail(`Supabase project ref does not match the approved production project ${approved}`);
+  return ref;
+}
+
+/**
+ * The Supabase URL must be exactly `https://<expectedRef>.supabase.co` (an optional trailing `/` is accepted):
+ * HTTPS, that exact host, no userinfo, no port (not even an explicit :443), no path, query or fragment, no whitespace.
+ * `expectedRef` must itself be the approved project ref. Returns the canonical origin. Errors never contain the
+ * configured URL (it could carry credentials), only the expected origin.
+ */
+export function assertSupabaseProjectUrl(raw: string | undefined, expectedRef: string = PRODUCTION_SUPABASE_PROJECT_REF): string {
+  assertProjectRef(expectedRef);
+  const origin = `https://${expectedRef}.supabase.co`;
+  const wrong = (reason: string): never => fail(`Supabase URL ${reason}; it must be exactly ${origin}`);
+  if (raw === undefined || raw === '') return wrong('is not set');
+  if (/\s/.test(raw)) return wrong('contains whitespace');
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return wrong('is malformed');
+  }
+  if (url.protocol !== 'https:') return wrong('does not use https');
+  if (url.username !== '' || url.password !== '') return wrong('must not contain credentials');
+  if (url.hostname !== `${expectedRef}.supabase.co`) return wrong('does not point to the approved project host');
+  // The parser normalises `:443`, an empty `?`/`#`, upper-case hosts and dot segments away: compare the raw text too.
+  if (raw !== origin && raw !== `${origin}/`) return wrong('has an unexpected port, path, query or fragment');
+  return origin;
 }
 
 const FULL_SHA = /^[0-9a-f]{40}$/;

@@ -78,6 +78,10 @@ jobs:
       # database: exact file set, valid UTF-8, CRLF→LF canonical content equal to the approved hash.
       - name: Verify migration file integrity (SHA-256)
         run: pnpm check:migration-integrity
+      # The configured project ref must be the approved production project (scripts/lib/release.ts
+      # PRODUCTION_SUPABASE_PROJECT_REF) before any credential is used with it. No secret in this step.
+      - name: Project ref is the approved production project
+        run: pnpm exec tsx scripts/release-preflight.ts project-ref
       - name: Link the production project
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

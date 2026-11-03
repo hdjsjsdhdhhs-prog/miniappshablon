@@ -180,6 +180,8 @@ jobs:
           for v in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY PRODUCTION_CLOUDFLARE_PAGES_PROJECT; do
             if [ -z "${!v}" ]; then echo "::error::variable $v is not set"; exit 1; fi
           done
+          # The URL compiled into the bundle must be exactly the approved production project (same value as pnpm build).
+          SUPABASE_URL="$VITE_SUPABASE_URL" pnpm exec tsx scripts/release-preflight.ts supabase-url
           pnpm build
       - run: pnpm check:bundle-secrets
       # Credentials of the production-frontend environment only (secrets PRODUCTION_CLOUDFLARE_API_TOKEN /
