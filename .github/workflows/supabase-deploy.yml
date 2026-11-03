@@ -24,14 +24,20 @@ jobs:
     name: Migrations + Edge Functions (production)
     runs-on: ubuntu-latest
     # Upper bound so a hung CLI / network call cannot hold the production-release group for GitHub's 6 h default.
-    # Waiting for the environment approval does not count. Risk review: when the timeout fires, the runner kills the
-    # step — inside `db push` that is the same as a Cancel (RELEASE.md): a migration file in flight is rolled back with
-    # its transaction, files already committed stay, so a stage can be left partially applied and the next Gate run
-    # refuses it. The bound is therefore deliberately generous: the release has 9 small migration files (3A + 3B), every
-    # one sets lock_timeout = 5s (lock waits fail inside the database, not by a runner kill), and the whole job —
-    # link, list, two dry-runs, push, verify, four functions — is expected to take minutes. No database step has a
-    # step-level timeout of its own; only the Edge Function steps below (no database access) are bounded tighter.
-    timeout-minutes: 60
+    # Waiting for the environment approval does not count. When the job timeout fires inside `db push`, the runner kills
+    # it exactly like a Cancel: the outcome of the migration file in flight is UNCERTAIN (it may have been committed or
+    # rolled back, and the database may still be executing it after the runner is gone), files committed before it
+    # stay, so a stage can be left partially applied. Recovery: RELEASE.md "Прерванный db push (Cancel или таймаут)" —
+    # never a blind re-run. Every pre-push step below therefore has its own bound, so the job budget cannot be used up
+    # before db push (budget, all in minutes, kept consistent by scripts/lib/workflows.test.ts):
+    #   pre-push steps (non-mutating, each bounded)  65  = sum of their step timeouts, incl. the budget check
+    #   reserve: Apply migrations + Verify            60  no step timeout (a database mutation is never cut short)
+    #   Edge Functions: 4 × 10 + list 5               45
+    #   runner margin (set up job, post steps)        10
+    #   job timeout                                   180 (GitHub maximum 360)
+    # The step bounds alone do not prove the reserve: the step "Time budget left for db push" measures the real time
+    # since the guard and refuses to start the push after minute 65 (fail-closed, before any database change).
+    timeout-minutes: 180
     # Secrets live in the `production` environment: they are released only after the owner's approval and only to
     # runs from main (environment deployment branch policy). The `if` keeps a run from any other ref from even asking.
     if: github.ref == 'refs/heads/main'
@@ -49,11 +55,14 @@ jobs:
       # Defence in depth, before checkout and before any secret is used: main, a manual dispatch of release.yml on
       # main (github.workflow_ref is the CALLER's workflow), and the full SHA of that run.
       - name: Guard — called by release.yml on main for the run's SHA
+        timeout-minutes: 2
         env:
           RELEASE_SHA: ${{ inputs.sha }}
           EXPECTED_CALLER: ${{ github.repository }}/.github/workflows/release.yml@refs/heads/main
         run: |
           set -euo pipefail
+          # Start of the measured job time (first step), read by "Time budget left for db push".
+          echo "DEPLOY_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then echo "::error::refusing: ref $GITHUB_REF is not refs/heads/main"; exit 1; fi
           if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then echo "::error::refusing: event $GITHUB_EVENT_NAME"; exit 1; fi
           if [ "$GITHUB_WORKFLOW_REF" != "$EXPECTED_CALLER" ]; then echo "::error::refusing: caller $GITHUB_WORKFLOW_REF is not $EXPECTED_CALLER"; exit 1; fi
@@ -64,30 +73,40 @@ jobs:
         with:
           ref: ${{ inputs.sha }}
           persist-credentials: false
+        timeout-minutes: 5
       - name: Checked-out commit is the release SHA
+        timeout-minutes: 1
         env:
           RELEASE_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        timeout-minutes: 5
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
+        timeout-minutes: 5
       - run: pnpm install --frozen-lockfile
+        timeout-minutes: 10
       # SHA-256 of every reviewed migration (scripts/lib/migration-integrity-manifest.ts) before anything touches the
       # database: exact file set, valid UTF-8, CRLF→LF canonical content equal to the approved hash.
       - name: Verify migration file integrity (SHA-256)
+        timeout-minutes: 5
         run: pnpm check:migration-integrity
       # The configured project ref must be the approved production project (scripts/lib/release.ts
       # PRODUCTION_SUPABASE_PROJECT_REF) before any credential is used with it. No secret in this step.
       - name: Project ref is the approved production project
+        timeout-minutes: 2
         run: pnpm exec tsx scripts/release-preflight.ts project-ref
+      # Read-only for the remote project (Management API GETs; writes only local supabase/.temp files).
       - name: Link the production project
+        timeout-minutes: 5
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
       - name: Validate Session Pooler target
+        timeout-minutes: 1
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
@@ -108,6 +127,7 @@ jobs:
           console.log('Session Pooler target format and project ref validated.');
           NODE
       - name: Show pending migrations
+        timeout-minutes: 5
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: pnpm exec supabase migration list --db-url "$SUPABASE_DB_URL" --agent no
@@ -120,6 +140,7 @@ jobs:
       # stops before db push. Every `check-production-migration-plan.ts` call also re-reads and re-hashes all
       # migration files first (SHA-256 integrity), so content changed after any earlier step stops the job too.
       - name: Read migration history and dry-run plan
+        timeout-minutes: 10
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
@@ -130,14 +151,39 @@ jobs:
           cat "$RUNNER_TEMP/db-push-dry-run.json"
       - name: Validate migration plan
         id: plan
+        timeout-minutes: 5
         run: pnpm exec tsx scripts/check-production-migration-plan.ts plan "$RUNNER_TEMP/migration-list.json" "$RUNNER_TEMP/db-push-dry-run.json"
       # Release allowlist (scripts/lib/release.ts RELEASE_ALLOWED_STAGES): only Expand stages may be pushed by a
       # release. A Contract stage (3C) in the plan stops the job before db push; the apply step re-checks that the
       # plan is still exactly these stages.
       - name: Planned stages are release-allowed (no Contract stage)
+        timeout-minutes: 2
         env:
           PLANNED_STAGES: ${{ steps.plan.outputs.stages }}
         run: pnpm exec tsx scripts/release-preflight.ts stages "$PLANNED_STAGES"
+      # The last non-mutating step before db push. The step bounds above cap the pre-push time at 65 minutes on paper;
+      # this measures it: if more than 65 minutes (job timeout − reserve − Edge Functions − margin) passed since the
+      # guard — unbounded overhead, a new step without a bound — the push does not start, so it always keeps the
+      # Apply + Verify reserve and the Edge Function steps keep their budget inside the job timeout. The values must
+      # match the job budget above (scripts/lib/workflows.test.ts).
+      - name: Time budget left for db push
+        if: steps.plan.outputs.mode == 'apply'
+        timeout-minutes: 2
+        env:
+          JOB_TIMEOUT_MINUTES: '180'
+          PUSH_RESERVE_MINUTES: '60'
+          FUNCTIONS_MINUTES: '45'
+          RUNNER_MARGIN_MINUTES: '10'
+        run: |
+          set -euo pipefail
+          if ! [[ "${DEPLOY_JOB_STARTED_AT:-}" =~ ^[0-9]+$ ]]; then echo "::error::job start time not recorded; refusing to start db push"; exit 1; fi
+          latest=$(( JOB_TIMEOUT_MINUTES - PUSH_RESERVE_MINUTES - FUNCTIONS_MINUTES - RUNNER_MARGIN_MINUTES ))
+          elapsed=$(( $(date +%s) - DEPLOY_JOB_STARTED_AT ))
+          if [ "$latest" -le 0 ] || [ "$elapsed" -lt 0 ] || [ "$elapsed" -gt $(( latest * 60 )) ]; then
+            echo "::error::${elapsed}s since the guard; db push may start only within ${latest} min. Refusing to start db push (nothing was changed)."
+            exit 1
+          fi
+          echo "db push may start: ${elapsed}s since the guard (limit ${latest} min); reserve ${PUSH_RESERVE_MINUTES} min for Apply + Verify, ${FUNCTIONS_MINUTES} min for Edge Functions"
       - name: Apply migrations
         if: steps.plan.outputs.mode == 'apply'
         env:
