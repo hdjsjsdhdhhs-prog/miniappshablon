@@ -15,7 +15,7 @@
    ```
 2. **Заполнить** `tenants/cloud-nine/shop.config.json`: описание, `theme` (11 цветов `#RRGGBB`, `mode`, `radius`), `currency`,
    `legalNotice`, `shopInformation`, `initialCategories`, при желании `initialProducts` (одна цена товара `priceMinor`
-   в копейках) с `variants` (вкус/цвет, `stock`; у вариантов своей цены нет). Логотип и фото положите в `tenants/cloud-nine/assets/` (PNG/JPEG/WebP, до 5 МБ, от 128 px).
+   в копейках) с `variants` (`flavor`/`color`, `stock`; у вариантов своей цены нет). Логотип и фото положите в `tenants/cloud-nine/assets/` (PNG/JPEG/WebP, до 5 МБ, от 128 px).
 3. **Проверить**
    ```bash
    pnpm tenant:validate --slug cloud-nine
