@@ -96,7 +96,11 @@ describe('supabase-deploy.yml', () => {
     expect(topLevelBlock(yaml, 'on')).toBe(
       'on:\n  workflow_call:\n    inputs:\n      sha:\n' +
         '        description: Full SHA validated by the release preflight; the exact commit that is checked out and deployed.\n' +
-        '        required: true\n        type: string\n',
+        '        required: true\n        type: string\n' +
+        '    secrets:\n' +
+        '      SUPABASE_ACCESS_TOKEN:\n        required: false\n' +
+        '      SUPABASE_DB_PASSWORD:\n        required: false\n' +
+        '      SUPABASE_DB_URL:\n        required: false\n',
     );
     expect(yaml).not.toMatch(/^\s*(workflow_dispatch|push|pull_request|pull_request_target|schedule|repository_dispatch|workflow_run):/m);
   });
@@ -310,8 +314,24 @@ describe('release.yml', () => {
     expect(job('frontend')).toContain('    environment: production-frontend\n');
     for (const name of ['preflight', 'smoke-api', 'smoke-web']) expect(job(name)).not.toContain('environment:');
     expect(yaml.match(/^ {4}environment:/gm)).toHaveLength(1);
-    // Secrets are used only by the frontend job (Cloudflare); everything else is public or the run's token.
-    for (const name of ['preflight', 'supabase', 'smoke-api', 'smoke-web']) expect(job(name)).not.toContain('secrets.');
+    // Secrets are used only by the frontend job (Cloudflare) and handed by name to the called Supabase workflow;
+    // everything else is public or the run's token.
+    for (const name of ['preflight', 'smoke-api', 'smoke-web']) expect(job(name)).not.toContain('secrets.');
+  });
+
+  // Regression (Production Release #1, "Access token not provided" at supabase link): a called workflow sees only the
+  // secret names its caller passes, even for its own environment. The supabase job must hand over exactly the three
+  // Supabase names, by explicit mapping, and the called workflow must declare exactly those names.
+  it('passes exactly the Supabase secret names to supabase-deploy.yml, which declares exactly those', () => {
+    const NAMES = ['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD', 'SUPABASE_DB_URL'];
+    const sup = job('supabase');
+    expect(sup).toContain('    secrets:\n' + NAMES.map((n) => `      ${n}: \${{ secrets.${n} }}\n`).join(''));
+    expect(secretsIn(sup)).toEqual(NAMES);
+    const on = topLevelBlock(read('supabase-deploy.yml'), 'on')!;
+    const declared = on.slice(on.indexOf('    secrets:\n'));
+    expect([...declared.matchAll(/^ {6}([A-Z_]+):$/gm)].map((m) => m[1])).toEqual(NAMES);
+    // Every secret the called workflow uses is one it declares (otherwise it would silently be empty there).
+    expect(secretsIn(read('supabase-deploy.yml'))).toEqual(NAMES);
   });
 
   it('smoke-api runs the read-only API checks and re-checks the environments right before the frontend', () => {
@@ -482,6 +502,22 @@ describe('supabase-deploy.yml: Supabase secrets are step-scoped', () => {
     }
   });
 
+  it('link fails fast on an empty access token / DB password before the CLI runs, without printing a value', () => {
+    const link = steps.find((s) => s.label === 'Link the production project')!;
+    const order = inOrder(link.text, [
+      'set -euo pipefail',
+      'for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD; do',
+      'if [ -z "${!v:-}" ]; then echo "::error::secret $v is empty',
+      'exit 1; fi',
+      'pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"',
+    ]);
+    expect(order.every((i) => i >= 0), JSON.stringify(order)).toBe(true);
+    // The check names the variable only; it never expands a value into output.
+    expect(link.text).not.toMatch(/echo[^\n]*\$\{!v\}|echo[^\n]*\$\{?SUPABASE_/);
+    // It is the first step that uses a Supabase secret (before any database access).
+    expect(steps.findIndex((s) => secretsIn(s.text).length > 0)).toBe(steps.indexOf(link));
+  });
+
   it('no step echoes a secret variable', () => {
     for (const s of steps) expect(s.text, s.label).not.toMatch(/(echo|printf|cat)\b[^\n]*\$\{?SUPABASE_(ACCESS_TOKEN|DB_PASSWORD|DB_URL)/);
   });
@@ -498,7 +534,8 @@ describe('release.yml: Cloudflare credentials are isolated in production-fronten
     expect(withSecrets.map((s) => [s.label, secretsIn(s.text)])).toEqual([
       ['Deploy to Cloudflare Pages', ['PRODUCTION_CLOUDFLARE_ACCOUNT_ID', 'PRODUCTION_CLOUDFLARE_API_TOKEN']],
     ]);
-    for (const name of jobNames(yaml).filter((n) => n !== 'frontend')) expect(secretsIn(job(name)), name).toEqual([]);
+    for (const name of jobNames(yaml).filter((n) => n !== 'frontend' && n !== 'supabase')) expect(secretsIn(job(name)), name).toEqual([]);
+    expect(secretsIn(job('supabase'))).toEqual(['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD', 'SUPABASE_DB_URL']);
   });
 
   it('never uses the former repository-level CLOUDFLARE_* names, nor any fallback expression for a secret', () => {

@@ -15,6 +15,17 @@ on:
         description: Full SHA validated by the release preflight; the exact commit that is checked out and deployed.
         required: true
         type: string
+    # A called workflow's `secrets` context holds ONLY the names its caller passes — even the job's own `production`
+    # environment secrets stay empty unless their name is passed here (with `environment:` on the job, GitHub then
+    # resolves the environment's value, not the caller's). Without this list SUPABASE_ACCESS_TOKEN reached the CLI empty
+    # ("Access token not provided"). Explicit names, never `secrets: inherit`. Checked by scripts/lib/workflows.test.ts.
+    secrets:
+      SUPABASE_ACCESS_TOKEN:
+        required: false
+      SUPABASE_DB_PASSWORD:
+        required: false
+      SUPABASE_DB_URL:
+        required: false
 
 permissions:
   contents: read
@@ -99,12 +110,19 @@ jobs:
         timeout-minutes: 2
         run: pnpm exec tsx scripts/release-preflight.ts project-ref
       # Read-only for the remote project (Management API GETs; writes only local supabase/.temp files).
+      # Fail fast, before any database access: an empty secret (not passed / not set in `production`) stops here with
+      # its NAME only — the value is never printed.
       - name: Link the production project
         timeout-minutes: 5
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+        run: |
+          set -euo pipefail
+          for v in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD; do
+            if [ -z "${!v:-}" ]; then echo "::error::secret $v is empty in the production environment of this job; refusing to link"; exit 1; fi
+          done
+          pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
       - name: Validate Session Pooler target
         timeout-minutes: 1
         env:

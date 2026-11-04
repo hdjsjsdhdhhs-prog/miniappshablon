@@ -113,6 +113,14 @@ jobs:
     uses: ./.github/workflows/supabase-deploy.yml
     with:
       sha: ${{ needs.preflight.outputs.sha }}
+    # Only these names, never inheriting all secrets. This job has no environment, so the values here are empty /
+    # repository level; the called job runs in `production` and GitHub resolves the environment's secret of the same
+    # name there. Without these names the called workflow's secrets context is empty (Production Release #1: "Access
+    # token not provided" when linking the project).
+    secrets:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
   smoke-api:
     name: Smoke API (read-only)
