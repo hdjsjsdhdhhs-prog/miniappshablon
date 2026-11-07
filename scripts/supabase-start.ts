@@ -30,6 +30,9 @@ run(async () => {
     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS ?? '*',
     // Order notifications of a local stack go to the local mock Bot API (pnpm telegram:mock), never to Telegram.
     TELEGRAM_API_BASE: LOCAL_TELEGRAM_API_BASE,
+    // Storefront origin for the shops' own bots (Menu Button / web_app button). Reserved, non-routable .test domain:
+    // locally nothing is opened from it, the mock Bot API only records the URL.
+    PUBLIC_APP_URL: process.env.PUBLIC_APP_URL ?? 'https://miniapp.local.test',
   };
   const dockerNetwork = process.platform === 'win32' ? [] : ['--network-id', TELEGRAM_MOCK_DOCKER_NETWORK];
   const child = spawn('pnpm', ['exec', 'supabase', 'start', ...dockerNetwork, ...process.argv.slice(2)], {

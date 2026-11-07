@@ -17,6 +17,8 @@ export default tseslint.config(
       'supabase/functions/my-orders',
       'supabase/functions/notification-settings',
       'supabase/functions/platform-admin',
+      'supabase/functions/bot-connection',
+      'supabase/functions/telegram-webhook',
     ],
   },
   {

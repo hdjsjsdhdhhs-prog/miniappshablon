@@ -172,6 +172,55 @@ export class TelegramBotApi {
       link_preview_options: { is_disabled: true },
     });
   }
+
+  /** Plain text (no parse_mode: nothing in `text` is interpreted as HTML / Markdown) with an inline keyboard. */
+  sendPlainMessage(chatId: string | number, text: string, replyMarkup: InlineKeyboardMarkup): Promise<{ message_id: number }> {
+    return this.call<{ message_id: number }>('sendMessage', {
+      chat_id: chatId,
+      text,
+      reply_markup: replyMarkup,
+      link_preview_options: { is_disabled: true },
+    });
+  }
+
+  getWebhookInfo(): Promise<TgWebhookInfo> {
+    return this.call<TgWebhookInfo>('getWebhookInfo', {});
+  }
+
+  setWebhook(params: { url: string; secret_token: string; allowed_updates: string[]; drop_pending_updates?: boolean; max_connections?: number }): Promise<boolean> {
+    return this.call<boolean>('setWebhook', params);
+  }
+
+  deleteWebhook(): Promise<boolean> {
+    return this.call<boolean>('deleteWebhook', { drop_pending_updates: false });
+  }
+
+  /** Without chatId: the bot's default Menu Button for all private chats. */
+  setChatMenuButton(menuButton: TgMenuButton): Promise<boolean> {
+    return this.call<boolean>('setChatMenuButton', { menu_button: menuButton });
+  }
+
+  getChatMenuButton(): Promise<TgMenuButton> {
+    return this.call<TgMenuButton>('getChatMenuButton', {});
+  }
+}
+
+export interface TgWebhookInfo {
+  /** Empty string when no webhook is set. May contain a third party's secrets: never returned to a browser. */
+  url: string;
+  pending_update_count?: number;
+  last_error_message?: string;
+}
+
+export type TgMenuButton =
+  | { type: 'commands' }
+  | { type: 'default' }
+  | { type: 'web_app'; text: string; web_app: { url: string } };
+
+export type InlineKeyboardButton = { text: string; web_app: { url: string } } | { text: string; url: string };
+
+export interface InlineKeyboardMarkup {
+  inline_keyboard: InlineKeyboardButton[][];
 }
 
 /** True when the member can publish in the chat (channel: admin with can_post_messages; groups: not muted). */

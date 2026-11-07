@@ -91,13 +91,22 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders(req) });
   if (req.method !== 'POST') return errorResponse(req, 405, 'method_not_allowed');
 
+  // The body is read once, lazily: only initData not signed by the platform bot needs the shop slug (shop's own bot).
+  let rawBody: Promise<unknown> | null = null;
+  const readBody = () => (rawBody ??= req.json());
+  const slugFromBody = async () => {
+    const raw = await readBody().catch(() => null);
+    const slug = (raw as { shopSlug?: unknown } | null)?.shopSlug;
+    return typeof slug === 'string' ? slug : null;
+  };
+
   // Creating an order accepts a shorter initData age than reading the history (see http.ts).
-  const auth = await verifyTelegramRequest(req, 'checkout');
+  const auth = await verifyTelegramRequest(req, 'checkout', { shopSlug: slugFromBody });
   if (!auth.ok) return auth.response;
 
   let body: FulfillmentBody;
   try {
-    const raw = await req.json();
+    const raw = await readBody();
     if (isLegacyBody(raw)) {
       return errorResponse(req, 400, 'invalid_body', { formErrors: ['contract_removed: send fulfillment instead of contact'], fieldErrors: {} });
     }

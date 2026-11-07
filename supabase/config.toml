@@ -403,6 +403,9 @@ ALLOWED_ORIGINS = "env(ALLOWED_ORIGINS)"
 # Bot API base for order notifications. Locally scripts/supabase-start.ts points it at the mock Bot API
 # (scripts/telegram-mock.ts), so no real Telegram message can be sent from a local stack. Unset = api.telegram.org.
 TELEGRAM_API_BASE = "env(TELEGRAM_API_BASE)"
+# Public origin of the storefront (https, no path), e.g. https://miniappdemo.pages.dev. The bot connection opens
+# <PUBLIC_APP_URL>/s/<slug>/ from the shop's bot; locally a non-routable https placeholder (scripts/supabase-start.ts).
+PUBLIC_APP_URL = "env(PUBLIC_APP_URL)"
 
 # Buyer identity comes from Telegram initData verified inside the function, not from a Supabase JWT.
 [functions.checkout]
@@ -417,6 +420,14 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.platform-admin]
+verify_jwt = false
+
+# Shop's own Telegram bot (admin tab «Подключение бота»): verifies the caller's access token itself, like the above.
+[functions.bot-connection]
+verify_jwt = false
+
+# Called by Telegram (no Supabase JWT): authenticated by the per-connection secret_token header, see the function.
+[functions.telegram-webhook]
 verify_jwt = false
 
 # [edge_runtime.secrets]

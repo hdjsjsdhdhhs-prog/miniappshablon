@@ -43,12 +43,12 @@ jobs:
     # before db push (budget, all in minutes, kept consistent by scripts/lib/workflows.test.ts):
     #   pre-push steps (non-mutating, each bounded)  65  = sum of their step timeouts, incl. the budget check
     #   reserve: Apply migrations + Verify            60  no step timeout (a database mutation is never cut short)
-    #   Edge Functions: 4 × 10 + list 5               45
+    #   Edge Functions: 6 × 10 + list 5               65
     #   runner margin (set up job, post steps)        10
-    #   job timeout                                   180 (GitHub maximum 360)
+    #   job timeout                                   200 (GitHub maximum 360)
     # The step bounds alone do not prove the reserve: the step "Time budget left for db push" measures the real time
     # since the guard and refuses to start the push after minute 65 (fail-closed, before any database change).
-    timeout-minutes: 180
+    timeout-minutes: 200
     # Secrets live in the `production` environment: they are released only after the owner's approval and only to
     # runs from main (environment deployment branch policy). The `if` keeps a run from any other ref from even asking.
     if: github.ref == 'refs/heads/main'
@@ -152,8 +152,9 @@ jobs:
       # Gate (scripts/lib/migration-plan.ts): local file names, remote history AND dry-run (JSON) must agree on one state.
       # `db push` has no version/stage selector: it applies EVERY local migration missing from the remote history, so
       # the gate derives the pending whole stages and requires the dry-run to plan exactly their reviewed files:
-      #   apply — baseline (incl. 2026-10-26) applied; pending = whole stages 3A+3B (one push, 3A first) or 3B only;
-      #   skip  — baseline, 3A and 3B confirmed applied, nothing pending, dry-run up to date (repeat run).
+      #   apply — baseline (incl. 2026-10-26) applied; pending = whole stages 3A+3B+4A (one push, in stage order),
+      #           3B+4A or 4A only;
+      #   skip  — baseline, 3A, 3B and 4A confirmed applied, nothing pending, dry-run up to date (repeat run).
       # Anything else (partial stage, 3B before 3A, unknown/missing/renamed file, inconsistent history, CLI error)
       # stops before db push. Every `check-production-migration-plan.ts` call also re-reads and re-hashes all
       # migration files first (SHA-256 integrity), so content changed after any earlier step stops the job too.
@@ -188,9 +189,9 @@ jobs:
         if: steps.plan.outputs.mode == 'apply'
         timeout-minutes: 2
         env:
-          JOB_TIMEOUT_MINUTES: '180'
+          JOB_TIMEOUT_MINUTES: '200'
           PUSH_RESERVE_MINUTES: '60'
-          FUNCTIONS_MINUTES: '45'
+          FUNCTIONS_MINUTES: '65'
           RUNNER_MARGIN_MINUTES: '10'
         run: |
           set -euo pipefail
@@ -248,6 +249,16 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: pnpm exec supabase functions deploy platform-admin --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Edge Function bot-connection
+        timeout-minutes: 10
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: pnpm exec supabase functions deploy bot-connection --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Edge Function telegram-webhook
+        timeout-minutes: 10
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: pnpm exec supabase functions deploy telegram-webhook --project-ref "$SUPABASE_PROJECT_REF"
       - name: List deployed Edge Functions
         timeout-minutes: 5
         env:
