@@ -12,18 +12,18 @@
  * that is missing from the remote history, in version order (and, without --include-all, refuses when such a
  * migration is older than the last applied one). `--dry-run` prints exactly that set. Therefore the gate never
  * "chooses" a stage: it derives which whole stages are pending and requires the dry-run to be exactly their files.
- * Whenever several stages are pending, a single `db push` applies them in stage order (3A, then 3B); the gate
- * reports that as `apply 3A,3B`.
+ * Whenever several stages are pending, a single `db push` applies them in stage order (3A, then 3B, then 4A); the
+ * gate reports that as e.g. `apply 3A,3B,4A`.
  *
  * Reviewed manifest (explicit file names, no patterns, append-only):
  *   * APPLIED_BASELINE_MIGRATION_FILES — reviewed history that must already be applied before any stage
  *     (incl. 20261026090000 / 20261026100000, which belong to the baseline, not to a release stage);
- *   * MIGRATION_STAGES — release stages in order (3A, then 3B); each is applied only as a whole.
+ *   * MIGRATION_STAGES — release stages in order (3A, 3B, then 4A); each is applied only as a whole.
  * The local migration directory and the local column of the history must be exactly this manifest.
  *
  * Accepted states (anything else throws, so the job stops before the database is changed):
  *   * apply — baseline applied; stages are a fully-applied prefix followed by a fully-pending suffix
- *     (pending = [3A, 3B] or [3B]); the dry-run plans exactly the pending stages' file names in order.
+ *     (pending = [3A, 3B, 4A], [3B, 4A] or [4A]); the dry-run plans exactly the pending stages' file names in order.
  *   * skip  — baseline and all stages confirmed applied in history, and the dry-run independently reports upToDate
  *     with an empty plan. An empty dry-run alone is never enough.
  * Rejected: partially applied stage, a later stage applied before an earlier one, unapplied baseline, unknown or
@@ -64,6 +64,13 @@ export const MIGRATION_STAGES = [
       '20261102090200_demo_shop_deletion.sql',
       '20261102090300_platform_admin_mfa_recovery.sql',
     ],
+  },
+  // Expand: shop's own Telegram bot (tab «Подключение бота»). Additive only — new private tables, service-role RPCs,
+  // a trigger on private.shop_transfers; no existing table, row or function changes. 3C stays reserved for the
+  // stock-status Contract step (RELEASE.md).
+  {
+    id: '4A',
+    files: ['20261107090000_telegram_bot_connection.sql'],
   },
 ] as const;
 

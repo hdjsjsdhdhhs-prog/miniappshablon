@@ -30,8 +30,9 @@ export const CI_WORKFLOW_PATH = '.github/workflows/ci.yml';
  * Migration stages this pipeline may apply. Expand stages only: a Contract stage (3C) must never be applied
  * automatically by a release — if the reviewed manifest (scripts/lib/migration-plan.ts) gains any other stage, the
  * preflight stops before production is touched, and the Supabase job re-checks the planned stages before `db push`.
+ * 4A (shop's own Telegram bot, 20261107090000) is an Expand stage: additive tables / functions only.
  */
-export const RELEASE_ALLOWED_STAGES: readonly string[] = ['3A', '3B'];
+export const RELEASE_ALLOWED_STAGES: readonly string[] = ['3A', '3B', '4A'];
 
 /** Deployment environments of the release, each of which must exist and be protected before anything runs. */
 export const RELEASE_ENVIRONMENTS = ['production', 'production-frontend'] as const;

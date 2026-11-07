@@ -52,6 +52,8 @@ export const MIGRATION_INTEGRITY_MANIFEST = [
   { file: '20261102090100_stock_status_projection.sql', sha256: '2ae259986bb867b749b2d2d2c21b2b9a9b9885ee925434bdf7c5fcd94e5d785e' },
   { file: '20261102090200_demo_shop_deletion.sql', sha256: '6d94c3121bd07b082787f3147e0ca27c87db3daa6f770bee0e0d79df8b8d32fd' },
   { file: '20261102090300_platform_admin_mfa_recovery.sql', sha256: 'faff2111c634d5d439224f0c3bfc35be501a3d4f0714069aad3fe7961fdc2d46' },
+  // Stage 4A.
+  { file: '20261107090000_telegram_bot_connection.sql', sha256: '59367cd6113a940bd2b2be2c5acf3480ab79b5e633cea6bc002642e2a72b2e86' },
 ] as const satisfies readonly MigrationIntegrityEntry[];
 
 export interface MigrationIntegrityEntry {
