@@ -23,7 +23,7 @@ describe('Edge Functions covered by deno check', () => {
   const modules = listEdgeFunctionModules();
 
   it('checks every function that is configured and deployed — not just one', () => {
-    expect(modules.functions).toEqual(['checkout', 'my-orders', 'notification-settings', 'platform-admin']);
+    expect(modules.functions).toEqual(['bot-connection', 'checkout', 'my-orders', 'notification-settings', 'platform-admin', 'telegram-webhook']);
     expect(modules.functions).toEqual(configuredFunctions(read('supabase/config.toml')));
     expect(modules.functions).toEqual(deployedFunctions(read('.github/workflows/supabase-deploy.yml')));
     expect(modules.entrypoints).toEqual(modules.functions.map((f) => `supabase/functions/${f}/index.ts`));

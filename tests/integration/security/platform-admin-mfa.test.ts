@@ -60,6 +60,29 @@ function actorCalls(actor: string, shopId: string): Array<[string, Record<string
     ['notify_set_enabled', { p_shop_id: shopId, p_actor: actor, p_enabled: false }],
     ['notify_delete_settings', { p_shop_id: shopId, p_actor: actor }],
     ['notify_requeue_failed', { p_shop_id: shopId, p_actor: actor }],
+    // Shop's own Telegram bot (20261107090000): every RPC re-checks the actor through private.assert_can_manage_shop.
+    ['bot_get_settings', { p_shop_id: shopId, p_actor: actor }],
+    ['bot_register_connect_attempt', { p_shop_id: shopId, p_actor: actor }],
+    ['bot_assert_available', { p_shop_id: shopId, p_actor: actor, p_bot_id: 123456789 }],
+    ['bot_get_credentials', { p_shop_id: shopId, p_actor: actor }],
+    [
+      'bot_save_connection',
+      {
+        p_shop_id: shopId,
+        p_actor: actor,
+        p_bot_token: `123456789:${'A'.repeat(35)}`,
+        p_bot_id: 123456789,
+        p_bot_username: 'mfa_test_bot',
+        p_connection_id: Z,
+        p_webhook_secret_hash: '0'.repeat(64),
+        p_webhook_url: 'https://example.invalid/hook',
+        p_menu_button_url: null,
+        p_menu_button_text: null,
+      },
+    ],
+    ['bot_record_sync', { p_shop_id: shopId, p_actor: actor, p_ok: true, p_error: null, p_menu_button_url: null, p_menu_button_text: null }],
+    ['bot_delete_connection', { p_shop_id: shopId, p_actor: actor, p_connection_id: Z }],
+    ['bot_save_welcome', { p_shop_id: shopId, p_actor: actor, p_welcome_text: 'x', p_open_button_text: 'x', p_manager_button_text: 'x', p_manager_url: null }],
   ];
 }
 
@@ -157,6 +180,19 @@ describe('platform admin without MFA (password only, aal1, no factor)', () => {
     for (const action of ['get', 'disable', 'delete', 'retry']) {
       const res = await callAdminFunction('notification-settings', pa.client, { action, shopId: live.id });
       expect([action, res.status, (res.body?.error as { code?: string }).code]).toEqual([action, 403, 'mfa_required']);
+    }
+  });
+
+  it('bot-connection for any shop → 403 mfa_required', async () => {
+    for (const body of [
+      { action: 'get', shopId: live.id },
+      { action: 'connect', shopId: live.id, botToken: `123456789:${'A'.repeat(35)}` },
+      { action: 'sync', shopId: live.id },
+      { action: 'disconnect', shopId: live.id },
+      { action: 'save-welcome', shopId: live.id, welcome: { welcomeText: 'x', openButtonText: 'x', managerButtonText: 'x', managerUrl: '' } },
+    ]) {
+      const res = await callAdminFunction('bot-connection', pa.client, body);
+      expect([body.action, res.status, (res.body?.error as { code?: string }).code]).toEqual([body.action, 403, 'mfa_required']);
     }
   });
 

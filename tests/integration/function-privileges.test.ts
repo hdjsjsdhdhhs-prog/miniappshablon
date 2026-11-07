@@ -93,6 +93,20 @@ const EXPECTED: Record<string, Roles> = {
   'public.platform_demo_delete_finalize(uuid,uuid,text)': r(false, false, true),
   // MFA recovery (20261102090300): operator scripts only (pnpm platform-admin:mfa-reset), platform admin accounts only.
   'public.platform_admin_revoke_sessions(uuid)': r(false, false, true),
+  // Shop's own Telegram bot (20261107090000): bot-connection / telegram-webhook / checkout / my-orders Edge Functions
+  // only; the admin RPCs re-check the actor (owner, or platform admin in aal2) inside.
+  'public.bot_get_settings(uuid,uuid)': r(false, false, true),
+  'public.bot_register_connect_attempt(uuid,uuid)': r(false, false, true),
+  'public.bot_assert_available(uuid,uuid,bigint)': r(false, false, true),
+  'public.bot_get_credentials(uuid,uuid)': r(false, false, true),
+  'public.bot_save_connection(uuid,uuid,text,bigint,text,uuid,text,text,text,text)': r(false, false, true),
+  'public.bot_record_sync(uuid,uuid,boolean,text,text,text)': r(false, false, true),
+  'public.bot_delete_connection(uuid,uuid,uuid)': r(false, false, true),
+  'public.bot_save_welcome(uuid,uuid,text,text,text,text)': r(false, false, true),
+  'public.bot_webhook_begin(uuid,text,bigint)': r(false, false, true),
+  'public.bot_webhook_release(uuid,bigint)': r(false, false, true),
+  'public.bot_webhook_record_menu(uuid,text,text)': r(false, false, true),
+  'public.bot_initdata_token(text)': r(false, false, true),
 };
 
 /** Functions that existed on the hosted project when the hardening migration was written (17.10.2026). */

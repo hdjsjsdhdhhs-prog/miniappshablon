@@ -348,19 +348,23 @@ describe('CI workflow run', () => {
 });
 
 describe('migration stages allowed in a release', () => {
-  it('are the Expand stages 3A and 3B — the current manifest passes', () => {
-    expect(RELEASE_ALLOWED_STAGES).toEqual(['3A', '3B']);
+  it('are the Expand stages 3A, 3B and 4A — the current manifest passes', () => {
+    expect(RELEASE_ALLOWED_STAGES).toEqual(['3A', '3B', '4A']);
     expect(() => assertAllowedStages(MIGRATION_STAGES.map((s) => s.id))).not.toThrow();
+    expect(() => assertAllowedStages(parseStageList('4A'))).not.toThrow();
   });
   it('a Contract stage (3C) in the manifest or in the gate plan stops the release', () => {
     expect(() => assertAllowedStages(['3A', '3B', '3C'])).toThrow(/3C are not allowed/);
     expect(() => assertAllowedStages(parseStageList('3B,3C'))).toThrow(/3C/);
+    expect(() => assertAllowedStages(parseStageList('3B,3C,4A'))).toThrow(/3C/);
+    expect(() => assertAllowedStages(parseStageList('4A,4B'))).toThrow(/4B are not allowed/);
   });
   it('planned stage lists: empty (skip), one or several stages; nothing else', () => {
     expect(parseStageList('')).toEqual([]);
     expect(parseStageList(undefined)).toEqual([]);
     expect(parseStageList('3B')).toEqual(['3B']);
     expect(parseStageList('3A,3B')).toEqual(['3A', '3B']);
+    expect(parseStageList('3A,3B,4A')).toEqual(['3A', '3B', '4A']);
     for (const bad of ['3A, 3B', '3a', 'all', '3A;3C', '3A,,3B']) expect(() => parseStageList(bad), bad).toThrow(/invalid stage list/);
   });
 });

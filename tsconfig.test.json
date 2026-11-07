@@ -17,7 +17,11 @@
     "supabase/functions/_shared/order-notification.ts",
     "supabase/functions/_shared/order-notification.test.ts",
     "supabase/functions/_shared/notify-dispatch.ts",
-    "supabase/functions/_shared/notify-dispatch.test.ts"
+    "supabase/functions/_shared/notify-dispatch.test.ts",
+    "supabase/functions/_shared/bot-welcome.ts",
+    "supabase/functions/_shared/bot-welcome.test.ts",
+    "supabase/functions/_shared/bot-connection.ts",
+    "supabase/functions/_shared/bot-connection.test.ts"
   ],
   "exclude": []
 }

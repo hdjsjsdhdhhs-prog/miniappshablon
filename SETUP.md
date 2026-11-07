@@ -45,6 +45,8 @@ pnpm db:start        # = supabase start + локальные секреты Edge
    pnpm exec supabase functions deploy my-orders
    pnpm exec supabase functions deploy notification-settings
    pnpm exec supabase functions deploy platform-admin
+   pnpm exec supabase functions deploy bot-connection
+   pnpm exec supabase functions deploy telegram-webhook
    ```
    Для production то же самое делает job `supabase` ручного release workflow `.github/workflows/release.yml`
    (reusable `.github/workflows/supabase-deploy.yml`, environment `production`: secrets `SUPABASE_ACCESS_TOKEN`,
@@ -53,8 +55,13 @@ pnpm db:start        # = supabase start + локальные секреты Edge
 3. Секреты функций (только сервер):
    ```bash
    pnpm exec supabase secrets set TELEGRAM_BOT_TOKEN=<токен от BotFather> \
-     TELEGRAM_INITDATA_MAX_AGE_SEC=86400 ALLOWED_ORIGINS=https://<ваш-домен>
+     TELEGRAM_INITDATA_MAX_AGE_SEC=86400 ALLOWED_ORIGINS=https://<ваш-домен> \
+     PUBLIC_APP_URL=https://<ваш-домен>
    ```
+   `PUBLIC_APP_URL` — публичный адрес витрины (только `https://`, без пути; не localhost). По нему боты магазинов
+   (вкладка «Подключение бота») открывают `<PUBLIC_APP_URL>/s/<slug>/`. Не секрет, но задаётся только на сервере,
+   чтобы адрес нельзя было подменить из браузера. Без него подключение бота отвечает понятной ошибкой, всё остальное
+   работает. После смены адреса кнопки ботов обновляются сами при следующем /start (или «Проверить подключение»).
 4. Auth → Providers → **Email: включён**, **Allow new users to sign up: выключено** (Auth → Settings).
    Владельцев создаёт администратор: `pnpm owner:add --slug <slug> --email <email>`
    (пароль берётся из `OWNER_PASSWORD` или генерируется и печатается один раз).
@@ -108,8 +115,15 @@ SPA fallback задаётся в `public/_redirects`.
 3. Ссылка магазина: `https://t.me/<bot_username>/<short_name>?startapp=<slug>`.
    Маршрут `/` читает `start_param` и открывает `/s/<slug>/`.
    Пропишите `telegram.botUsername` и `telegram.miniAppShortName` в `shop.config.json`: тогда `tenant:verify` выведет готовую ссылку.
-4. Отдельный бот на магазин потребует отдельной проверки токена на сервере. В текущей версии это сознательно не реализовано:
-   функции проверяют подпись только одним `TELEGRAM_BOT_TOKEN`.
+4. Собственный бот магазина (вкладка админки «Подключение бота», миграция `20261107090000_*`, функции
+   `bot-connection` и `telegram-webhook`). Владелец вставляет токен своего бота из @BotFather; сервер проверяет его
+   (`getMe`), хранит в Supabase Vault, ставит webhook `…/functions/v1/telegram-webhook?c=<id подключения>` с
+   `secret_token` и Menu Button `web_app` на `<PUBLIC_APP_URL>/s/<slug>/`. На /start бот отвечает приветствием с
+   кнопками «Открыть приложение» (`web_app`) и «Связаться с менеджером» (`url`). Один бот — максимум один магазин.
+   initData Mini App, открытой из такого бота, `checkout` / `my-orders` принимают **только для его магазина**
+   (подпись токеном бота этого магазина); платформенный `TELEGRAM_BOT_TOKEN` по-прежнему работает для всех.
+   Кнопку «Запустить» в профиле бота (Main Mini App) Bot API включить не позволяет — инструкция для BotFather
+   показана владельцу во вкладке. Смена владельца магазина (передача / hand-over) отключает бота прежнего владельца.
 
 ## 5. CI (GitHub Actions)
 

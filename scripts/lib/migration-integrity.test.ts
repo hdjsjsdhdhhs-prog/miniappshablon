@@ -26,7 +26,7 @@ const tmpRoot = mkdtempSync(join(tmpdir(), 'migration-integrity-'));
 afterAll(() => rmSync(tmpRoot, { recursive: true, force: true }));
 let n = 0;
 type Eol = 'as-is' | 'lf' | 'crlf';
-/** Copy the 20 real migrations into a fresh directory, optionally with all line endings forced to LF or CRLF. */
+/** Copy the 21 real migrations into a fresh directory, optionally with all line endings forced to LF or CRLF. */
 function copyMigrations(eol: Eol = 'as-is'): string {
   const dir = join(tmpRoot, `m${n++}`);
   mkdirSync(dir);
@@ -50,12 +50,12 @@ const check = (dir: string, manifest?: readonly MigrationIntegrityEntry[]) => ()
 const differs = (file: string) => new RegExp(`content differs from the approved SHA-256 in 1 file\\(s\\):\\n  ${file}: approved [0-9a-f]{64}, actual [0-9a-f]{64}$`);
 
 describe('integrity manifest', () => {
-  it('has exactly one well-formed SHA-256 per reviewed migration, in the gate manifest order (11 + 5 + 4 = 20)', () => {
-    expect(MIGRATION_INTEGRITY_MANIFEST).toHaveLength(20);
+  it('has exactly one well-formed SHA-256 per reviewed migration, in the gate manifest order (11 + 5 + 4 + 1 = 21)', () => {
+    expect(MIGRATION_INTEGRITY_MANIFEST).toHaveLength(21);
     expect(MIGRATION_INTEGRITY_MANIFEST.map((e) => e.file)).toEqual([...REVIEWED_MIGRATION_FILES]);
     expect(REVIEWED_MIGRATION_FILES).toEqual([...APPLIED_BASELINE_MIGRATION_FILES, ...MIGRATION_STAGES.flatMap((s) => s.files)]);
     for (const { file, sha256 } of MIGRATION_INTEGRITY_MANIFEST) expect(sha256, file).toMatch(/^[0-9a-f]{64}$/);
-    expect(new Set(MIGRATION_INTEGRITY_MANIFEST.map((e) => e.sha256)).size).toBe(20);
+    expect(new Set(MIGRATION_INTEGRITY_MANIFEST.map((e) => e.sha256)).size).toBe(21);
     expect(() => assertIntegrityManifestValid()).not.toThrow();
   });
 
@@ -76,7 +76,7 @@ describe('integrity manifest', () => {
     );
     expect(() => assertIntegrityManifestValid([...m, m[0]!])).toThrow(new RegExp(`lists ${BASE_FILE} twice`));
     expect(() => assertIntegrityManifestValid([m[1]!, m[0]!, ...m.slice(2)])).toThrow(/order differs/);
-    expect(() => assertIntegrityManifestValid([...m, null as unknown as MigrationIntegrityEntry])).toThrow(/entry 20 is malformed/);
+    expect(() => assertIntegrityManifestValid([...m, null as unknown as MigrationIntegrityEntry])).toThrow(/entry 21 is malformed/);
   });
 
   it('rejects malformed hash values', () => {
@@ -127,7 +127,7 @@ describe('canonical content', () => {
 });
 
 describe('assertMigrationIntegrity: accepted', () => {
-  it('the 20 real migrations of this branch match their approved SHA-256', () => {
+  it('the 21 real migrations of this branch match their approved SHA-256', () => {
     const verified = assertMigrationIntegrity();
     expect(verified).toEqual(MIGRATION_INTEGRITY_MANIFEST.map(({ file, sha256 }) => ({ file, sha256 })));
   });
@@ -269,8 +269,8 @@ describe('CLI scripts (independent of the working directory)', () => {
       const r = run('check-migration-integrity.ts', [], cwd);
       expect(r.status, r.stderr).toBe(0);
       for (const { file, sha256 } of MIGRATION_INTEGRITY_MANIFEST) expect(r.stdout).toContain(`OK  ${sha256}  ${file}`);
-      expect(r.stdout).toContain('all 20 reviewed migration file(s)');
-      expect(r.stdout).toContain('(baseline 11, 3A 5, 3B 4)');
+      expect(r.stdout).toContain('all 21 reviewed migration file(s)');
+      expect(r.stdout).toContain('(baseline 11, 3A 5, 3B 4, 4A 1)');
     }
   });
 
@@ -317,7 +317,7 @@ describe('CLI scripts (independent of the working directory)', () => {
     expect(verify.status).toBe(1);
     expect(verify.stdout).toBe('');
     expect(verify.stderr).toContain(`${B_FILE}: approved`);
-    const plan = runCopy('check-production-migration-plan.ts', ['plan', list, list, '--expect-stages', '3A,3B']);
+    const plan = runCopy('check-production-migration-plan.ts', ['plan', list, list, '--expect-stages', '3A,3B,4A']);
     expect(plan.status).toBe(1);
     expect(plan.stderr).toMatch(/content differs[\s\S]*Deployment stopped before any database change/);
   });
@@ -331,11 +331,11 @@ describe('CLI scripts (independent of the working directory)', () => {
     writeFileSync(out, '');
     const plan = run('check-production-migration-plan.ts', ['plan', list, dry], elsewhere, { GITHUB_OUTPUT: out });
     expect(plan.status, plan.stderr).toBe(0);
-    expect(plan.stdout).toMatch(/^Integrity: 20 reviewed migration file\(s\) match the approved SHA-256\.\nPlan: skip/);
+    expect(plan.stdout).toMatch(/^Integrity: 21 reviewed migration file\(s\) match the approved SHA-256\.\nPlan: skip/);
     expect(readFileSync(out, 'utf8')).toBe('mode=skip\nstages=\n');
     const verify = run('check-production-migration-plan.ts', ['verify-applied', list], elsewhere);
     expect(verify.status, verify.stderr).toBe(0);
-    expect(verify.stdout).toMatch(/^Integrity: 20 reviewed migration file\(s\) match the approved SHA-256\.\nVerified:/);
+    expect(verify.stdout).toMatch(/^Integrity: 21 reviewed migration file\(s\) match the approved SHA-256\.\nVerified:/);
   });
 });
 
@@ -350,11 +350,26 @@ describe('stock status: Expand only, no Contract (3C) in this release', () => {
       .replace(/\s+/g, ' ')
       .toLowerCase();
 
-  it('the release has exactly the stages 3A and 3B; no 3C stage and no migration after 3B', () => {
-    expect(MIGRATION_STAGES.map((s) => s.id)).toEqual(['3A', '3B']);
+  it('the release has exactly the Expand stages 3A, 3B and 4A; no 3C stage and no migration after 4A', () => {
+    expect(MIGRATION_STAGES.map((s) => s.id)).toEqual(['3A', '3B', '4A']);
     expect(MIGRATION_STAGES[1].files).toContain(STOCK_FILE);
     expect(readdirSync(DEFAULT_MIGRATIONS_DIR).sort()).toEqual([...REVIEWED_MIGRATION_FILES].sort());
-    expect(REVIEWED_MIGRATION_FILES.at(-1)).toBe('20261102090300_platform_admin_mfa_recovery.sql');
+    expect(REVIEWED_MIGRATION_FILES.at(-1)).toBe('20261107090000_telegram_bot_connection.sql');
+  });
+
+  it('4A (bot connection) is additive: no drop, no change of an existing table, every new public function service_role only', () => {
+    const file = MIGRATION_STAGES[2].files[0];
+    const sql = sqlOf(file);
+    expect(sql, file).not.toMatch(/\bdrop (table|column|function|schema|policy|view|index)\b/);
+    expect(sql, file).not.toMatch(/\balter table (public|private|vault)\./);
+    expect(sql, file).not.toMatch(/\b(update|delete from|insert into) public\./);
+    expect(sql, file).not.toMatch(/\bgrant [^;]*\b(anon|authenticated)\b/);
+    const created = [...sql.matchAll(/create or replace function (public\.[a-z_]+)\(/g)].map((m) => m[1]!);
+    expect(created.length).toBeGreaterThan(0);
+    for (const fn of created) {
+      expect(sql, fn).toMatch(new RegExp(`revoke all on function ${fn.replace('.', '\\.')}\\([^)]*\\) from public, anon, authenticated;`));
+      expect(sql, fn).toMatch(new RegExp(`grant execute on function ${fn.replace('.', '\\.')}\\([^)]*\\) to service_role;`));
+    }
   });
 
   it('3B adds stock_status and admin_variant_stock and keeps admin_variant_stock away from anon', () => {

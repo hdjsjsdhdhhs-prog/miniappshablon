@@ -6,9 +6,13 @@
 //   chat id containing "missing"               → getChat: 400 "chat not found"
 //   chat id containing "noperm"                → bot is not a member: cannot post (403 on sendMessage)
 //   chat id containing "alwaysfail"            → sendMessage: 500 every time
-//   POST /__mock/fail { chat_id, times }       → the next `times` sendMessage calls to that chat fail with 500
+//   POST /__mock/fail { chat_id, times, status? } → the next `times` sendMessage calls to that chat fail (500 or `status`)
+// Bot connection (per numeric bot id): getWebhookInfo / setWebhook / deleteWebhook, getChatMenuButton /
+// setChatMenuButton keep their state in memory.
+//   GET  /__mock/bots/<id>                     → { webhook: { url, secret_token, allowed_updates } | null, menu_button }
+//   POST /__mock/bots/<id> { webhook_url? }    → simulates a webhook set by ANOTHER service (no secret known here)
 // Inspection: GET /__mock/health, GET /__mock/messages?chat_id=…, DELETE /__mock/messages.
-// Tokens are never stored or printed: messages keep only the numeric bot id.
+// Tokens are never stored or printed: messages and bot state keep only the numeric bot id.
 import { execFileSync } from 'node:child_process';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { localStack } from './local-stack.ts';
@@ -33,7 +37,13 @@ export interface MockMessage {
   chat_id: string;
   text: string;
   parse_mode: string | null;
+  reply_markup: unknown;
   at: string;
+}
+
+export interface MockBotState {
+  webhook: { url: string; secret_token: string | null; allowed_updates: unknown } | null;
+  menu_button: { type: string; text?: string; web_app?: { url: string } };
 }
 
 export interface TelegramMock {
@@ -73,7 +83,16 @@ function chatNumericId(chat: string): number {
 
 export function createTelegramMockServer(log: (line: string) => void = () => undefined): Server {
   const messages: MockMessage[] = [];
-  const failures = new Map<string, number>();
+  const failures = new Map<string, { times: number; status: number }>();
+  const bots = new Map<number, MockBotState>();
+  const botState = (id: number): MockBotState => {
+    let s = bots.get(id);
+    if (!s) {
+      s = { webhook: null, menu_button: { type: 'default' } };
+      bots.set(id, s);
+    }
+    return s;
+  };
   let nextMessageId = 1;
 
   return createServer(async (req, res) => {
@@ -90,8 +109,17 @@ export function createTelegramMockServer(log: (line: string) => void = () => und
       }
       if (url.pathname === '/__mock/fail' && req.method === 'POST') {
         const body = await readJson(req);
-        failures.set(String(body.chat_id), Number(body.times ?? 1));
+        failures.set(String(body.chat_id), { times: Number(body.times ?? 1), status: Number(body.status ?? 500) });
         return send(res, 200, { ok: true });
+      }
+      const botPath = /^\/__mock\/bots\/(\d{5,12})$/.exec(url.pathname);
+      if (botPath) {
+        const state = botState(Number(botPath[1]));
+        if (req.method === 'POST') {
+          const body = await readJson(req);
+          if (typeof body.webhook_url === 'string') state.webhook = body.webhook_url ? { url: body.webhook_url, secret_token: null, allowed_updates: null } : null;
+        }
+        return send(res, 200, state);
       }
 
       const m = /^\/bot(\d{5,12}):([A-Za-z0-9_-]{30,64})\/(\w+)$/.exec(url.pathname);
@@ -123,10 +151,11 @@ export function createTelegramMockServer(log: (line: string) => void = () => und
         case 'sendMessage': {
           if (chat.includes('missing')) return tgError(res, 400, 'Bad Request: chat not found');
           if (chat.includes('noperm')) return tgError(res, 403, 'Forbidden: bot is not a member of the channel chat');
-          const left = failures.get(chat) ?? 0;
-          if (chat.includes('alwaysfail') || left > 0) {
-            if (left > 0) failures.set(chat, left - 1);
-            return tgError(res, 500, 'Internal Server Error (mock)');
+          const fail = failures.get(chat);
+          if (chat.includes('alwaysfail') || (fail && fail.times > 0)) {
+            if (fail && fail.times > 0) failures.set(chat, { ...fail, times: fail.times - 1 });
+            const status = fail?.status ?? 500;
+            return tgError(res, status, status === 403 ? 'Forbidden: bot was blocked by the user' : 'Internal Server Error (mock)');
           }
           const msg: MockMessage = {
             message_id: nextMessageId++,
@@ -134,12 +163,35 @@ export function createTelegramMockServer(log: (line: string) => void = () => und
             chat_id: chat,
             text: String(body.text ?? ''),
             parse_mode: body.parse_mode ? String(body.parse_mode) : null,
+            reply_markup: body.reply_markup ?? null,
             at: new Date().toISOString(),
           };
           messages.push(msg);
           log(`[telegram-mock] sendMessage → ${chat}: ${msg.text.split('\n')[0]}`);
           return send(res, 200, { ok: true, result: { message_id: msg.message_id, chat: { id: chatNumericId(chat) }, text: msg.text } });
         }
+        case 'getWebhookInfo': {
+          const hook = botState(botId).webhook;
+          return send(res, 200, { ok: true, result: { url: hook?.url ?? '', has_custom_certificate: false, pending_update_count: 0 } });
+        }
+        case 'setWebhook': {
+          const hookUrl = String(body.url ?? '');
+          if (!/^https?:\/\//.test(hookUrl)) return tgError(res, 400, 'Bad Request: bad webhook: invalid URL');
+          const secret = body.secret_token === undefined ? null : String(body.secret_token);
+          if (secret !== null && !/^[A-Za-z0-9_-]{1,256}$/.test(secret)) return tgError(res, 400, 'Bad Request: bad webhook: secret token contains unallowed characters');
+          botState(botId).webhook = { url: hookUrl, secret_token: secret, allowed_updates: body.allowed_updates ?? null };
+          return send(res, 200, { ok: true, result: true, description: 'Webhook was set' });
+        }
+        case 'deleteWebhook':
+          botState(botId).webhook = null;
+          return send(res, 200, { ok: true, result: true, description: 'Webhook was deleted' });
+        case 'setChatMenuButton': {
+          const button = (typeof body.menu_button === 'string' ? JSON.parse(body.menu_button) : body.menu_button) as MockBotState['menu_button'] | undefined;
+          botState(botId).menu_button = button?.type ? button : { type: 'default' };
+          return send(res, 200, { ok: true, result: true });
+        }
+        case 'getChatMenuButton':
+          return send(res, 200, { ok: true, result: botState(botId).menu_button });
         default:
           return tgError(res, 404, 'Not Found: method not found');
       }
@@ -223,10 +275,24 @@ export async function mockMessages(chatId: string): Promise<MockMessage[]> {
   return ((await res.json()) as { messages: MockMessage[] }).messages;
 }
 
-export async function mockFailNext(chatId: string, times: number): Promise<void> {
+export async function mockFailNext(chatId: string, times: number, status = 500): Promise<void> {
   await fetch(`${TELEGRAM_MOCK_URL}/__mock/fail`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, times }),
+    body: JSON.stringify({ chat_id: chatId, times, status }),
+  });
+}
+
+/** Webhook / Menu Button state the mock keeps for one bot id. */
+export async function mockBotState(botId: number | string): Promise<MockBotState> {
+  return (await (await fetch(`${TELEGRAM_MOCK_URL}/__mock/bots/${botId}`)).json()) as MockBotState;
+}
+
+/** Simulates a webhook set on the bot by another service ('' removes it). */
+export async function mockSetForeignWebhook(botId: number | string, url: string): Promise<void> {
+  await fetch(`${TELEGRAM_MOCK_URL}/__mock/bots/${botId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ webhook_url: url }),
   });
 }

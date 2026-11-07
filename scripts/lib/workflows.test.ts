@@ -473,6 +473,8 @@ describe('supabase-deploy.yml: Supabase secrets are step-scoped', () => {
     'Deploy Edge Function my-orders': ['SUPABASE_ACCESS_TOKEN'],
     'Deploy Edge Function notification-settings': ['SUPABASE_ACCESS_TOKEN'],
     'Deploy Edge Function platform-admin': ['SUPABASE_ACCESS_TOKEN'],
+    'Deploy Edge Function bot-connection': ['SUPABASE_ACCESS_TOKEN'],
+    'Deploy Edge Function telegram-webhook': ['SUPABASE_ACCESS_TOKEN'],
     'List deployed Edge Functions': ['SUPABASE_ACCESS_TOKEN'],
   };
 
@@ -630,7 +632,7 @@ describe('supabase-deploy.yml: Edge Functions deployment structure (partial depl
   const deploy = read('supabase-deploy.yml');
   const job = jobBlock(deploy, 'deploy');
   const steps = stepsOf(job);
-  const FUNCTIONS = ['checkout', 'my-orders', 'notification-settings', 'platform-admin'];
+  const FUNCTIONS = ['checkout', 'my-orders', 'notification-settings', 'platform-admin', 'bot-connection', 'telegram-webhook'];
 
   it('one deploy job, no matrix: a re-run always repeats the whole job', () => {
     expect(jobNames(deploy)).toEqual(['deploy']);
@@ -683,8 +685,8 @@ describe('job and step timeouts', () => {
     expect(caller).not.toMatch(/^\s*timeout-minutes:/m);
   });
 
-  it('supabase-deploy.yml: the deploy job is bounded at 180 minutes (the budget below)', () => {
-    expect(jobTimeout(jobBlock(deploy, 'deploy'))).toBe('180');
+  it('supabase-deploy.yml: the deploy job is bounded at 200 minutes (the budget below)', () => {
+    expect(jobTimeout(jobBlock(deploy, 'deploy'))).toBe('200');
   });
 
   it('every job with runs-on has a timeout, none above 360 minutes', () => {
@@ -725,6 +727,8 @@ describe('job and step timeouts', () => {
     'Deploy Edge Function my-orders': '10',
     'Deploy Edge Function notification-settings': '10',
     'Deploy Edge Function platform-admin': '10',
+    'Deploy Edge Function bot-connection': '10',
+    'Deploy Edge Function telegram-webhook': '10',
     'List deployed Edge Functions': '5',
   };
   const sum = (o: Record<string, string>) => Object.values(o).reduce((a, v) => a + Number(v), 0);
@@ -839,10 +843,10 @@ describe('RELEASE.md: interrupted db push (Cancel or timeout)', () => {
 
   it('the budget section states the job timeout and the measured pre-push limit of the workflow', () => {
     const budget = docSection('Бюджет времени job `deploy`');
-    expect(budget).toContain('ограничен **180 минутами**');
+    expect(budget).toContain('ограничен **200 минутами**');
     expect(budget).toContain('сумма 65');
     expect(budget).toContain('**без** таймаута шага, резерв 60');
-    expect(budget).toContain('больше 65 минут (180 − 60 − 45 − 10)');
+    expect(budget).toContain('больше 65 минут (200 − 60 − 65 − 10)');
     expect(budget).toContain('`Time budget left for db push`');
   });
 
@@ -867,7 +871,7 @@ describe('RELEASE.md: interrupted db push (Cancel or timeout)', () => {
       '**Не нажимайте Re-run**',
       'pg_stat_activity',
       'supabase migration list',
-      '`MIGRATION_STAGES` в `scripts/lib/migration-plan.ts` (3A — 5 файлов, 3B — 4)',
+      '`MIGRATION_STAGES` в `scripts/lib/migration-plan.ts` (3A — 5 файлов, 3B — 4, 4A — 1)',
       '**применена целиком**, **не начата** или **частично**',
       'scripts/check-production-migration-plan.ts plan list.json dry.json',
       '**Подтверждённо применённой** считается версия',
@@ -876,7 +880,7 @@ describe('RELEASE.md: interrupted db push (Cancel or timeout)', () => {
       'допустим Re-run',
     ]);
     expect(order.every((i) => i >= 0), JSON.stringify(order)).toBe(true);
-    expect(MIGRATION_STAGES.map((s) => [s.id, s.files.length])).toEqual([['3A', 5], ['3B', 4]]);
+    expect(MIGRATION_STAGES.map((s) => [s.id, s.files.length])).toEqual([['3A', 5], ['3B', 4], ['4A', 1]]);
   });
 
   it('names the CLI version the evidence was read from, equal to the locked supabase CLI', () => {

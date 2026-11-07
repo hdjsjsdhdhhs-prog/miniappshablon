@@ -204,7 +204,7 @@ export async function createMember(shopId: string, role: 'owner' | 'manager'): P
 
 /** Calls an admin Edge Function as the signed-in user of `client` (or with an explicit bearer / none). */
 export async function callAdminFunction(
-  name: 'notification-settings' | 'platform-admin',
+  name: 'notification-settings' | 'platform-admin' | 'bot-connection',
   as: Db | { bearer: string } | null,
   body: unknown,
 ) {
