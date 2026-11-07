@@ -17,7 +17,7 @@ export class AdminApiError extends Error {
   }
 }
 
-async function callAdminFunction<T>(name: 'notification-settings' | 'platform-admin', body: unknown): Promise<T> {
+async function callAdminFunction<T>(name: 'notification-settings' | 'platform-admin' | 'bot-connection', body: unknown): Promise<T> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new AdminApiError(401, 'auth_required', null);
@@ -107,6 +107,96 @@ export function notificationErrorText(errorOrCode: unknown): string {
         ? errorOrCode.split(':')[0]!.trim()
         : 'unknown_error';
   return NOTIFICATION_ERRORS[code] ?? 'Не удалось выполнить действие. Повторите попытку.';
+}
+
+// ---- Shop's own Telegram bot («Подключение бота») ----------------------------------------
+// Independent of the notifications above: own Edge Function (bot-connection), own Vault secret, own settings.
+
+export interface BotConnection {
+  bot_id: number;
+  bot_username: string;
+  /** Masked: "123456789:••••AbCd". The token itself is never sent to the browser. */
+  token_hint: string;
+  status: 'connected' | 'error';
+  last_error: string | null;
+  /** Storefront URL the platform set as the bot's Menu Button. */
+  menu_button_url: string | null;
+  connected_at: string;
+  updated_at: string;
+}
+
+export interface BotWelcome {
+  welcome_text: string;
+  open_button_text: string;
+  manager_button_text: string;
+  manager_url: string | null;
+  customized: boolean;
+  updated_at: string | null;
+}
+
+export interface BotView {
+  settings: { shop: { id: string; slug: string; name: string }; connection: BotConnection | null; welcome: BotWelcome };
+  /** <PUBLIC_APP_URL>/s/<slug>/ computed on the server; null when the platform has no public URL configured. */
+  storefront_url: string | null;
+}
+
+export interface BotConnectResult extends BotView {
+  previous: { bot_username: string; webhook_removed: boolean; menu_reset: boolean; error: string | null } | null;
+}
+
+export interface BotWelcomeInput {
+  welcomeText: string;
+  openButtonText: string;
+  managerButtonText: string;
+  managerUrl: string;
+}
+
+export const botApi = {
+  get: (shopId: string) => callAdminFunction<BotView>('bot-connection', { action: 'get', shopId }),
+  /** The token is sent once; the response never contains it. */
+  connect: (shopId: string, botToken: string, confirmReplaceWebhook = false) =>
+    callAdminFunction<BotConnectResult>('bot-connection', { action: 'connect', shopId, botToken, confirmReplaceWebhook }),
+  sync: (shopId: string) => callAdminFunction<BotView & { webhook_ok: boolean }>('bot-connection', { action: 'sync', shopId }),
+  disconnect: (shopId: string) =>
+    callAdminFunction<BotView & { cleanup: { webhook_removed: boolean; menu_reset: boolean; telegram: 'ok' | 'token_revoked' } }>('bot-connection', {
+      action: 'disconnect',
+      shopId,
+    }),
+  saveWelcome: (shopId: string, welcome: BotWelcomeInput) =>
+    callAdminFunction<BotView & { menu_synced: boolean }>('bot-connection', { action: 'save-welcome', shopId, welcome }),
+};
+
+const BOT_ERRORS: Record<string, string> = {
+  invalid_token: 'Не удалось подключить бота. Проверьте правильность токена BotFather.',
+  telegram_unauthorized: 'Не удалось подключить бота. Проверьте правильность токена BotFather.',
+  bot_in_use: 'Этот Telegram-бот уже используется другим магазином платформы.',
+  bot_reserved: 'Этого бота нельзя подключить к магазину. Создайте отдельного бота в @BotFather.',
+  bot_connect_rate_limited: 'Слишком много попыток подключения. Подождите 15 минут и попробуйте снова.',
+  webhook_conflict: 'Этот бот уже подключён к другому сервису.',
+  webhook_replaced: 'Бот перестал получать сообщения через платформу: его настройки изменил другой сервис. Нажмите «Переподключить бота».',
+  menu_button_failed: 'Telegram не сохранил кнопку меню. Повторите попытку.',
+  public_url_not_configured: 'Публичный адрес витрины ещё не настроен на платформе. Обратитесь к администратору платформы.',
+  webhook_url_insecure: 'Платформа ещё не готова принимать сообщения ботов. Обратитесь к администратору платформы.',
+  not_connected: 'Бот не подключён.',
+  invalid_welcome_text: 'Введите текст приветствия.',
+  welcome_too_long: 'Приветствие длиннее 4096 символов — так много Telegram не отправит. Сократите текст.',
+  invalid_open_button_text: 'Введите текст кнопки открытия приложения (до 64 символов).',
+  invalid_manager_button_text: 'Введите текст кнопки связи с менеджером (до 64 символов).',
+  invalid_manager_url: 'Укажите Telegram менеджера в виде https://t.me/username или @username.',
+  invalid_welcome: 'Проверьте текст приветствия и кнопок.',
+  telegram_rate_limited: 'Telegram временно ограничил запросы. Повторите через минуту.',
+  telegram_unavailable: 'Telegram сейчас недоступен. Повторите позже.',
+  telegram_bad_request: 'Telegram отклонил запрос. Повторите попытку.',
+  network_error: 'Нет связи с сервером. Проверьте интернет и повторите.',
+  forbidden: 'Подключение бота доступно только владельцу магазина.',
+  auth_required: 'Сессия истекла. Войдите снова.',
+};
+
+/** Human text for an API error or a stored `last_error` code. Never a technical description. */
+export function botErrorText(errorOrCode: unknown): string {
+  const code =
+    errorOrCode instanceof AdminApiError ? errorOrCode.code : typeof errorOrCode === 'string' ? errorOrCode.split(':')[0]!.trim() : 'unknown_error';
+  return BOT_ERRORS[code] ?? 'Не удалось выполнить действие. Повторите попытку.';
 }
 
 // ---- Platform administration -------------------------------------------------------------

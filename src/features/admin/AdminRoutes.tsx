@@ -3,6 +3,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router';
 import { PageSpinner } from '@/components/state-views';
 import { useSession } from './auth';
 import { AdminShopLayout } from './AdminShopLayout';
+import { BotConnectionPage } from './pages/BotConnectionPage';
 import { useAssurance } from './mfa';
 import { MfaPage } from './pages/MfaPage';
 import { useIsPlatformAdmin } from './use-platform-admin';
@@ -59,6 +60,7 @@ export default function AdminRoutes() {
             <Route path="orders" element={<OrdersPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="notifications" element={<NotificationsPage />} />
+            <Route path="bot" element={<BotConnectionPage />} />
           </Route>
           <Route path="platform" element={<PlatformShopsPage />} />
           <Route path="mfa" element={<MfaPage />} />

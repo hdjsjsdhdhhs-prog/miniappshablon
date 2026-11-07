@@ -17,6 +17,7 @@ const NAV = [
   { to: 'orders', label: 'Заказы' },
   { to: 'settings', label: 'Оформление' },
   { to: 'notifications', label: 'Уведомления' },
+  { to: 'bot', label: 'Подключение бота' },
 ];
 
 export function AdminShopLayout() {

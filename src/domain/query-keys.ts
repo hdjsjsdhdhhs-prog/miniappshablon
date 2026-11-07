@@ -19,6 +19,7 @@ export const queryKeys = {
   platformDemoDelete: (shopId: string) => ['admin', 'platform', 'demo-delete', shopId] as const,
   platformShops: (userId: string) => ['admin', userId, 'platform-shops'] as const,
   adminNotifications: (shopId: string) => ['admin', 'shop', shopId, 'notifications'] as const,
+  adminBot: (shopId: string) => ['admin', 'shop', shopId, 'bot'] as const,
   adminShop: (slug: string) => ['admin', 'shop-by-slug', slug] as const,
   adminCategories: (shopId: string) => ['admin', 'shop', shopId, 'categories'] as const,
   adminProducts: (shopId: string) => ['admin', 'shop', shopId, 'products'] as const,
