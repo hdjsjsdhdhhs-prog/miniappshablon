@@ -3,11 +3,11 @@ import { memo } from 'react';
 import { Link } from 'react-router';
 import { ProductImage } from '@/components/product-image';
 import { Button } from '@/components/ui/button';
-import { formatMoney } from '@/domain/money';
-import { productPriceMinor } from '@/domain/pricing';
+import { productOldPriceMinor, productPriceMinor } from '@/domain/pricing';
 import { isAvailable } from '@/domain/stock';
 import { cn } from '@/lib/utils';
 import type { ProductDetail } from '../api';
+import { Price } from './Price';
 
 export const ProductCard = memo(function ProductCard({
   product,
@@ -54,9 +54,9 @@ export const ProductCard = memo(function ProductCard({
         <div className={cn('flex flex-1 flex-col gap-1.5 px-3 pt-3', onAddToCart ? 'pb-2.5' : 'pb-3')}>
           <h3 className="line-clamp-2 text-sm leading-snug font-medium">{product.name}</h3>
           {/* mt-auto keeps price + button on one line across a grid row, whatever the name length. */}
-          {/* One fixed price per product, the same for every flavor/color. */}
+          {/* One fixed price per product, the same for every flavor/color; a discount shows the old price struck. */}
           <p className="mt-auto text-[0.9375rem] font-semibold tracking-tight tabular-nums" data-testid="product-card-price">
-            {formatMoney(productPriceMinor(product), currency)}
+            <Price priceMinor={productPriceMinor(product)} oldPriceMinor={productOldPriceMinor(product)} currency={currency} />
           </p>
         </div>
       </Link>

@@ -12,6 +12,7 @@ import { ApiError, fetchMyOrders } from '@/features/cart/checkout-api';
 import { FULFILLMENT_LABELS } from '@/features/cart/checkout-schema';
 import { unverifiedTelegramUser } from '@/features/telegram/init-data-user';
 import { getTelegramEnv } from '@/features/telegram/telegram';
+import { Price } from '../components/Price';
 import { ShopLogo } from '../components/ShopLogo';
 import { buildDemoOrder, shouldShowDemoProfile } from '../demo-profile';
 import { useProducts } from '../hooks';
@@ -37,6 +38,8 @@ interface OrderLineView {
   variantLabel: string;
   quantity: number;
   lineTotalMinor: number;
+  /** What the line would have cost at the list price; set only for a line sold with a discount. */
+  oldLineTotalMinor?: number | null;
 }
 
 function OrderCard({
@@ -72,7 +75,9 @@ function OrderCard({
               {i.name}
               {i.variantLabel && <span className="text-muted-foreground"> · {i.variantLabel}</span>} × {i.quantity}
             </span>
-            <span className="tabular-nums">{formatMoney(i.lineTotalMinor, currency)}</span>
+            <span className="shrink-0 text-right tabular-nums">
+              <Price priceMinor={i.lineTotalMinor} oldPriceMinor={i.oldLineTotalMinor} currency={currency} className="justify-end" />
+            </span>
           </li>
         ))}
       </ul>
@@ -222,6 +227,7 @@ function TelegramProfile() {
                   variantLabel: i.variant_label,
                   quantity: i.quantity,
                   lineTotalMinor: i.line_total_minor,
+                  oldLineTotalMinor: i.original_unit_price_minor != null ? i.original_unit_price_minor * i.quantity : null,
                 }))}
                 totalMinor={o.total_minor}
                 currency={o.currency}

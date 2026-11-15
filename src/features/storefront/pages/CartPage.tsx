@@ -15,6 +15,7 @@ import { CheckoutForm } from '@/features/cart/CheckoutForm';
 import { FULFILLMENT_LABELS, toFulfillment, type CheckoutFormValues, type FulfillmentMethod } from '@/features/cart/checkout-schema';
 import { useCart } from '@/features/cart/useCart';
 import { getTelegramEnv } from '@/features/telegram/telegram';
+import { Price } from '../components/Price';
 import { QuantityStepper } from '../components/QuantityStepper';
 import { DEMO_NOTICE, DEMO_ORDER_TITLE } from '../demo-profile';
 import { useShop } from '../shop-context';
@@ -158,7 +159,9 @@ export function CartPage() {
                 {l.name}
               </Link>
               {l.variantLabel && <p className="text-xs text-muted-foreground">{l.variantLabel}</p>}
-              <p className="text-xs text-muted-foreground">{formatMoney(l.unitPriceMinor, shop.currency)} / шт.</p>
+              <p className="text-xs text-muted-foreground" data-testid="cart-line-price">
+                <Price priceMinor={l.unitPriceMinor} oldPriceMinor={l.originalUnitPriceMinor} currency={shop.currency} /> / шт.
+              </p>
               <div className="mt-auto flex items-center justify-between gap-2">
                 <QuantityStepper
                   value={l.quantity}

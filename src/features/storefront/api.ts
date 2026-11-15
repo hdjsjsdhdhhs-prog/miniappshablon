@@ -58,7 +58,10 @@ export interface ProductImage {
 export interface ProductSummary {
   id: string;
   name: string;
+  /** List price. */
   basePriceMinor: number;
+  /** Optional discount price (lower than the list price); null / absent: no discount. See domain/pricing.ts. */
+  discountPriceMinor?: number | null;
   categoryId: string;
   variants: Variant[];
   images: ProductImage[];
@@ -76,7 +79,7 @@ const SHOP_COLUMNS =
   'id, slug, name, description, logo_path, cover_path, theme_config, currency, mode, status, is_demo, age_restriction, delivery_enabled, pickup_enabled, pickup_instructions, info, settings, telegram';
 
 const PRODUCT_COLUMNS =
-  'id, name, base_price_minor, category_id, description, ' +
+  'id, name, base_price_minor, discount_price_minor, category_id, description, ' +
   'categories!inner(name, slug, is_active, archived_at), ' +
   'product_variants(id, flavor, color, stock_status, is_active, sort_order), ' +
   'product_images(id, storage_path, is_primary, sort_order, alt_text)';
@@ -133,6 +136,7 @@ interface ProductRow {
   name: string;
   description: string;
   base_price_minor: number;
+  discount_price_minor: number | null;
   category_id: string;
   categories: { name: string; slug: string; is_active: boolean; archived_at: string | null };
   product_variants: Variant[];
@@ -145,6 +149,7 @@ function toDetail(row: ProductRow): ProductDetail {
     name: row.name,
     description: row.description,
     basePriceMinor: row.base_price_minor,
+    discountPriceMinor: row.discount_price_minor ?? null,
     categoryId: row.category_id,
     categoryName: row.categories.name,
     categorySlug: row.categories.slug,

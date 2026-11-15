@@ -4,13 +4,13 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { EmptyState, ErrorState, PageSpinner, StaleDataNotice } from '@/components/state-views';
 import { Button } from '@/components/ui/button';
-import { formatMoney } from '@/domain/money';
-import { productPriceMinor } from '@/domain/pricing';
+import { productOldPriceMinor, productPriceMinor } from '@/domain/pricing';
 import { isAvailable, STOCK_STATUS_LABELS } from '@/domain/stock';
 import { canAddToCart, defaultSelection, findVariant, MAX_LINE_QUANTITY, variantLabel, type VariantSelection } from '@/domain/variants';
 import { useCart } from '@/features/cart/useCart';
 import { NotFoundError } from '../api';
 import { Gallery } from '../components/Gallery';
+import { Price } from '../components/Price';
 import { QuantityStepper } from '../components/QuantityStepper';
 import { VariantPicker } from '../components/VariantPicker';
 import { useProduct } from '../hooks';
@@ -56,8 +56,9 @@ export function ProductPage() {
   // A stale selection (variant deactivated after refetch) falls back to the default one.
   const sel = selection && findVariant(variants, selection) ? selection : defaultSelection(variants);
   const variant = findVariant(variants, sel);
-  // One price per product: choosing a flavor/color never changes it.
+  // One price per product: choosing a flavor/color never changes it. With a discount this is the discount price.
   const price = productPriceMinor(p);
+  const oldPrice = productOldPriceMinor(p);
   // Buyers see only the status; the exact quantity is checked by the server at checkout.
   const status = variant?.stock_status ?? 'out_of_stock';
   const inCart = cart.lines.find((l) => l.variantId === variant?.id)?.quantity ?? 0;
@@ -76,6 +77,7 @@ export function ProductPage() {
         name: p.name,
         variantLabel: variantLabel(check.variant),
         unitPriceMinor: price,
+        originalUnitPriceMinor: oldPrice,
         imagePath: p.images[0]?.storage_path ?? null,
         maxQuantity: MAX_LINE_QUANTITY,
       },
@@ -123,8 +125,8 @@ export function ProductPage() {
             {p.categoryName}
           </Link>
           <h1 className="text-xl font-bold">{p.name}</h1>
-          <p className="text-2xl font-semibold" data-testid="product-price">
-            {formatMoney(price, shop.currency)}
+          <p className="text-2xl font-semibold tabular-nums" data-testid="product-price">
+            <Price priceMinor={price} oldPriceMinor={oldPrice} currency={shop.currency} />
           </p>
           <p className="text-sm" data-testid="product-stock">
             {!variant ? (
