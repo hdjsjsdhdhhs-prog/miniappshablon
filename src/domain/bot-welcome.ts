@@ -38,3 +38,59 @@ export function normalizeManagerUrl(input: string | null | undefined): string | 
 export function renderWelcome(template: string, shopName: string): string {
   return template.split(SHOP_NAME_PLACEHOLDER).join(shopName);
 }
+
+// ---- Premium (custom) emoji ---------------------------------------------------------------------------------------
+// Written in a message text as the official Telegram tag <tg-emoji emoji-id="ID">🙂</tg-emoji>; on a button — as its
+// icon_custom_emoji_id. Same rules as supabase/functions/_shared/telegram-rich.ts (checked in telegram-rich.test.ts).
+
+/** Telegram Bot API: 0–1024 characters of a photo caption. */
+export const CAPTION_TEXT_MAX = 1024;
+export const CUSTOM_EMOJI_ID_RE = /^\d{5,25}$/;
+const TAG_RE = /<tg-emoji\s+emoji-id="(\d{5,25})"\s*>([^<>\n]{1,16})<\/tg-emoji>/g;
+
+/** '' is fine (no icon); otherwise the id must be a number as Telegram gives it. */
+export function isEmojiIdInput(input: string): boolean {
+  const raw = input.trim();
+  return raw === '' || CUSTOM_EMOJI_ID_RE.test(raw);
+}
+
+/** `value` with `insert` at the caret of a text field (replacing its selection), or appended when there is no caret. */
+export function insertAtCaret(field: { selectionStart: number | null; selectionEnd: number | null } | null, value: string, insert: string): string {
+  if (!field || typeof field.selectionStart !== 'number') return value + insert;
+  const start = Math.min(field.selectionStart, value.length);
+  const end = Math.min(field.selectionEnd ?? start, value.length);
+  return value.slice(0, start) + insert + value.slice(end);
+}
+
+/** The tag to put into a message text. */
+export function tgEmojiTag(emojiId: string, fallback: string): string {
+  return `<tg-emoji emoji-id="${emojiId.trim()}">${fallback.trim()}</tg-emoji>`;
+}
+
+export interface RichSegment {
+  text: string;
+  /** Set for a Premium emoji: `text` is its regular fallback emoji. */
+  emojiId?: string;
+}
+
+/** A message text split into plain parts and Premium emoji, for the preview. */
+export function richSegments(template: string): RichSegment[] {
+  const source = template.trim();
+  const out: RichSegment[] = [];
+  let last = 0;
+  for (const m of source.matchAll(TAG_RE)) {
+    if (!m[2]!.trim()) continue;
+    if (m.index > last) out.push({ text: source.slice(last, m.index) });
+    out.push({ text: m[2]!, emojiId: m[1]! });
+    last = m.index + m[0].length;
+  }
+  if (last < source.length) out.push({ text: source.slice(last) });
+  return out;
+}
+
+/** The text as Telegram sends and counts it: every tag reduced to its fallback emoji. */
+export function richPlainText(template: string): string {
+  return richSegments(template)
+    .map((s) => s.text)
+    .join('');
+}

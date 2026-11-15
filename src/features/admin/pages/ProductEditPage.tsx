@@ -14,7 +14,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { minorToInput, parseMoneyInput } from '@/domain/money';
+import { formatMoney, minorToInput, parseMoneyInput } from '@/domain/money';
+import { isValidDiscount } from '@/domain/pricing';
 import { queryKeys } from '@/domain/query-keys';
 import { useAdminShop } from '../admin-context';
 import { createProduct, deleteProduct, fetchAdminCategories, fetchAdminProduct, saveProductWithPrice, updateProduct, type AdminProduct } from '../api';
@@ -23,14 +24,27 @@ import { ProductImagesEditor } from '../components/ProductImagesEditor';
 import { explainDeleteError } from '../delete-messages';
 import { VariantsEditor } from '../components/VariantsEditor';
 
-const schema = z.object({
-  name: z.string().trim().min(1, 'Укажите название').max(120),
-  description: z.string().max(4000),
-  categoryId: z.string().min(1, 'Выберите категорию'),
-  price: z.string().refine((v) => parseMoneyInput(v) !== null, 'Цена в формате 1290 или 1290,50'),
-  isPublished: z.boolean(),
-  sortOrder: z.coerce.number().int().min(-100000).max(100000),
-});
+const schema = z
+  .object({
+    name: z.string().trim().min(1, 'Укажите название').max(120),
+    description: z.string().max(4000),
+    categoryId: z.string().min(1, 'Выберите категорию'),
+    price: z.string().refine((v) => parseMoneyInput(v) !== null, 'Цена в формате 1290 или 1290,50'),
+    // Optional: empty = no discount. Otherwise a positive price below the regular one (the database checks the same).
+    discountPrice: z.string().trim(),
+    isPublished: z.boolean(),
+    sortOrder: z.coerce.number().int().min(-100000).max(100000),
+  })
+  .superRefine((v, ctx) => {
+    if (v.discountPrice === '') return;
+    const discount = parseMoneyInput(v.discountPrice);
+    const price = parseMoneyInput(v.price);
+    if (discount === null) ctx.addIssue({ code: 'custom', path: ['discountPrice'], message: 'Цена в формате 990 или 990,50' });
+    else if (discount <= 0) ctx.addIssue({ code: 'custom', path: ['discountPrice'], message: 'Цена со скидкой должна быть больше нуля' });
+    else if (price !== null && !isValidDiscount(price, discount)) {
+      ctx.addIssue({ code: 'custom', path: ['discountPrice'], message: 'Цена со скидкой должна быть ниже обычной цены' });
+    }
+  });
 type FormValues = z.input<typeof schema>;
 
 function ProductForm({ product, onSaved }: { product: AdminProduct | null; onSaved: (id: string) => void }) {
@@ -44,11 +58,16 @@ function ProductForm({ product, onSaved }: { product: AdminProduct | null; onSav
       description: product?.description ?? '',
       categoryId: product?.category_id ?? '',
       price: product ? minorToInput(product.base_price_minor) : '',
+      discountPrice: product?.discount_price_minor != null ? minorToInput(product.discount_price_minor) : '',
       isPublished: product?.is_published ?? false,
       sortOrder: product?.sort_order ?? 0,
     },
   });
   const { errors, isSubmitting, isDirty } = form.formState;
+  // Live preview of how the storefront shows the two prices (only for a valid pair).
+  const [priceInput, discountInput] = form.watch(['price', 'discountPrice']);
+  const previewPrice = parseMoneyInput(priceInput ?? '');
+  const previewDiscount = discountInput?.trim() ? parseMoneyInput(discountInput) : null;
 
   const submit = form.handleSubmit(async (v) => {
     const input = {
@@ -56,6 +75,7 @@ function ProductForm({ product, onSaved }: { product: AdminProduct | null; onSav
       description: v.description,
       category_id: v.categoryId,
       base_price_minor: parseMoneyInput(v.price)!,
+      discount_price_minor: v.discountPrice === '' ? null : parseMoneyInput(v.discountPrice),
       is_published: v.isPublished,
       sort_order: v.sortOrder,
     };
@@ -115,6 +135,34 @@ function ProductForm({ product, onSaved }: { product: AdminProduct | null; onSav
           <p className="text-sm text-destructive">{errors.price.message}</p>
         ) : (
           <p className="text-xs text-muted-foreground">Одна цена для всех вкусов и цветов товара.</p>
+        )}
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="pf-discount">
+          Цена со скидкой, {shop.currency} <span className="font-normal text-muted-foreground">— необязательно</span>
+        </Label>
+        <Input
+          id="pf-discount"
+          inputMode="decimal"
+          placeholder="Без скидки"
+          aria-invalid={!!errors.discountPrice}
+          aria-describedby="pf-discount-hint"
+          {...form.register('discountPrice')}
+          data-testid="product-discount-input"
+        />
+        {errors.discountPrice ? (
+          <p className="text-sm text-destructive" data-testid="product-discount-error">
+            {errors.discountPrice.message}
+          </p>
+        ) : previewPrice !== null && isValidDiscount(previewPrice, previewDiscount) ? (
+          <p id="pf-discount-hint" className="text-xs text-muted-foreground" data-testid="product-discount-preview">
+            На витрине: <span className="font-semibold text-emerald-400">{formatMoney(previewDiscount, shop.currency)}</span>{' '}
+            <s>{formatMoney(previewPrice, shop.currency)}</s>
+          </p>
+        ) : (
+          <p id="pf-discount-hint" className="text-xs text-muted-foreground">
+            Покупатель увидит её вместо обычной цены, а обычная будет зачёркнута. Оставьте поле пустым, если скидки нет.
+          </p>
         )}
       </div>
       <div className="space-y-1.5">

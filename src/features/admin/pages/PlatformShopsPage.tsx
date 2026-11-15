@@ -14,6 +14,7 @@ import { ShopSearchInput } from '../components/ShopSearchInput';
 import { CopyLinkButton } from '../components/CopyLinkButton';
 import { CreateDemoDialog } from '../components/CreateDemoDialog';
 import { DeleteDemoDialog } from '../components/DeleteDemoDialog';
+import { DeleteShopDialog } from '../components/DeleteShopDialog';
 import { MFA_REQUIRED_TEXT } from '../mfa';
 import { HandoverDialog } from '../components/HandoverDialog';
 import { TransferShopDialog } from '../components/TransferShopDialog';
@@ -157,9 +158,15 @@ export function PlatformShopsPage() {
                       </Button>
                     </>
                   ) : (
-                    <Button size="sm" onClick={() => setTransferring(s)} data-testid="platform-transfer">
-                      Передать
-                    </Button>
+                    <>
+                      <Button size="sm" onClick={() => setTransferring(s)} data-testid="platform-transfer">
+                        Передать
+                      </Button>
+                      {/* Any LIVE shop: with or without an owner. The server asks for a fresh TOTP code and the slug. */}
+                      <Button size="sm" variant="destructive" onClick={() => setDeleting(s)} data-testid="platform-shop-delete">
+                        <TrashIcon aria-hidden /> Удалить магазин
+                      </Button>
+                    </>
                   )}
                 </div>
               </li>
@@ -169,7 +176,13 @@ export function PlatformShopsPage() {
       )}
       {transferring && <TransferShopDialog shop={transferring} open onOpenChange={(o) => !o && setTransferring(null)} />}
       {handingOver && <HandoverDialog shop={handingOver} open onOpenChange={(o) => !o && setHandingOver(null)} />}
-      {deleting && <DeleteDemoDialog shop={deleting} open onOpenChange={(o) => !o && setDeleting(null)} />}
+      {/* DEMO: slug only (unchanged). Any other shop: slug + a fresh TOTP code, both checked by the server. */}
+      {deleting &&
+        (deleting.is_demo ? (
+          <DeleteDemoDialog shop={deleting} open onOpenChange={(o) => !o && setDeleting(null)} />
+        ) : (
+          <DeleteShopDialog shop={deleting} open onOpenChange={(o) => !o && setDeleting(null)} />
+        ))}
       {creating && shops.data && <CreateDemoDialog shops={shops.data} open onOpenChange={setCreating} />}
     </main>
   );

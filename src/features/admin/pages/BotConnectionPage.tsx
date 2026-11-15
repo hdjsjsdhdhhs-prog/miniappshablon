@@ -1,6 +1,6 @@
 import { ArrowSquareOutIcon, EyeIcon, EyeSlashIcon, RobotIcon, TelegramLogoIcon, WarningCircleIcon } from '@phosphor-icons/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+import { useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ErrorState, PageSpinner } from '@/components/state-views';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -11,10 +11,21 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { BUTTON_TEXT_MAX, normalizeManagerUrl, renderWelcome, SHOP_NAME_PLACEHOLDER, WELCOME_TEXT_MAX } from '@/domain/bot-welcome';
+import {
+  BUTTON_TEXT_MAX,
+  insertAtCaret,
+  isEmojiIdInput,
+  normalizeManagerUrl,
+  renderWelcome,
+  richPlainText,
+  SHOP_NAME_PLACEHOLDER,
+  WELCOME_TEXT_MAX,
+} from '@/domain/bot-welcome';
 import { queryKeys } from '@/domain/query-keys';
 import { useAdminShop } from '../admin-context';
 import { CopyLinkButton } from '../components/CopyLinkButton';
+import { ButtonEmojiField, PremiumEmojiHint, PremiumEmojiInsert } from '../components/PremiumEmoji';
+import { TelegramPreview } from '../components/TelegramPreview';
 import { AdminApiError, botApi, botErrorText, type BotView, type BotWelcome } from '../functions-api';
 
 const BOTFATHER_URL = 'https://t.me/BotFather';
@@ -100,46 +111,37 @@ function ConnectForm({
   );
 }
 
-/** Telegram-like preview of the welcome message and its inline keyboard. */
-function TelegramPreview({ text, openText, managerText, managerOk }: { text: string; openText: string; managerText: string; managerOk: boolean }) {
-  return (
-    <div className="rounded-xl bg-[#0e1621] p-3" data-testid="bot-preview">
-      <div className="max-w-[300px] space-y-1">
-        <div className="rounded-2xl rounded-bl-sm bg-[#182533] px-3 py-2 text-sm whitespace-pre-wrap break-words text-white" data-testid="bot-preview-text">
-          {text || ' '}
-        </div>
-        <div className="grid gap-1">
-          <div className="flex items-center justify-center gap-1 rounded-lg bg-[#2b5278]/70 px-3 py-2 text-center text-sm text-white" data-testid="bot-preview-button-1">
-            {openText || '—'}
-          </div>
-          <div
-            className={`flex items-center justify-center gap-1 rounded-lg px-3 py-2 text-center text-sm text-white ${managerOk ? 'bg-[#2b5278]/70' : 'bg-[#2b5278]/30 opacity-60'}`}
-            data-testid="bot-preview-button-2"
-          >
-            {managerText || '—'} <ArrowSquareOutIcon aria-hidden className="size-3" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+type WelcomeDraft = Pick<BotWelcome, 'welcome_text' | 'open_button_text' | 'manager_button_text'> & {
+  manager_url: string;
+  open_button_emoji_id: string;
+  manager_button_emoji_id: string;
+};
+
+const toDraft = (w: BotWelcome): WelcomeDraft => ({
+  welcome_text: w.welcome_text,
+  open_button_text: w.open_button_text,
+  manager_button_text: w.manager_button_text,
+  manager_url: w.manager_url ?? '',
+  open_button_emoji_id: w.open_button_emoji_id ?? '',
+  manager_button_emoji_id: w.manager_button_emoji_id ?? '',
+});
 
 function WelcomeEditor({ view, onSaved }: { view: BotView; onSaved: (next: BotView) => void }) {
   const shopName = view.settings.shop.name;
   const w = view.settings.welcome;
-  const [draft, setDraft] = useState<Pick<BotWelcome, 'welcome_text' | 'open_button_text' | 'manager_button_text'> & { manager_url: string }>({
-    welcome_text: w.welcome_text,
-    open_button_text: w.open_button_text,
-    manager_button_text: w.manager_button_text,
-    manager_url: w.manager_url ?? '',
-  });
+  const [draft, setDraft] = useState<WelcomeDraft>(() => toDraft(w));
   const [notice, setNotice] = useState<Notice>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
 
   const rendered = renderWelcome(draft.welcome_text, shopName);
+  // Telegram counts the message as it is sent: a Premium emoji tag counts as the one emoji inside it.
+  const sentLength = richPlainText(rendered).length;
   const managerNormalized = normalizeManagerUrl(draft.manager_url);
   const managerInvalid = draft.manager_url.trim() !== '' && !managerNormalized;
-  const tooLong = rendered.length > WELCOME_TEXT_MAX;
-  const invalid = !draft.welcome_text.trim() || tooLong || !draft.open_button_text.trim() || !draft.manager_button_text.trim() || managerInvalid;
+  const tooLong = sentLength > WELCOME_TEXT_MAX;
+  const emojiInvalid = !isEmojiIdInput(draft.open_button_emoji_id) || !isEmojiIdInput(draft.manager_button_emoji_id);
+  const invalid =
+    !draft.welcome_text.trim() || tooLong || !draft.open_button_text.trim() || !draft.manager_button_text.trim() || managerInvalid || emojiInvalid;
 
   const save = useMutation({
     mutationFn: () =>
@@ -148,17 +150,13 @@ function WelcomeEditor({ view, onSaved }: { view: BotView; onSaved: (next: BotVi
         openButtonText: draft.open_button_text,
         managerButtonText: draft.manager_button_text,
         managerUrl: draft.manager_url,
+        openButtonEmojiId: draft.open_button_emoji_id.trim(),
+        managerButtonEmojiId: draft.manager_button_emoji_id.trim(),
       }),
     onSuccess: (next) => {
       onSaved(next);
       // Show what the server stored (normalised manager link, trimmed button texts).
-      const saved = next.settings.welcome;
-      setDraft({
-        welcome_text: saved.welcome_text,
-        open_button_text: saved.open_button_text,
-        manager_button_text: saved.manager_button_text,
-        manager_url: saved.manager_url ?? '',
-      });
+      setDraft(toDraft(next.settings.welcome));
       setNotice({ ok: true, text: 'Сохранено. Новые обращения /start получат обновлённое приветствие.' });
     },
     onError: (e) => setNotice({ ok: false, text: botErrorText(e) }),
@@ -187,6 +185,7 @@ function WelcomeEditor({ view, onSaved }: { view: BotView; onSaved: (next: BotVi
                 <Label htmlFor="bot-welcome">Текст приветствия</Label>
                 <Textarea
                   id="bot-welcome"
+                  ref={textRef}
                   rows={7}
                   value={draft.welcome_text}
                   onChange={set('welcome_text')}
@@ -198,11 +197,16 @@ function WelcomeEditor({ view, onSaved }: { view: BotView; onSaved: (next: BotVi
                     <span className="font-mono">{SHOP_NAME_PLACEHOLDER}</span> заменится на «{shopName}». Можно использовать переносы строк и эмодзи.
                   </span>
                   <span className={tooLong ? 'text-destructive' : undefined} data-testid="bot-welcome-counter">
-                    {rendered.length} / {WELCOME_TEXT_MAX}
+                    {sentLength} / {WELCOME_TEXT_MAX}
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground">Telegram принимает сообщения длиной до 4096 символов. Текст отправляется как есть, без оформления.</p>
               </div>
+              <PremiumEmojiInsert
+                idPrefix="bot-welcome"
+                onInsert={(tag) => setDraft((d) => ({ ...d, welcome_text: insertAtCaret(textRef.current, d.welcome_text, tag) }))}
+              />
+              <PremiumEmojiHint where="welcome" />
               <Button type="submit" disabled={invalid || save.isPending} data-testid="bot-welcome-save">
                 {save.isPending ? 'Сохраняем…' : 'Сохранить сообщение'}
               </Button>
@@ -221,6 +225,12 @@ function WelcomeEditor({ view, onSaved }: { view: BotView; onSaved: (next: BotVi
                 <Label htmlFor="bot-open-text">Текст кнопки</Label>
                 <Input id="bot-open-text" maxLength={BUTTON_TEXT_MAX} value={draft.open_button_text} onChange={set('open_button_text')} data-testid="bot-open-text" />
                 <p className="text-xs text-muted-foreground">Ссылка автоматически ведёт на вашу Mini App.</p>
+                <ButtonEmojiField
+                  id="bot-open-emoji"
+                  value={draft.open_button_emoji_id}
+                  onChange={(v) => setDraft((d) => ({ ...d, open_button_emoji_id: v }))}
+                  testId="bot-open-emoji"
+                />
               </fieldset>
               <fieldset className="space-y-1.5">
                 <legend className="mb-1.5 text-sm font-medium">Кнопка 2 — связь с менеджером</legend>
@@ -247,6 +257,12 @@ function WelcomeEditor({ view, onSaved }: { view: BotView; onSaved: (next: BotVi
                 ) : (
                   <p className="text-xs text-muted-foreground">Можно ввести @username — ссылка будет сохранена как https://t.me/username.</p>
                 )}
+                <ButtonEmojiField
+                  id="bot-manager-emoji"
+                  value={draft.manager_button_emoji_id}
+                  onChange={(v) => setDraft((d) => ({ ...d, manager_button_emoji_id: v }))}
+                  testId="bot-manager-emoji"
+                />
               </fieldset>
               {!w.manager_url && (
                 <Alert data-testid="bot-manager-missing">
@@ -273,7 +289,18 @@ function WelcomeEditor({ view, onSaved }: { view: BotView; onSaved: (next: BotVi
 
       <aside className="space-y-3 text-sm lg:sticky lg:top-4 lg:self-start">
         <p className="font-medium">Предпросмотр</p>
-        <TelegramPreview text={rendered} openText={draft.open_button_text} managerText={draft.manager_button_text} managerOk={!!managerNormalized} />
+        <TelegramPreview
+          text={rendered}
+          buttons={[
+            { text: draft.open_button_text, emojiId: isEmojiIdInput(draft.open_button_emoji_id) ? draft.open_button_emoji_id.trim() || null : null },
+            {
+              text: draft.manager_button_text,
+              emojiId: isEmojiIdInput(draft.manager_button_emoji_id) ? draft.manager_button_emoji_id.trim() || null : null,
+              external: true,
+              muted: !managerNormalized,
+            },
+          ]}
+        />
         <p className="text-xs text-muted-foreground">Так покупатель увидит приветствие в чате с ботом после команды /start.</p>
       </aside>
     </div>

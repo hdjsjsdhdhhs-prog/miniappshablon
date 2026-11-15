@@ -83,7 +83,16 @@ export function ProductsPage() {
                       <p className="text-xs text-muted-foreground">вариантов: {p.product_variants.length}</p>
                     </TableCell>
                     <TableCell>{catName.get(p.category_id) ?? '—'}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatMoney(p.base_price_minor, shop.currency)}</TableCell>
+                    <TableCell className="text-right tabular-nums" data-testid="admin-product-price">
+                      {p.discount_price_minor != null ? (
+                        <>
+                          <span className="font-medium text-emerald-400">{formatMoney(p.discount_price_minor, shop.currency)}</span>{' '}
+                          <s className="text-xs text-muted-foreground">{formatMoney(p.base_price_minor, shop.currency)}</s>
+                        </>
+                      ) : (
+                        formatMoney(p.base_price_minor, shop.currency)
+                      )}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{stock}</TableCell>
                     <TableCell>
                       {p.archived_at ? (
