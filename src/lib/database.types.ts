@@ -77,14 +77,14 @@ isOneToOne: false
                   ]
                 },"order_items": {
                   Row: {
-                    "color": string | null,"created_at": string,"flavor": string | null,"id": string,"line_total_minor": number,"order_id": string,"product_id": string | null,"product_name": string,"quantity": number,"shop_id": string,"unit_price_minor": number,"variant_id": string | null,"variant_label": string
+                    "color": string | null,"created_at": string,"flavor": string | null,"id": string,"line_total_minor": number,"order_id": string,"original_unit_price_minor": number | null,"product_id": string | null,"product_name": string,"quantity": number,"shop_id": string,"unit_price_minor": number,"variant_id": string | null,"variant_label": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "color"?: string | null,"created_at"?: string,"flavor"?: string | null,"id"?: string,"line_total_minor": number,"order_id": string,"product_id"?: string | null,"product_name": string,"quantity": number,"shop_id": string,"unit_price_minor": number,"variant_id"?: string | null,"variant_label"?: string
+                    "color"?: string | null,"created_at"?: string,"flavor"?: string | null,"id"?: string,"line_total_minor": number,"order_id": string,"original_unit_price_minor"?: number | null,"product_id"?: string | null,"product_name": string,"quantity": number,"shop_id": string,"unit_price_minor": number,"variant_id"?: string | null,"variant_label"?: string
                   }
                   Update: {
-                    "color"?: string | null,"created_at"?: string,"flavor"?: string | null,"id"?: string,"line_total_minor"?: number,"order_id"?: string,"product_id"?: string | null,"product_name"?: string,"quantity"?: number,"shop_id"?: string,"unit_price_minor"?: number,"variant_id"?: string | null,"variant_label"?: string
+                    "color"?: string | null,"created_at"?: string,"flavor"?: string | null,"id"?: string,"line_total_minor"?: number,"order_id"?: string,"original_unit_price_minor"?: number | null,"product_id"?: string | null,"product_name"?: string,"quantity"?: number,"shop_id"?: string,"unit_price_minor"?: number,"variant_id"?: string | null,"variant_label"?: string
                   }
                   Relationships: [
                     {
@@ -195,14 +195,14 @@ isOneToOne: false
                   ]
                 },"products": {
                   Row: {
-                    "archived_at": string | null,"base_price_minor": number,"category_id": string,"created_at": string,"description": string,"id": string,"is_featured": boolean,"is_published": boolean,"name": string,"seed_key": string | null,"shop_id": string,"sort_order": number,"updated_at": string
+                    "archived_at": string | null,"base_price_minor": number,"category_id": string,"created_at": string,"description": string,"discount_price_minor": number | null,"id": string,"is_featured": boolean,"is_published": boolean,"name": string,"seed_key": string | null,"shop_id": string,"sort_order": number,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "archived_at"?: string | null,"base_price_minor": number,"category_id": string,"created_at"?: string,"description"?: string,"id"?: string,"is_featured"?: boolean,"is_published"?: boolean,"name": string,"seed_key"?: string | null,"shop_id": string,"sort_order"?: number,"updated_at"?: string
+                    "archived_at"?: string | null,"base_price_minor": number,"category_id": string,"created_at"?: string,"description"?: string,"discount_price_minor"?: number | null,"id"?: string,"is_featured"?: boolean,"is_published"?: boolean,"name": string,"seed_key"?: string | null,"shop_id": string,"sort_order"?: number,"updated_at"?: string
                   }
                   Update: {
-                    "archived_at"?: string | null,"base_price_minor"?: number,"category_id"?: string,"created_at"?: string,"description"?: string,"id"?: string,"is_featured"?: boolean,"is_published"?: boolean,"name"?: string,"seed_key"?: string | null,"shop_id"?: string,"sort_order"?: number,"updated_at"?: string
+                    "archived_at"?: string | null,"base_price_minor"?: number,"category_id"?: string,"created_at"?: string,"description"?: string,"discount_price_minor"?: number | null,"id"?: string,"is_featured"?: boolean,"is_published"?: boolean,"name"?: string,"seed_key"?: string | null,"shop_id"?: string,"sort_order"?: number,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -299,6 +299,66 @@ isOneToOne: true
               "product_id": string,"stock_quantity": number,"variant_id": string
             }[]
                            },
+"bot_assert_available":
+{ Args: { "p_actor": string,"p_bot_id": number,"p_shop_id": string }; Returns: Json
+                           },
+"bot_delete_connection":
+{ Args: { "p_actor": string,"p_connection_id": string,"p_shop_id": string }; Returns: Json
+                           },
+"bot_get_credentials":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
+                           },
+"bot_get_settings":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
+                           },
+"bot_initdata_token":
+{ Args: { "p_shop_slug": string }; Returns: string
+                           },
+"bot_record_sync":
+{ Args: { "p_actor": string,"p_error": string,"p_menu_button_text": string,"p_menu_button_url": string,"p_ok": boolean,"p_shop_id": string }; Returns: Json
+                           },
+"bot_register_connect_attempt":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: undefined
+                           },
+"bot_save_connection":
+{ Args: { "p_actor": string,"p_bot_id": number,"p_bot_token": string,"p_bot_username": string,"p_connection_id": string,"p_menu_button_text": string,"p_menu_button_url": string,"p_shop_id": string,"p_webhook_secret_hash": string,"p_webhook_url": string }; Returns: Json
+                           },
+"bot_save_welcome":
+{ Args: { "p_actor": string,"p_manager_button_text": string,"p_manager_url": string,"p_open_button_text": string,"p_shop_id": string,"p_welcome_text": string }; Returns: Json
+                           },
+"bot_save_welcome_v2":
+{ Args: { "p_actor": string,"p_manager_button_emoji_id": string,"p_manager_button_text": string,"p_manager_url": string,"p_open_button_emoji_id": string,"p_open_button_text": string,"p_shop_id": string,"p_welcome_text": string }; Returns: Json
+                           },
+"bot_webhook_begin":
+{ Args: { "p_connection_id": string,"p_secret_hash": string,"p_update_id": number }; Returns: Json
+                           },
+"bot_webhook_record_menu":
+{ Args: { "p_connection_id": string,"p_menu_button_text": string,"p_menu_button_url": string }; Returns: undefined
+                           },
+"bot_webhook_release":
+{ Args: { "p_connection_id": string,"p_update_id": number }; Returns: undefined
+                           },
+"bot_webhook_track":
+{ Args: { "p_chat_id": number,"p_connection_id": string,"p_event": string,"p_tg_user_id": number }; Returns: string
+                           },
+"broadcast_cancel":
+{ Args: { "p_actor": string,"p_broadcast_id": string,"p_reason": string,"p_shop_id": string }; Returns: Json
+                           },
+"broadcast_claim":
+{ Args: { "p_actor": string,"p_broadcast_id": string,"p_limit": number,"p_shop_id": string,"p_worker_id": string }; Returns: Json
+                           },
+"broadcast_overview":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
+                           },
+"broadcast_report":
+{ Args: { "p_broadcast_id": string,"p_photo_file_id": string,"p_results": Json,"p_retry_after": number,"p_worker_id": string }; Returns: Json
+                           },
+"broadcast_retry_failed":
+{ Args: { "p_actor": string,"p_broadcast_id": string,"p_shop_id": string }; Returns: Json
+                           },
+"broadcast_start":
+{ Args: { "p_actor": string,"p_button_emoji_id": string,"p_button_text": string,"p_idempotency_key": string,"p_message_text": string,"p_photo_path": string,"p_shop_id": string }; Returns: Json
+                           },
 "checkout_record_stock_refusal":
 { Args: { "p_customer_tg_id": number,"p_shop_slug": string }; Returns: undefined
                            },
@@ -310,6 +370,15 @@ isOneToOne: true
                            },
 "create_order_v2":
 { Args: { "p_comment": string,"p_customer_snapshot": Json,"p_customer_tg_id": number,"p_delivery_address": string,"p_expected_currency": string,"p_expected_total_minor": number,"p_fulfillment_method": string,"p_idempotency_key": string,"p_items": Json,"p_request_hash": string,"p_shop_slug": string }; Returns: Json
+                           },
+"customer_notify_begin_send":
+{ Args: { "p_attempt": number,"p_bot_id": number,"p_notification_id": number }; Returns: boolean
+                           },
+"customer_notify_claim":
+{ Args: { "p_limit": number,"p_order_id": string,"p_shop_id": string }; Returns: Json
+                           },
+"customer_notify_complete":
+{ Args: { "p_blocked": boolean,"p_error": string,"p_message_id": number,"p_notification_id": number,"p_ok": boolean }; Returns: undefined
                            },
 "get_customer_orders":
 { Args: { "p_customer_tg_id": number,"p_limit"?: number,"p_order_id"?: string,"p_shop_slug": string }; Returns: Json
@@ -412,6 +481,15 @@ isOneToOne: true
                            },
 "platform_reserve_handover":
 { Args: { "p_actor": string,"p_email": string,"p_shop_id": string }; Returns: Json
+                           },
+"platform_shop_delete_begin":
+{ Args: { "p_actor": string,"p_confirm_slug": string,"p_shop_id": string }; Returns: Json
+                           },
+"platform_shop_delete_challenge":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
+                           },
+"platform_shop_delete_preview":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
                            },
 "platform_transfer_shop":
 { Args: { "p_actor": string,"p_new_owner": string,"p_shop_id": string }; Returns: Json
