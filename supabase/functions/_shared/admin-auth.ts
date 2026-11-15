@@ -84,4 +84,7 @@ export const RPC_ERRORS: Record<string, number> = {
   deletion_verification_failed: 409,
   shop_deleting: 409,
   notification_cleanup_failed: 409,
+  // Deletion of any shop incl. LIVE (20261113090000): a TOTP code verified for this very deletion is required.
+  mfa_step_up_required: 403,
+  bot_cleanup_failed: 409,
 };

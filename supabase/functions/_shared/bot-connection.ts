@@ -6,17 +6,19 @@
 // than the Bot API's own. The webhook secret is generated here, given to Telegram once and stored only as SHA-256.
 import {
   buildWelcomeKeyboard,
+  emojiIdsReply,
   generateWebhookSecret,
   isOurMenuButton,
   menuButtonFor,
   normalizeButtonText,
   normalizeManagerUrl,
   normalizeWelcomeText,
-  parseStartCommand,
+  parsePrivateUpdate,
   renderWelcome,
   sha256Hex,
   SHOP_NAME_PLACEHOLDER,
   storefrontUrl,
+  UNSUBSCRIBED_TEXT,
   WEBHOOK_SECRET_RE,
   WELCOME_TEXT_MAX,
   webhookHost,
@@ -24,6 +26,10 @@ import {
   type WelcomeSettings,
 } from './bot-welcome.ts';
 import { BotApiError, DEFAULT_TELEGRAM_API_BASE, isValidBotToken, TelegramBotApi, type TgUser } from './telegram-bot-api.ts';
+import { MAX_CUSTOM_EMOJI, normalizeEmojiId, parseRichText, sendWithEmojiFallback } from './telegram-rich.ts';
+
+/** Updates the webhook asks Telegram for: private messages (/start, /stop) and block / unblock of the bot. */
+export const WEBHOOK_ALLOWED_UPDATES = ['message', 'my_chat_member'];
 
 export type Rpc = (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
 
@@ -66,9 +72,19 @@ const RPC_STATUS: Record<string, number> = {
   invalid_token: 400,
   invalid_connection: 400,
   invalid_welcome: 400,
+  // Broadcasts (20261113090000, broadcast.ts).
+  broadcast_not_found: 404,
+  broadcast_in_progress: 409,
+  broadcast_expired: 409,
+  broadcast_rate_limited: 429,
+  no_recipients: 409,
+  invalid_broadcast: 400,
+  invalid_broadcast_text: 400,
+  invalid_broadcast_photo: 400,
+  invalid_broadcast_button: 400,
 };
 
-async function call<T>(deps: BotDeps, fn: string, args: Record<string, unknown>): Promise<T> {
+export async function call<T>(deps: BotDeps, fn: string, args: Record<string, unknown>): Promise<T> {
   const { data, error } = await deps.rpc(fn, args);
   if (error) {
     const status = RPC_STATUS[error.message];
@@ -123,11 +139,11 @@ export interface BotView {
   webhook_url_configured: boolean;
 }
 
-function api(deps: BotDeps, token: string): TelegramBotApi {
+export function api(deps: BotDeps, token: string): TelegramBotApi {
   return new TelegramBotApi(token, { baseUrl: deps.apiBase, fetchImpl: deps.fetchImpl });
 }
 
-function requireStorefront(deps: BotDeps, slug: string): string {
+export function requireStorefront(deps: BotDeps, slug: string): string {
   const url = storefrontUrl(deps.publicAppUrl, slug);
   if (!url) throw new BotFlowError('public_url_not_configured', 503);
   return url;
@@ -228,7 +244,7 @@ export async function connectBot(deps: BotDeps, input: ConnectInput): Promise<Co
     const menuText = current.welcome.open_button_text;
 
     await applyMenuButton(bot, menuText, storefront);
-    await bot.setWebhook({ url: hookUrl, secret_token: secret, allowed_updates: ['message'], drop_pending_updates: false });
+    await bot.setWebhook({ url: hookUrl, secret_token: secret, allowed_updates: WEBHOOK_ALLOWED_UPDATES, drop_pending_updates: false });
 
     let saved: BotSettingsJson;
     try {
@@ -334,6 +350,9 @@ export interface WelcomeInput {
   managerButtonText: string;
   /** Empty: no manager link yet. */
   managerUrl: string;
+  /** Premium emoji ids of the buttons. '' removes the icon; absent (an older admin page) keeps the stored one. */
+  openButtonEmojiId?: string;
+  managerButtonEmojiId?: string;
 }
 
 /** Validates and saves the welcome settings; a changed button-1 text is re-applied to the Menu Button too. */
@@ -342,8 +361,14 @@ export async function saveWelcome(deps: BotDeps, shopId: string, actorId: string
   const current = await call<BotSettingsJson>(deps, 'bot_get_settings', actor);
   const welcome = normalizeWelcomeText(input.welcomeText);
   if (!welcome) throw new BotFlowError('invalid_welcome_text', 400);
-  // The limit applies to the message actually sent (after the shop name is substituted).
-  if (welcome.split(SHOP_NAME_PLACEHOLDER).join(current.shop.name).length > WELCOME_TEXT_MAX) throw new BotFlowError('welcome_too_long', 400);
+  // The limit applies to the message actually sent: the shop name substituted, <tg-emoji> tags reduced to their emoji.
+  const rendered = parseRichText(welcome.split(SHOP_NAME_PLACEHOLDER).join(current.shop.name));
+  if (rendered.text.length > WELCOME_TEXT_MAX) throw new BotFlowError('welcome_too_long', 400);
+  if (rendered.entities.length > MAX_CUSTOM_EMOJI) throw new BotFlowError('too_many_custom_emoji', 400, { max: MAX_CUSTOM_EMOJI });
+  const emojiId = (input: string | undefined, stored: string | null | undefined) => (input === undefined ? (stored ?? null) : normalizeEmojiId(input));
+  const openEmoji = emojiId(input.openButtonEmojiId, current.welcome.open_button_emoji_id);
+  const managerEmoji = emojiId(input.managerButtonEmojiId, current.welcome.manager_button_emoji_id);
+  if (openEmoji === undefined || managerEmoji === undefined) throw new BotFlowError('invalid_emoji_id', 400);
   const openText = normalizeButtonText(input.openButtonText);
   if (!openText) throw new BotFlowError('invalid_open_button_text', 400);
   const managerText = normalizeButtonText(input.managerButtonText);
@@ -352,12 +377,14 @@ export async function saveWelcome(deps: BotDeps, shopId: string, actorId: string
   const managerUrl = managerRaw ? normalizeManagerUrl(managerRaw) : null;
   if (managerRaw && !managerUrl) throw new BotFlowError('invalid_manager_url', 400);
 
-  const saved = await call<BotSettingsJson>(deps, 'bot_save_welcome', {
+  const saved = await call<BotSettingsJson>(deps, 'bot_save_welcome_v2', {
     ...actor,
     p_welcome_text: welcome,
     p_open_button_text: openText,
     p_manager_button_text: managerText,
     p_manager_url: managerUrl,
+    p_open_button_emoji_id: openEmoji,
+    p_manager_button_emoji_id: managerEmoji,
   });
   let menuSynced = false;
   if (saved.connection && openText !== current.welcome.open_button_text) {
@@ -406,6 +433,11 @@ const TRANSIENT = new Set(['telegram_rate_limited', 'telegram_unavailable', 'net
  * One Telegram update. 401 for anything that is not proven to come from Telegram for an existing connection (unknown
  * connection and wrong secret answer the same). Each update_id is handled once; a transient Bot API failure releases
  * it and answers 503 so Telegram re-delivers it.
+ *
+ * Every private update of a user is first recorded in the bot's audience (bot_webhook_track): /start and any message
+ * prove the user opened a chat with THIS bot, /stop unsubscribes from broadcasts, my_chat_member tells that the bot
+ * was blocked / unblocked. Only /start (welcome), /stop (confirmation) and /emoji (ids of the Premium emoji in the
+ * message, for the owner who sets up the welcome / a broadcast) are answered.
  */
 export async function handleWebhookUpdate(deps: BotDeps, req: WebhookRequest): Promise<WebhookResponse> {
   const log = deps.log ?? (() => undefined);
@@ -428,12 +460,47 @@ export async function handleWebhookUpdate(deps: BotDeps, req: WebhookRequest): P
   if (!ctx) return { status: 401, body: { ok: false } };
   if (ctx.duplicate) return { status: 200, body: { ok: true, duplicate: true } };
 
-  const start = parseStartCommand(req.update, ctx.bot_username);
-  if (!start || ctx.shop.status !== 'active') return { status: 200, body: { ok: true, handled: false } };
+  const event = parsePrivateUpdate(req.update, ctx.bot_username);
+  if (!event) return { status: 200, body: { ok: true, handled: false } };
 
   const release = async () => {
     await deps.rpc('bot_webhook_release', { p_connection_id: req.connectionId, p_update_id: updateId });
   };
+  // The audience is the only source of recipients for broadcasts and buyer notifications: an update that could not
+  // be recorded is re-delivered by Telegram rather than lost.
+  const tracked = await deps.rpc('bot_webhook_track', {
+    p_connection_id: req.connectionId,
+    p_tg_user_id: event.userId,
+    p_chat_id: event.chatId,
+    // "/emoji …" is an ordinary message as far as the audience is concerned.
+    p_event: event.kind === 'emoji' ? 'message' : event.kind,
+  });
+  if (tracked.error) {
+    log(`bot_webhook_track failed: ${tracked.error.code ?? 'error'}`);
+    await release();
+    return { status: 503, body: { ok: false } };
+  }
+  if (ctx.shop.status !== 'active') return { status: 200, body: { ok: true, handled: false } };
+  if (event.kind === 'emoji') {
+    try {
+      await api(deps, ctx.bot_token).sendText(event.chatId, { text: emojiIdsReply(event.emoji) });
+    } catch (err) {
+      // A helper for the owner, not a delivery that matters: never re-delivered.
+      log(`emoji ids not sent: ${err instanceof BotApiError ? err.code : 'internal'}`);
+    }
+    return { status: 200, body: { ok: true, handled: true } };
+  }
+  if (event.kind === 'stop') {
+    try {
+      await api(deps, ctx.bot_token).sendText(event.chatId, { text: UNSUBSCRIBED_TEXT });
+    } catch (err) {
+      // Unsubscribed anyway; the confirmation is a courtesy.
+      log(`unsubscribe confirmation not sent: ${err instanceof BotApiError ? err.code : 'internal'}`);
+    }
+    return { status: 200, body: { ok: true, handled: true } };
+  }
+  if (event.kind !== 'start') return { status: 200, body: { ok: true, handled: false } };
+  const start = event;
   const storefront = storefrontUrl(deps.publicAppUrl, ctx.shop.slug);
   if (!storefront) {
     log('telegram-webhook: PUBLIC_APP_URL is not configured');
@@ -454,16 +521,21 @@ export async function handleWebhookUpdate(deps: BotDeps, req: WebhookRequest): P
   }
 
   try {
-    await bot.sendPlainMessage(
-      start.chatId,
-      renderWelcome(ctx.welcome.welcome_text, ctx.shop.name),
-      buildWelcomeKeyboard({
+    // Plain text + custom_emoji entities (no parse_mode); a bot that may not use Premium emoji falls back to the
+    // Unicode emoji the owner typed (telegram-rich.ts).
+    const rich = parseRichText(renderWelcome(ctx.welcome.welcome_text, ctx.shop.name));
+    await sendWithEmojiFallback(bot, start.chatId, {
+      text: rich.text,
+      entities: rich.entities,
+      keyboard: buildWelcomeKeyboard({
         openButtonText: openText,
         storefrontUrl: storefront,
         managerButtonText: ctx.welcome.manager_button_text,
         managerUrl: ctx.welcome.manager_url,
+        openButtonEmojiId: ctx.welcome.open_button_emoji_id,
+        managerButtonEmojiId: ctx.welcome.manager_button_emoji_id,
       }),
-    );
+    });
   } catch (err) {
     const code = err instanceof BotApiError ? err.code : 'internal';
     log(`welcome not sent: ${code}`);

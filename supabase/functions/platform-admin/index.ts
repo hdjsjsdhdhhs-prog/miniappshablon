@@ -12,17 +12,26 @@
 // Each invitation e-mail is claimed in SQL first: per (shop, e-mail) one per 60 s and five per hour (429).
 //     | { action: 'demo-delete-preview', shopId } | { action: 'demo-delete', shopId, confirmSlug }
 //     | { action: 'demo-delete-resume', shopId }
+//     | { action: 'shop-delete-preview', shopId } | { action: 'shop-delete-challenge', shopId }
+//     | { action: 'shop-delete', shopId, confirmSlug }
 // MFA (20261102090000): every action requires an aal2 access token. An aal1 token is refused here before any RPC,
 // Auth or Storage call, and independently the SQL refuses every platform right unless the forwarded session is a
 // live aal2 session of the actor (the session is forwarded only for an aal2 token).
 // DEMO deletion (20261102090200): SQL deletes the data and blocks the shop, this function removes the Storage objects
 // under the exact "<shop_id>/" prefix with the service role, SQL completes only once no object is left.
+// Deletion of ANY shop, LIVE included (20261113090000, shop-delete): the same state machine, but the SQL accepts it
+// only after a step-up — `shop-delete-challenge` marks the moment the admin opened the deletion of this shop, and
+// platform_shop_delete_begin requires a TOTP verification of the same Auth session AFTER that moment (read from
+// auth.mfa_amr_claims, not from the request). The browser verifies the code with Supabase Auth; this function never
+// sees it. An interrupted deletion of either kind is continued with demo-delete-resume.
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.117.3';
 import { z } from 'npm:zod@4.6.7';
-import { actorClient, RPC_ERRORS, verifyAdminUser, type AdminCaller } from '../_shared/admin-auth.ts';
+import { actorClient, RPC_ERRORS, telegramApiBase, verifyAdminUser, type AdminCaller } from '../_shared/admin-auth.ts';
 import { serviceClient } from '../_shared/auth.ts';
+import { cleanupBot } from '../_shared/bot-connection.ts';
 import { corsHeaders, errorResponse, json, parseDbErrorDetails } from '../_shared/http.ts';
 import { removeShopMedia } from '../_shared/shop-media-cleanup.ts';
+import { BotApiError, TelegramBotApi } from '../_shared/telegram-bot-api.ts';
 
 const BUCKET = 'shop-media';
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/;
@@ -49,6 +58,9 @@ const bodySchema = z.discriminatedUnion('action', [
   // The confirmation is the exact slug, typed by the admin; the SQL compares it with the shop's slug.
   z.object({ action: z.literal('demo-delete'), shopId: z.uuid(), confirmSlug: z.string().trim().min(1).max(40) }),
   z.object({ action: z.literal('demo-delete-resume'), shopId: z.uuid() }),
+  z.object({ action: z.literal('shop-delete-preview'), shopId: z.uuid() }),
+  z.object({ action: z.literal('shop-delete-challenge'), shopId: z.uuid() }),
+  z.object({ action: z.literal('shop-delete'), shopId: z.uuid(), confirmSlug: z.string().trim().min(1).max(40) }),
 ]);
 
 type Body = z.infer<typeof bodySchema>;
@@ -193,16 +205,57 @@ async function handover(req: Request, db: SupabaseClient, actor: string, body: E
 
 type DeletionResult = { status: 'pending' | 'deleted'; remaining?: number; shop?: { id: string; slug: string; name: string } };
 
+type BotCredentials = { bot_token: string; webhook_url: string; menu_button_url: string | null };
+
 /**
- * "Удалить DEMO". begin (SQL, one transaction: checks, audit, data, shop blocked) → Storage cleanup of the exact
- * prefix (service role, retries) → finalize (SQL completes only when no object is left). `confirmSlug` null = resume
- * an interrupted deletion. 200 only when the deletion is complete; 202 while objects remain (retry later).
+ * Credentials of the shop's own bot, read BEFORE the SQL step deletes the connection and its Vault secret. null: no
+ * bot, or the caller may not read them (the deletion itself is then refused by the SQL anyway). Never returned.
  */
-async function demoDelete(req: Request, db: SupabaseClient, actor: string, shopId: string, confirmSlug: string | null, action: string) {
+async function botCredentials(db: SupabaseClient, actor: string, shopId: string): Promise<BotCredentials | null> {
+  const { data, error } = await db.rpc('bot_get_credentials', { p_shop_id: shopId, p_actor: actor });
+  if (error || !data) return null;
+  const creds = data as Partial<BotCredentials>;
+  return typeof creds.bot_token === 'string' && typeof creds.webhook_url === 'string'
+    ? { bot_token: creds.bot_token, webhook_url: creds.webhook_url, menu_button_url: creds.menu_button_url ?? null }
+    : null;
+}
+
+/**
+ * After the shop's data is gone: removes OUR webhook and OUR Menu Button from its bot, so the bot stops opening a
+ * storefront that no longer exists. Best effort — the connection is deleted either way and a webhook left behind
+ * points at an unknown connection, which telegram-webhook refuses.
+ */
+async function detachBot(creds: BotCredentials): Promise<void> {
+  try {
+    const bot = new TelegramBotApi(creds.bot_token, { baseUrl: telegramApiBase() });
+    await cleanupBot(bot, { webhookUrl: creds.webhook_url, menuButtonUrl: creds.menu_button_url });
+  } catch (err) {
+    console.warn('shop delete: bot not detached', err instanceof BotApiError ? err.code : 'internal');
+  }
+}
+
+/**
+ * "Удалить DEMO" / "Удалить магазин". begin (SQL, one transaction: checks, audit, data, shop blocked) → Storage
+ * cleanup of the exact prefix (service role, retries) → finalize (SQL completes only when no object is left).
+ * `begin`: platform_demo_delete_begin (DEMO only) or platform_shop_delete_begin (any shop, step-up MFA checked in
+ * SQL). `confirmSlug` null = resume an interrupted deletion. 200 only when the deletion is complete; 202 while
+ * objects remain (retry later).
+ */
+async function deleteShop(
+  req: Request,
+  db: SupabaseClient,
+  actor: string,
+  shopId: string,
+  confirmSlug: string | null,
+  action: string,
+  begin: 'platform_demo_delete_begin' | 'platform_shop_delete_begin' = 'platform_demo_delete_begin',
+) {
   if (confirmSlug !== null) {
-    const begun = await db.rpc('platform_demo_delete_begin', { p_actor: actor, p_shop_id: shopId, p_confirm_slug: confirmSlug });
+    const bot = await botCredentials(db, actor, shopId);
+    const begun = await db.rpc(begin, { p_actor: actor, p_shop_id: shopId, p_confirm_slug: confirmSlug });
     if (begun.error) return rpcError(req, action, begun.error);
     if ((begun.data as DeletionResult).status === 'deleted') return json(req, 200, { deletion: begun.data });
+    if (bot) await detachBot(bot);
   } else {
     const preview = await db.rpc('platform_demo_delete_preview', { p_actor: actor, p_shop_id: shopId });
     if (preview.error) return rpcError(req, action, preview.error);
@@ -250,12 +303,21 @@ Deno.serve(async (req) => {
   const db = actorClient(auth);
   if (body.action === 'create-demo') return createDemo(req, db, auth.userId, body);
   if (body.action === 'handover') return handover(req, db, auth.userId, body);
-  if (body.action === 'demo-delete') return demoDelete(req, db, auth.userId, body.shopId, body.confirmSlug, body.action);
-  if (body.action === 'demo-delete-resume') return demoDelete(req, db, auth.userId, body.shopId, null, body.action);
-  if (body.action === 'demo-delete-preview') {
-    const { data, error } = await db.rpc('platform_demo_delete_preview', { p_actor: auth.userId, p_shop_id: body.shopId });
+  if (body.action === 'demo-delete') return deleteShop(req, db, auth.userId, body.shopId, body.confirmSlug, body.action);
+  if (body.action === 'demo-delete-resume') return deleteShop(req, db, auth.userId, body.shopId, null, body.action);
+  if (body.action === 'shop-delete') {
+    return deleteShop(req, db, auth.userId, body.shopId, body.confirmSlug, body.action, 'platform_shop_delete_begin');
+  }
+  if (body.action === 'demo-delete-preview' || body.action === 'shop-delete-preview') {
+    const fn = body.action === 'demo-delete-preview' ? 'platform_demo_delete_preview' : 'platform_shop_delete_preview';
+    const { data, error } = await db.rpc(fn, { p_actor: auth.userId, p_shop_id: body.shopId });
     if (error) return rpcError(req, body.action, error);
     return json(req, 200, { preview: data });
+  }
+  if (body.action === 'shop-delete-challenge') {
+    const { data, error } = await db.rpc('platform_shop_delete_challenge', { p_actor: auth.userId, p_shop_id: body.shopId });
+    if (error) return rpcError(req, body.action, error);
+    return json(req, 200, { challenge: data });
   }
 
   const call =
