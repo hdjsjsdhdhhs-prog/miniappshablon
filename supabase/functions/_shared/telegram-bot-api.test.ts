@@ -72,6 +72,85 @@ describe('TelegramBotApi', () => {
   it('refuses a malformed token before any request', () => {
     expect(() => new TelegramBotApi('nope')).toThrow(BotApiError);
   });
+
+  /** The error of a sendText that Telegram answered with `status` / `body`. */
+  async function failure(status: number, body: unknown): Promise<BotApiError> {
+    const api = new TelegramBotApi(TOKEN, { fetchImpl: (async () => reply(status, body)) as unknown as typeof fetch });
+    try {
+      await api.sendText(42, { text: 'x' });
+    } catch (err) {
+      return err as BotApiError;
+    }
+    throw new Error('expected the request to fail');
+  }
+
+  it('flood control: a 429 carries the seconds Telegram asks to wait (rounded up); nothing else does', async () => {
+    expect(await failure(429, { ok: false, error_code: 429, description: 'Too Many Requests: retry after 7', parameters: { retry_after: 7 } })).toMatchObject({
+      code: 'telegram_rate_limited',
+      retryAfter: 7,
+    });
+    expect((await failure(429, { ok: false, error_code: 429, description: 'Too Many Requests', parameters: { retry_after: 1.2 } })).retryAfter).toBe(2);
+    expect((await failure(429, { ok: false, error_code: 429, description: 'Too Many Requests' })).retryAfter).toBeNull();
+    expect((await failure(429, { ok: false, error_code: 429, description: 'Too Many Requests', parameters: { retry_after: -3 } })).retryAfter).toBeNull();
+    expect((await failure(502, { ok: false, error_code: 502, description: 'Bad Gateway' })).retryAfter).toBeNull();
+  });
+
+  it.each([
+    [403, 'Forbidden: bot was blocked by the user', true],
+    [403, 'Forbidden: user is deactivated', true],
+    [400, 'Bad Request: chat not found', true],
+    [400, 'Bad Request: PEER_ID_INVALID', true],
+    [400, 'Bad Request: message is too long', false],
+    [429, 'Too Many Requests: retry after 5', false],
+    [500, 'Internal Server Error', false],
+    [401, 'Unauthorized', false],
+  ])('HTTP %i "%s": the recipient can not be written to any more = %s', async (status, description, gone) => {
+    expect((await failure(status, { ok: false, error_code: status, description })).recipientGone).toBe(gone);
+  });
+
+  const entities = [{ type: 'custom_emoji' as const, offset: 0, length: 2, custom_emoji_id: '5368324170671202286' }];
+  const keyboard = { inline_keyboard: [[{ text: 'Open', web_app: { url: 'https://x.dev/s/a/' }, icon_custom_emoji_id: '5368324170671202286' }]] };
+  const callOf = (fetchImpl: { mock: { calls: unknown[][] } }, n: number) => fetchImpl.mock.calls[n] as unknown as [string, RequestInit];
+
+  it('sendText sends plain text with custom_emoji entities and never a parse mode', async () => {
+    const fetchImpl = vi.fn(async () => reply(200, { ok: true, result: { message_id: 3 } }));
+    const api = new TelegramBotApi(TOKEN, { baseUrl: 'http://mock.local', fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(await api.sendText(42, { text: '🔥 <b>hi</b>', entities, replyMarkup: keyboard })).toEqual({ message_id: 3 });
+    expect(callOf(fetchImpl, 0)[0]).toBe(`http://mock.local/bot${TOKEN}/sendMessage`);
+    expect(JSON.parse(String(callOf(fetchImpl, 0)[1].body))).toEqual({
+      chat_id: 42,
+      text: '🔥 <b>hi</b>',
+      entities,
+      reply_markup: keyboard,
+      link_preview_options: { is_disabled: true },
+    });
+    // Without entities and a keyboard the fields are absent.
+    await api.sendText(42, { text: 'x', entities: [], replyMarkup: null });
+    expect(JSON.parse(String(callOf(fetchImpl, 1)[1].body))).toEqual({ chat_id: 42, text: 'x', link_preview_options: { is_disabled: true } });
+  });
+
+  it('sendPhoto uploads a file as multipart/form-data and re-sends a stored one by its file_id', async () => {
+    const fetchImpl = vi.fn(async () => reply(200, { ok: true, result: { message_id: 4, photo: [{ file_id: 'small' }, { file_id: 'big' }] } }));
+    const api = new TelegramBotApi(TOKEN, { baseUrl: 'http://mock.local', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const photo = new Blob([new Uint8Array(5)], { type: 'image/jpeg' });
+    expect(await api.sendPhoto(42, { photo, caption: 'Новинка', captionEntities: entities, replyMarkup: keyboard })).toMatchObject({ message_id: 4 });
+
+    const [url, init] = callOf(fetchImpl, 0);
+    expect(url).toBe(`http://mock.local/bot${TOKEN}/sendPhoto`);
+    const form = init.body as FormData;
+    expect(form).toBeInstanceOf(FormData);
+    expect(form.get('chat_id')).toBe('42');
+    expect(form.get('caption')).toBe('Новинка');
+    expect(JSON.parse(String(form.get('caption_entities')))).toEqual(entities);
+    expect(JSON.parse(String(form.get('reply_markup')))).toEqual(keyboard);
+    expect((form.get('photo') as File).size).toBe(5);
+    // The multipart boundary is chosen by fetch: no content type is forced.
+    expect(init.headers).toBeUndefined();
+
+    // The file_id Telegram returned: a plain JSON request, nothing is uploaded again.
+    await api.sendPhoto(42, { photo: 'big', caption: 'Новинка' });
+    expect(JSON.parse(String(callOf(fetchImpl, 1)[1].body))).toEqual({ chat_id: 42, caption: 'Новинка', photo: 'big' });
+  });
 });
 
 describe('rights check', () => {

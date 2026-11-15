@@ -3,10 +3,14 @@
 //
 // Behaviour is driven by the fake token / chat id, so parallel scenarios do not share state:
 //   token secret starting with "UNAUTHORIZED"  → 401 for every method (wrong token)
+//   token secret starting with "NOEMOJI"       → 400 for a message that uses Premium (custom) emoji — a bot whose owner
+//                                                has no Telegram Premium (custom_emoji entities / icon_custom_emoji_id)
 //   chat id containing "missing"               → getChat: 400 "chat not found"
 //   chat id containing "noperm"                → bot is not a member: cannot post (403 on sendMessage)
 //   chat id containing "alwaysfail"            → sendMessage: 500 every time
-//   POST /__mock/fail { chat_id, times, status? } → the next `times` sendMessage calls to that chat fail (500 or `status`)
+//   POST /__mock/fail { chat_id, times, status?, retry_after? } → the next `times` sendMessage / sendPhoto calls to that
+//                                                chat fail (500 or `status`; 429 carries parameters.retry_after)
+// sendPhoto accepts a file_id (JSON) or an uploaded file (multipart/form-data) and answers with a file_id, like Telegram.
 // Bot connection (per numeric bot id): getWebhookInfo / setWebhook / deleteWebhook, getChatMenuButton /
 // setChatMenuButton keep their state in memory.
 //   GET  /__mock/bots/<id>                     → { webhook: { url, secret_token, allowed_updates } | null, menu_button }
@@ -38,6 +42,10 @@ export interface MockMessage {
   text: string;
   parse_mode: string | null;
   reply_markup: unknown;
+  /** `entities` (sendMessage) / `caption_entities` (sendPhoto) as received; null when absent. */
+  entities: unknown;
+  /** sendPhoto only: how the photo arrived — an uploaded file (its size) or a file_id. */
+  photo: { upload_bytes: number } | { file_id: string } | null;
   at: string;
 }
 
@@ -62,10 +70,44 @@ function tgError(res: ServerResponse, status: number, description: string) {
   send(res, status, { ok: false, error_code: status, description });
 }
 
+/** Fields of a multipart/form-data body; a file part becomes `{ upload_bytes }`. Enough for sendPhoto uploads. */
+function parseMultipart(body: Buffer, boundary: string): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  const delimiter = Buffer.from(`--${boundary}`);
+  let at = body.indexOf(delimiter);
+  while (at >= 0) {
+    const next = body.indexOf(delimiter, at + delimiter.length);
+    if (next < 0) break;
+    const part = body.subarray(at + delimiter.length, next);
+    const split = part.indexOf('\r\n\r\n');
+    if (split >= 0) {
+      const head = part.subarray(0, split).toString('utf8');
+      // Content ends with the CRLF that precedes the next delimiter.
+      const content = part.subarray(split + 4, part.length - 2);
+      const name = /name="([^"]+)"/.exec(head)?.[1];
+      if (name) fields[name] = /filename="/.test(head) ? { upload_bytes: content.length } : content.toString('utf8');
+    }
+    at = next;
+  }
+  return fields;
+}
+
+const parseMaybeJson = (v: unknown): unknown => {
+  if (typeof v !== 'string') return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return v;
+  }
+};
+
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
-  const raw = Buffer.concat(chunks).toString('utf8');
+  const buffer = Buffer.concat(chunks);
+  const boundary = /^multipart\/form-data;.*boundary=(?:"([^"]+)"|([^;]+))/i.exec(String(req.headers['content-type'] ?? ''));
+  if (boundary) return parseMultipart(buffer, (boundary[1] ?? boundary[2])!.trim());
+  const raw = buffer.toString('utf8');
   if (!raw) return {};
   try {
     return JSON.parse(raw) as Record<string, unknown>;
@@ -83,7 +125,7 @@ function chatNumericId(chat: string): number {
 
 export function createTelegramMockServer(log: (line: string) => void = () => undefined): Server {
   const messages: MockMessage[] = [];
-  const failures = new Map<string, { times: number; status: number }>();
+  const failures = new Map<string, { times: number; status: number; retryAfter: number | null }>();
   const bots = new Map<number, MockBotState>();
   const botState = (id: number): MockBotState => {
     let s = bots.get(id);
@@ -109,7 +151,11 @@ export function createTelegramMockServer(log: (line: string) => void = () => und
       }
       if (url.pathname === '/__mock/fail' && req.method === 'POST') {
         const body = await readJson(req);
-        failures.set(String(body.chat_id), { times: Number(body.times ?? 1), status: Number(body.status ?? 500) });
+        failures.set(String(body.chat_id), {
+          times: Number(body.times ?? 1),
+          status: Number(body.status ?? 500),
+          retryAfter: body.retry_after === undefined ? null : Number(body.retry_after),
+        });
         return send(res, 200, { ok: true });
       }
       const botPath = /^\/__mock\/bots\/(\d{5,12})$/.exec(url.pathname);
@@ -148,27 +194,54 @@ export function createTelegramMockServer(log: (line: string) => void = () => und
           if (chat.includes('missing')) return tgError(res, 400, 'Bad Request: chat not found');
           if (chat.includes('noperm')) return send(res, 200, { ok: true, result: { status: 'left', user: { id: botId } } });
           return send(res, 200, { ok: true, result: { status: 'administrator', can_post_messages: true, user: { id: botId } } });
-        case 'sendMessage': {
+        case 'sendMessage':
+        case 'sendPhoto': {
           if (chat.includes('missing')) return tgError(res, 400, 'Bad Request: chat not found');
           if (chat.includes('noperm')) return tgError(res, 403, 'Forbidden: bot is not a member of the channel chat');
           const fail = failures.get(chat);
           if (chat.includes('alwaysfail') || (fail && fail.times > 0)) {
             if (fail && fail.times > 0) failures.set(chat, { ...fail, times: fail.times - 1 });
             const status = fail?.status ?? 500;
+            if (status === 429) {
+              const retryAfter = fail?.retryAfter ?? 1;
+              return send(res, 429, { ok: false, error_code: 429, description: `Too Many Requests: retry after ${retryAfter}`, parameters: { retry_after: retryAfter } });
+            }
             return tgError(res, status, status === 403 ? 'Forbidden: bot was blocked by the user' : 'Internal Server Error (mock)');
+          }
+          const isPhoto = method === 'sendPhoto';
+          const replyMarkup = parseMaybeJson(body.reply_markup) ?? null;
+          const entities = parseMaybeJson(isPhoto ? body.caption_entities : body.entities) ?? null;
+          const usesCustomEmoji = JSON.stringify(entities ?? '').includes('custom_emoji') || JSON.stringify(replyMarkup ?? '').includes('icon_custom_emoji_id');
+          if (secret!.startsWith('NOEMOJI') && usesCustomEmoji) return tgError(res, 400, 'Bad Request: custom emoji are not available for this bot (mock)');
+          let photo: MockMessage['photo'] = null;
+          if (isPhoto) {
+            if (body.photo && typeof body.photo === 'object') photo = body.photo as { upload_bytes: number };
+            else if (typeof body.photo === 'string' && body.photo) photo = { file_id: body.photo };
+            else return tgError(res, 400, 'Bad Request: there is no photo in the request');
           }
           const msg: MockMessage = {
             message_id: nextMessageId++,
             bot_id: botId,
             chat_id: chat,
-            text: String(body.text ?? ''),
+            text: String((isPhoto ? body.caption : body.text) ?? ''),
             parse_mode: body.parse_mode ? String(body.parse_mode) : null,
-            reply_markup: body.reply_markup ?? null,
+            reply_markup: replyMarkup,
+            entities,
+            photo,
             at: new Date().toISOString(),
           };
           messages.push(msg);
-          log(`[telegram-mock] sendMessage → ${chat}: ${msg.text.split('\n')[0]}`);
-          return send(res, 200, { ok: true, result: { message_id: msg.message_id, chat: { id: chatNumericId(chat) }, text: msg.text } });
+          log(`[telegram-mock] ${method} → ${chat}: ${msg.text.split('\n')[0]}`);
+          const result: Record<string, unknown> = { message_id: msg.message_id, chat: { id: chatNumericId(chat) } };
+          if (isPhoto) {
+            // An upload gets a new file_id; a file_id is echoed back — the last size is the largest, like Telegram.
+            const fileId = photo && 'file_id' in photo ? photo.file_id : `mock-photo-${botId}-${msg.message_id}`;
+            result.photo = [{ file_id: `${fileId}-s` }, { file_id: fileId }];
+            result.caption = msg.text;
+          } else {
+            result.text = msg.text;
+          }
+          return send(res, 200, { ok: true, result });
         }
         case 'getWebhookInfo': {
           const hook = botState(botId).webhook;
@@ -275,11 +348,12 @@ export async function mockMessages(chatId: string): Promise<MockMessage[]> {
   return ((await res.json()) as { messages: MockMessage[] }).messages;
 }
 
-export async function mockFailNext(chatId: string, times: number, status = 500): Promise<void> {
+/** The next `times` sends to the chat fail with `status` (429: Telegram flood control with `retryAfter` seconds). */
+export async function mockFailNext(chatId: string, times: number, status = 500, retryAfter?: number): Promise<void> {
   await fetch(`${TELEGRAM_MOCK_URL}/__mock/fail`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, times, status }),
+    body: JSON.stringify({ chat_id: chatId, times, status, ...(retryAfter === undefined ? {} : { retry_after: retryAfter }) }),
   });
 }
 

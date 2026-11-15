@@ -107,6 +107,23 @@ const EXPECTED: Record<string, Roles> = {
   'public.bot_webhook_release(uuid,bigint)': r(false, false, true),
   'public.bot_webhook_record_menu(uuid,text,text)': r(false, false, true),
   'public.bot_initdata_token(text)': r(false, false, true),
+  // Stage 4B (20261113090000): Edge Functions only. Audience of a shop's bot and Premium emoji of the welcome
+  // (telegram-webhook / bot-connection), «Рассылка» (bot-connection; every admin RPC re-checks the actor), the buyer's
+  // order notification (checkout), deletion of any shop with a step-up TOTP (platform-admin, aal2 actor re-checked).
+  'public.bot_webhook_track(uuid,bigint,bigint,text)': r(false, false, true),
+  'public.bot_save_welcome_v2(uuid,uuid,text,text,text,text,text,text)': r(false, false, true),
+  'public.broadcast_overview(uuid,uuid)': r(false, false, true),
+  'public.broadcast_start(uuid,uuid,uuid,text,text,text,text)': r(false, false, true),
+  'public.broadcast_claim(uuid,uuid,uuid,uuid,integer)': r(false, false, true),
+  'public.broadcast_report(uuid,uuid,jsonb,integer,text)': r(false, false, true),
+  'public.broadcast_cancel(uuid,uuid,uuid,text)': r(false, false, true),
+  'public.broadcast_retry_failed(uuid,uuid,uuid)': r(false, false, true),
+  'public.customer_notify_claim(uuid,uuid,integer)': r(false, false, true),
+  'public.customer_notify_begin_send(bigint,integer,bigint)': r(false, false, true),
+  'public.customer_notify_complete(bigint,boolean,bigint,text,boolean)': r(false, false, true),
+  'public.platform_shop_delete_preview(uuid,uuid)': r(false, false, true),
+  'public.platform_shop_delete_challenge(uuid,uuid)': r(false, false, true),
+  'public.platform_shop_delete_begin(uuid,uuid,text)': r(false, false, true),
 };
 
 /** Functions that existed on the hosted project when the hardening migration was written (17.10.2026). */

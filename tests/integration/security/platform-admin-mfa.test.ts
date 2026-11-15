@@ -83,6 +83,32 @@ function actorCalls(actor: string, shopId: string): Array<[string, Record<string
     ['bot_record_sync', { p_shop_id: shopId, p_actor: actor, p_ok: true, p_error: null, p_menu_button_url: null, p_menu_button_text: null }],
     ['bot_delete_connection', { p_shop_id: shopId, p_actor: actor, p_connection_id: Z }],
     ['bot_save_welcome', { p_shop_id: shopId, p_actor: actor, p_welcome_text: 'x', p_open_button_text: 'x', p_manager_button_text: 'x', p_manager_url: null }],
+    // Stage 4B (20261113090000): Premium emoji of the welcome, «Рассылка» (private.assert_can_manage_shop) and the
+    // deletion of any shop (private.assert_platform_admin, before the step-up is even looked at).
+    [
+      'bot_save_welcome_v2',
+      {
+        p_shop_id: shopId,
+        p_actor: actor,
+        p_welcome_text: 'x',
+        p_open_button_text: 'x',
+        p_manager_button_text: 'x',
+        p_manager_url: null,
+        p_open_button_emoji_id: null,
+        p_manager_button_emoji_id: null,
+      },
+    ],
+    ['broadcast_overview', { p_shop_id: shopId, p_actor: actor }],
+    [
+      'broadcast_start',
+      { p_shop_id: shopId, p_actor: actor, p_idempotency_key: Z, p_message_text: 'x', p_photo_path: null, p_button_text: null, p_button_emoji_id: null },
+    ],
+    ['broadcast_claim', { p_shop_id: shopId, p_actor: actor, p_broadcast_id: Z, p_worker_id: Z, p_limit: 1 }],
+    ['broadcast_cancel', { p_shop_id: shopId, p_actor: actor, p_broadcast_id: Z, p_reason: null }],
+    ['broadcast_retry_failed', { p_shop_id: shopId, p_actor: actor, p_broadcast_id: Z }],
+    ['platform_shop_delete_preview', { p_actor: actor, p_shop_id: shopId }],
+    ['platform_shop_delete_challenge', { p_actor: actor, p_shop_id: shopId }],
+    ['platform_shop_delete_begin', { p_actor: actor, p_shop_id: shopId, p_confirm_slug: 'x' }],
   ];
 }
 
@@ -100,6 +126,9 @@ function edgeActions(shopId: string): Array<Record<string, unknown>> {
     { action: 'demo-delete-preview', shopId },
     { action: 'demo-delete', shopId, confirmSlug: 'x' },
     { action: 'demo-delete-resume', shopId },
+    { action: 'shop-delete-preview', shopId },
+    { action: 'shop-delete-challenge', shopId },
+    { action: 'shop-delete', shopId, confirmSlug: 'x' },
   ];
 }
 
