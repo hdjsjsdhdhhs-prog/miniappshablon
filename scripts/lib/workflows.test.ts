@@ -871,7 +871,7 @@ describe('RELEASE.md: interrupted db push (Cancel or timeout)', () => {
       '**Не нажимайте Re-run**',
       'pg_stat_activity',
       'supabase migration list',
-      '`MIGRATION_STAGES` в `scripts/lib/migration-plan.ts` (3A — 5 файлов, 3B — 4, 4A — 1)',
+      '`MIGRATION_STAGES` в `scripts/lib/migration-plan.ts` (3A — 5 файлов, 3B — 4, 4A — 1, 4B — 1)',
       '**применена целиком**, **не начата** или **частично**',
       'scripts/check-production-migration-plan.ts plan list.json dry.json',
       '**Подтверждённо применённой** считается версия',
@@ -880,7 +880,7 @@ describe('RELEASE.md: interrupted db push (Cancel or timeout)', () => {
       'допустим Re-run',
     ]);
     expect(order.every((i) => i >= 0), JSON.stringify(order)).toBe(true);
-    expect(MIGRATION_STAGES.map((s) => [s.id, s.files.length])).toEqual([['3A', 5], ['3B', 4], ['4A', 1]]);
+    expect(MIGRATION_STAGES.map((s) => [s.id, s.files.length])).toEqual([['3A', 5], ['3B', 4], ['4A', 1], ['4B', 1]]);
   });
 
   it('names the CLI version the evidence was read from, equal to the locked supabase CLI', () => {

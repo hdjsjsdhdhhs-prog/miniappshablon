@@ -24,8 +24,18 @@ export class BotApiError extends Error {
     /** Telegram's description with the token removed. Safe to store and show. */
     readonly description: string,
     readonly httpStatus: number,
+    /** Flood control (429): seconds Telegram asks to wait before the request may be repeated (parameters.retry_after). */
+    readonly retryAfter: number | null = null,
   ) {
     super(code);
+  }
+
+  /**
+   * The recipient can not be written to and retrying will not help: the user blocked the bot, deleted the account or
+   * never opened the chat (403), or the chat does not exist (any more).
+   */
+  get recipientGone(): boolean {
+    return this.httpStatus === 403 || this.code === 'chat_not_found' || /user is deactivated|peer_id_invalid/i.test(this.description);
   }
 
   /** Errors that retrying will not fix (bad token, missing chat, no rights). */
@@ -77,6 +87,21 @@ interface TgResponse<T> {
   result?: T;
   error_code?: number;
   description?: string;
+  parameters?: { retry_after?: number };
+}
+
+/** `custom_emoji` entity: a Premium (custom) emoji shown instead of the fallback emoji it covers (UTF-16 offsets). */
+export interface TgCustomEmojiEntity {
+  type: 'custom_emoji';
+  offset: number;
+  length: number;
+  custom_emoji_id: string;
+}
+
+export interface TgSentMessage {
+  message_id: number;
+  /** sendPhoto: the stored sizes; the last one is the largest. Its file_id re-sends the photo without an upload. */
+  photo?: Array<{ file_id: string }>;
 }
 
 export interface TgUser {
@@ -126,17 +151,25 @@ export class TelegramBotApi {
     this.timeoutMs = options.timeoutMs ?? 8000;
   }
 
-  private async call<T>(method: string, params: Record<string, unknown>): Promise<T> {
+  /** `params` as JSON, or — when a file is uploaded — as multipart/form-data (objects are sent JSON-serialized). */
+  private async call<T>(method: string, params: Record<string, unknown>, file?: { field: string; blob: Blob; filename: string }): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), file ? Math.max(this.timeoutMs, 20000) : this.timeoutMs);
     let res: Response;
     try {
-      res = await this.fetchImpl(`${this.baseUrl}/bot${this.token}/${method}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-        signal: controller.signal,
-      });
+      let init: RequestInit;
+      if (file) {
+        const form = new FormData();
+        for (const [key, value] of Object.entries(params)) {
+          if (value === undefined || value === null) continue;
+          form.set(key, typeof value === 'string' ? value : JSON.stringify(value));
+        }
+        form.set(file.field, file.blob, file.filename);
+        init = { method: 'POST', body: form, signal: controller.signal };
+      } else {
+        init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params), signal: controller.signal };
+      }
+      res = await this.fetchImpl(`${this.baseUrl}/bot${this.token}/${method}`, init);
     } catch (err) {
       // fetch errors may echo the URL, which contains the token.
       throw new BotApiError('network_error', redactToken(String((err as Error)?.message ?? err), this.token), 0);
@@ -147,7 +180,8 @@ export class TelegramBotApi {
     if (!res.ok || !body?.ok) {
       const description = redactToken(String(body?.description ?? `HTTP ${res.status}`), this.token).slice(0, 200);
       const status = body?.error_code ?? res.status;
-      throw new BotApiError(classify(status, description), description, status);
+      const retryAfter = Number(body?.parameters?.retry_after);
+      throw new BotApiError(classify(status, description), description, status, Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : null);
     }
     return body.result as T;
   }
@@ -181,6 +215,41 @@ export class TelegramBotApi {
       reply_markup: replyMarkup,
       link_preview_options: { is_disabled: true },
     });
+  }
+
+  /**
+   * Plain text with optional `custom_emoji` entities (no parse_mode: nothing in `text` is interpreted) and an optional
+   * inline keyboard. Used for the welcome and for broadcasts.
+   */
+  sendText(
+    chatId: string | number,
+    message: { text: string; entities?: TgCustomEmojiEntity[]; replyMarkup?: InlineKeyboardMarkup | null },
+  ): Promise<TgSentMessage> {
+    return this.call<TgSentMessage>('sendMessage', {
+      chat_id: chatId,
+      text: message.text,
+      ...(message.entities?.length ? { entities: message.entities } : {}),
+      ...(message.replyMarkup ? { reply_markup: message.replyMarkup } : {}),
+      link_preview_options: { is_disabled: true },
+    });
+  }
+
+  /**
+   * Photo with a caption (≤ 1024 characters). `photo`: a Telegram file_id (no upload) or the file itself, which is
+   * uploaded as multipart/form-data — Telegram never has to fetch a URL of ours.
+   */
+  sendPhoto(
+    chatId: string | number,
+    message: { photo: string | Blob; caption?: string; captionEntities?: TgCustomEmojiEntity[]; replyMarkup?: InlineKeyboardMarkup | null },
+  ): Promise<TgSentMessage> {
+    const params: Record<string, unknown> = {
+      chat_id: chatId,
+      ...(message.caption ? { caption: message.caption } : {}),
+      ...(message.captionEntities?.length ? { caption_entities: message.captionEntities } : {}),
+      ...(message.replyMarkup ? { reply_markup: message.replyMarkup } : {}),
+    };
+    if (typeof message.photo === 'string') return this.call<TgSentMessage>('sendPhoto', { ...params, photo: message.photo });
+    return this.call<TgSentMessage>('sendPhoto', { ...params, chat_id: String(chatId) }, { field: 'photo', blob: message.photo, filename: 'photo.jpg' });
   }
 
   getWebhookInfo(): Promise<TgWebhookInfo> {
@@ -217,7 +286,14 @@ export type TgMenuButton =
   | { type: 'default' }
   | { type: 'web_app'; text: string; web_app: { url: string } };
 
-export type InlineKeyboardButton = { text: string; web_app: { url: string } } | { text: string; url: string };
+/**
+ * `icon_custom_emoji_id`: Premium (custom) emoji shown before the button text. Telegram accepts it only from bots that
+ * purchased additional usernames on Fragment, or in messages a bot sends directly to private, group and supergroup
+ * chats when the bot's owner has Telegram Premium (Bot API, InlineKeyboardButton).
+ */
+export type InlineKeyboardButton =
+  | { text: string; web_app: { url: string }; icon_custom_emoji_id?: string }
+  | { text: string; url: string; icon_custom_emoji_id?: string };
 
 export interface InlineKeyboardMarkup {
   inline_keyboard: InlineKeyboardButton[][];

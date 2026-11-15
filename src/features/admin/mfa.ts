@@ -11,6 +11,7 @@ import { useSession } from './auth';
 /** Assurance level of the current access token (decoded locally by supabase-js; re-read when the token changes). */
 export function useAssurance() {
   const { session } = useSession();
+  const userId = session?.user.id ?? '';
   return useQuery({
     queryKey: queryKeys.adminAssurance(session?.access_token ?? ''),
     queryFn: async () => {
@@ -20,6 +21,13 @@ export function useAssurance() {
     },
     enabled: !!session,
     staleTime: Infinity,
+    meta: { userId },
+    // The access token is replaced on every refresh and on every repeated TOTP verification (the step-up before
+    // deleting a shop). While the new token is being read, an aal2 session of the SAME user keeps showing as aal2 —
+    // otherwise RequireAuth would unmount the page, and the dialog that asked for the code, for a moment. Never
+    // applied to an aal1 session or to another user, so signing in still waits for the real level.
+    placeholderData: (previous, previousQuery) =>
+      userId && previous?.currentLevel === 'aal2' && previousQuery?.meta?.userId === userId ? previous : undefined,
   });
 }
 

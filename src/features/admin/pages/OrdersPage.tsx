@@ -67,7 +67,12 @@ function OrderCard({ order, onChange }: { order: AdminOrder; onChange: (s: Order
             <span>
               {i.product_name}
               {i.variant_label && <span className="text-muted-foreground"> · {i.variant_label}</span>}
-              <span className="text-muted-foreground"> · {formatMoney(i.unit_price_minor, order.currency)} × {i.quantity}</span>
+              <span className="text-muted-foreground">
+                {' · '}
+                {/* The charged price is the snapshot taken at checkout; a discounted line also keeps its list price. */}
+                {i.original_unit_price_minor != null && <s className="mr-1">{formatMoney(i.original_unit_price_minor, order.currency)}</s>}
+                {formatMoney(i.unit_price_minor, order.currency)} × {i.quantity}
+              </span>
             </span>
             <span className="tabular-nums">{formatMoney(i.line_total_minor, order.currency)}</span>
           </li>

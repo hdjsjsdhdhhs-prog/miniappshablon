@@ -10,7 +10,10 @@ export interface CartLine {
   productId: string;
   name: string;
   variantLabel: string;
+  /** Price of one unit as shown when the line was added (the discount price when the product has one). */
   unitPriceMinor: number;
+  /** List price of a discounted product, shown struck through; absent / null: no discount. Display only. */
+  originalUnitPriceMinor?: number | null;
   imagePath: string | null;
   quantity: number;
   /**
@@ -126,21 +129,22 @@ export const cartStore = {
   },
 
   /**
-   * Applies what the server reported after a failed checkout: new prices (price_changed) and, for insufficient_stock,
+   * Applies what the server reported after a failed checkout: new prices (price_changed; `originalPrices` carries the
+   * list price of every line that is discounted now — a repriced line without one loses its struck price) and, for insufficient_stock,
    * the STATUS of each refused line (the exact stock is never sent). out_of_stock → the line goes; low_stock (1–2
    * left) → at most LOW_STOCK_MAX and one less than requested; in_stock → one less than requested. The server checks
    * the real quantity again on the next attempt.
    */
   reconcile(
     shopId: string,
-    updates: { prices?: Record<string, number>; stock?: Record<string, StockStatus> },
+    updates: { prices?: Record<string, number>; originalPrices?: Record<string, number | null>; stock?: Record<string, StockStatus> },
   ): void {
     const next = read(shopId)
       .map((l) => {
         const price = updates.prices?.[l.variantId];
         const status = updates.stock?.[l.variantId];
         let line = l;
-        if (price !== undefined) line = { ...line, unitPriceMinor: price };
+        if (price !== undefined) line = { ...line, unitPriceMinor: price, originalUnitPriceMinor: updates.originalPrices?.[l.variantId] ?? null };
         if (status === 'out_of_stock') line = { ...line, quantity: 0 };
         else if (status === 'low_stock') line = { ...line, quantity: Math.max(1, Math.min(line.quantity - 1, LOW_STOCK_MAX)) };
         else if (status === 'in_stock') line = { ...line, quantity: Math.max(1, line.quantity - 1) };

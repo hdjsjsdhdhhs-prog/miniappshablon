@@ -53,6 +53,22 @@ describe('cart store', () => {
     expect(cartStore.getLines('s')[0]).toMatchObject({ variantId: 'v1', quantity: 1 });
   });
 
+  it('a new price from the server replaces the struck-through list price too (a discount that ended, started or changed)', () => {
+    cartStore.add('discounts', { ...line('v1', 59000, 99), originalUnitPriceMinor: 69000 }, 1);
+    cartStore.add('discounts', line('v2', 1000, 99), 1);
+    cartStore.add('discounts', { ...line('v3', 500, 99), originalUnitPriceMinor: 700 }, 1);
+    // v1: the discount ended. v2: a discount started. v3: not mentioned — untouched.
+    cartStore.reconcile('discounts', { prices: { v1: 69000, v2: 800 }, originalPrices: { v1: null, v2: 1000 } });
+    expect(cartStore.getLines('discounts')).toEqual([
+      expect.objectContaining({ variantId: 'v1', unitPriceMinor: 69000, originalUnitPriceMinor: null }),
+      expect.objectContaining({ variantId: 'v2', unitPriceMinor: 800, originalUnitPriceMinor: 1000 }),
+      expect.objectContaining({ variantId: 'v3', unitPriceMinor: 500, originalUnitPriceMinor: 700 }),
+    ]);
+    // A server that reports prices only: a repriced line never keeps a stale list price.
+    cartStore.reconcile('discounts', { prices: { v3: 600 } });
+    expect(cartStore.getLines('discounts')[2]).toMatchObject({ unitPriceMinor: 600, originalUnitPriceMinor: null });
+  });
+
   it('ignores corrupted storage', () => {
     localStorage.setItem(cartStorageKey('x'), '{not json');
     expect(cartStore.getLines('x')).toEqual([]);
@@ -85,8 +101,17 @@ describe('checkout error mapping', () => {
     expect(describeCheckoutError(new ApiError(409, 'insufficient_stock', [{ variant_id: 'v1', available: 1 }])).reconcile).toEqual({ stock: {} });
     const limited = describeCheckoutError(new ApiError(429, 'stock_check_limited', { retry_after_sec: 600 }));
     expect(limited.message).toMatch(/10 мин/);
-    const price = describeCheckoutError(new ApiError(409, 'price_changed', { total_minor: 1, prices: [{ variant_id: 'v1', unit_price_minor: 99 }] }));
-    expect(price.reconcile).toEqual({ prices: { v1: 99 } });
+    const price = describeCheckoutError(
+      new ApiError(409, 'price_changed', {
+        total_minor: 1,
+        prices: [
+          { variant_id: 'v1', unit_price_minor: 99 },
+          { variant_id: 'v2', unit_price_minor: 590, original_unit_price_minor: 690 },
+        ],
+      }),
+    );
+    // The price charged now and, for a discounted line, its list price (null: no discount).
+    expect(price.reconcile).toEqual({ prices: { v1: 99, v2: 590 }, originalPrices: { v1: null, v2: 690 } });
     expect(describeCheckoutError(new ApiError(422, 'idempotency_conflict', null)).resetIdempotencyKey).toBe(true);
     expect(describeCheckoutError(new Error('x')).message).toBeTruthy();
   });

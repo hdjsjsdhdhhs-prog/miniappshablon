@@ -18,6 +18,7 @@ const NAV = [
   { to: 'settings', label: 'Оформление' },
   { to: 'notifications', label: 'Уведомления' },
   { to: 'bot', label: 'Подключение бота' },
+  { to: 'broadcast', label: 'Рассылка' },
 ];
 
 export function AdminShopLayout() {

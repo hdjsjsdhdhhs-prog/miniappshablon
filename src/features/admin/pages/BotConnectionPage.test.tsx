@@ -194,9 +194,86 @@ describe('BotConnectionPage — connected', () => {
       openButtonText: 'Каталог',
       managerButtonText: 'Связаться с менеджером',
       managerUrl: '@noir_manager',
+      // No Premium emoji on the buttons.
+      openButtonEmojiId: '',
+      managerButtonEmojiId: '',
     });
     expect(await screen.findByTestId('bot-welcome-notice')).toHaveTextContent('Новые обращения /start получат обновлённое приветствие');
     await waitFor(() => expect(screen.queryByTestId('bot-manager-missing')).not.toBeInTheDocument());
+  });
+
+  it('Premium emoji: a tag is put into the text by its ID, button icons are set by ID, and the preview marks them', async () => {
+    const FIRE = '5368324170671202286';
+    const HAND = '5368324170671202287';
+    api.get.mockResolvedValue(connected);
+    api.saveWelcome.mockImplementation(
+      async (_id: string, w: { welcomeText: string; openButtonText: string; managerButtonText: string; openButtonEmojiId: string; managerButtonEmojiId: string }) => ({
+        ...connected,
+        settings: {
+          ...connected.settings,
+          welcome: {
+            welcome_text: w.welcomeText,
+            open_button_text: w.openButtonText,
+            manager_button_text: w.managerButtonText,
+            manager_url: null,
+            open_button_emoji_id: w.openButtonEmojiId || null,
+            manager_button_emoji_id: w.managerButtonEmojiId || null,
+            customized: true,
+            updated_at: '2026-11-13T11:00:00Z',
+          },
+        },
+        menu_synced: false,
+      }),
+    );
+    renderPage();
+
+    const text = await screen.findByTestId('bot-welcome-text');
+    await userEvent.clear(text);
+    await userEvent.type(text, 'Привет ');
+    // "Вставить в текст" needs both the ID and the regular emoji shown where Premium emoji are not available.
+    expect(screen.getByTestId('bot-welcome-emoji-insert-add')).toBeDisabled();
+    await userEvent.type(screen.getByTestId('bot-welcome-emoji-insert-id'), FIRE);
+    expect(screen.getByTestId('bot-welcome-emoji-insert-add')).toBeDisabled();
+    await userEvent.type(screen.getByTestId('bot-welcome-emoji-insert-fallback'), '🔥');
+    await userEvent.click(screen.getByTestId('bot-welcome-emoji-insert-add'));
+    const tagged = `Привет <tg-emoji emoji-id="${FIRE}">🔥</tg-emoji>`;
+    expect(text).toHaveValue(tagged);
+
+    // The preview shows the regular emoji, marked as Premium; the counter counts it as one emoji, not as the tag.
+    expect(screen.getByTestId('bot-preview-text')).toHaveTextContent('Привет 🔥');
+    expect(screen.getByTestId('bot-preview-text')).not.toHaveTextContent('tg-emoji');
+    expect(screen.getByTestId('bot-preview-premium-emoji')).toHaveTextContent('🔥');
+    expect(screen.getByTestId('bot-welcome-counter')).toHaveTextContent('9 / 4096');
+
+    // Button icons: digits only.
+    expect(screen.queryByTestId('bot-preview-button-1-premium')).not.toBeInTheDocument();
+    const openEmoji = screen.getByTestId('bot-open-emoji');
+    await userEvent.type(openEmoji, 'abc');
+    expect(screen.getByTestId('bot-open-emoji-error')).toHaveTextContent('только из цифр');
+    expect(screen.getByTestId('bot-welcome-save')).toBeDisabled();
+    await userEvent.clear(openEmoji);
+    await userEvent.type(openEmoji, FIRE);
+    await userEvent.type(screen.getByTestId('bot-manager-emoji'), HAND);
+    expect(screen.queryByTestId('bot-open-emoji-error')).not.toBeInTheDocument();
+    expect(screen.getByTestId('bot-preview-button-1-premium')).toBeInTheDocument();
+    expect(screen.getByTestId('bot-preview-button-2-premium')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('bot-welcome-save'));
+    expect(api.saveWelcome).toHaveBeenCalledWith('shop-a', {
+      welcomeText: tagged,
+      openButtonText: 'Открыть приложение',
+      managerButtonText: 'Связаться с менеджером',
+      managerUrl: '',
+      openButtonEmojiId: FIRE,
+      managerButtonEmojiId: HAND,
+    });
+    // What the server stored is shown again.
+    expect(await screen.findByTestId('bot-welcome-notice')).toHaveTextContent('Сохранено');
+    expect(screen.getByTestId('bot-open-emoji')).toHaveValue(FIRE);
+    expect(screen.getByTestId('bot-manager-emoji')).toHaveValue(HAND);
+    // The hint names Telegram's restriction and what happens without Premium.
+    expect(screen.getByTestId('premium-emoji-hint')).toHaveTextContent('Telegram Premium');
+    expect(screen.getByTestId('premium-emoji-hint')).toHaveTextContent('с обычными эмодзи и без значков на кнопках');
   });
 
   it('explains how to enable the Main Mini App in BotFather without claiming it was done automatically', async () => {

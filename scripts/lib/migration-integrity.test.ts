@@ -26,7 +26,7 @@ const tmpRoot = mkdtempSync(join(tmpdir(), 'migration-integrity-'));
 afterAll(() => rmSync(tmpRoot, { recursive: true, force: true }));
 let n = 0;
 type Eol = 'as-is' | 'lf' | 'crlf';
-/** Copy the 21 real migrations into a fresh directory, optionally with all line endings forced to LF or CRLF. */
+/** Copy the 22 real migrations into a fresh directory, optionally with all line endings forced to LF or CRLF. */
 function copyMigrations(eol: Eol = 'as-is'): string {
   const dir = join(tmpRoot, `m${n++}`);
   mkdirSync(dir);
@@ -50,12 +50,12 @@ const check = (dir: string, manifest?: readonly MigrationIntegrityEntry[]) => ()
 const differs = (file: string) => new RegExp(`content differs from the approved SHA-256 in 1 file\\(s\\):\\n  ${file}: approved [0-9a-f]{64}, actual [0-9a-f]{64}$`);
 
 describe('integrity manifest', () => {
-  it('has exactly one well-formed SHA-256 per reviewed migration, in the gate manifest order (11 + 5 + 4 + 1 = 21)', () => {
-    expect(MIGRATION_INTEGRITY_MANIFEST).toHaveLength(21);
+  it('has exactly one well-formed SHA-256 per reviewed migration, in the gate manifest order (11 + 5 + 4 + 1 + 1 = 22)', () => {
+    expect(MIGRATION_INTEGRITY_MANIFEST).toHaveLength(22);
     expect(MIGRATION_INTEGRITY_MANIFEST.map((e) => e.file)).toEqual([...REVIEWED_MIGRATION_FILES]);
     expect(REVIEWED_MIGRATION_FILES).toEqual([...APPLIED_BASELINE_MIGRATION_FILES, ...MIGRATION_STAGES.flatMap((s) => s.files)]);
     for (const { file, sha256 } of MIGRATION_INTEGRITY_MANIFEST) expect(sha256, file).toMatch(/^[0-9a-f]{64}$/);
-    expect(new Set(MIGRATION_INTEGRITY_MANIFEST.map((e) => e.sha256)).size).toBe(21);
+    expect(new Set(MIGRATION_INTEGRITY_MANIFEST.map((e) => e.sha256)).size).toBe(22);
     expect(() => assertIntegrityManifestValid()).not.toThrow();
   });
 
@@ -76,7 +76,7 @@ describe('integrity manifest', () => {
     );
     expect(() => assertIntegrityManifestValid([...m, m[0]!])).toThrow(new RegExp(`lists ${BASE_FILE} twice`));
     expect(() => assertIntegrityManifestValid([m[1]!, m[0]!, ...m.slice(2)])).toThrow(/order differs/);
-    expect(() => assertIntegrityManifestValid([...m, null as unknown as MigrationIntegrityEntry])).toThrow(/entry 21 is malformed/);
+    expect(() => assertIntegrityManifestValid([...m, null as unknown as MigrationIntegrityEntry])).toThrow(/entry 22 is malformed/);
   });
 
   it('rejects malformed hash values', () => {
@@ -127,7 +127,7 @@ describe('canonical content', () => {
 });
 
 describe('assertMigrationIntegrity: accepted', () => {
-  it('the 21 real migrations of this branch match their approved SHA-256', () => {
+  it('the 22 real migrations of this branch match their approved SHA-256', () => {
     const verified = assertMigrationIntegrity();
     expect(verified).toEqual(MIGRATION_INTEGRITY_MANIFEST.map(({ file, sha256 }) => ({ file, sha256 })));
   });
@@ -269,8 +269,8 @@ describe('CLI scripts (independent of the working directory)', () => {
       const r = run('check-migration-integrity.ts', [], cwd);
       expect(r.status, r.stderr).toBe(0);
       for (const { file, sha256 } of MIGRATION_INTEGRITY_MANIFEST) expect(r.stdout).toContain(`OK  ${sha256}  ${file}`);
-      expect(r.stdout).toContain('all 21 reviewed migration file(s)');
-      expect(r.stdout).toContain('(baseline 11, 3A 5, 3B 4, 4A 1)');
+      expect(r.stdout).toContain('all 22 reviewed migration file(s)');
+      expect(r.stdout).toContain('(baseline 11, 3A 5, 3B 4, 4A 1, 4B 1)');
     }
   });
 
@@ -317,7 +317,7 @@ describe('CLI scripts (independent of the working directory)', () => {
     expect(verify.status).toBe(1);
     expect(verify.stdout).toBe('');
     expect(verify.stderr).toContain(`${B_FILE}: approved`);
-    const plan = runCopy('check-production-migration-plan.ts', ['plan', list, list, '--expect-stages', '3A,3B,4A']);
+    const plan = runCopy('check-production-migration-plan.ts', ['plan', list, list, '--expect-stages', '3A,3B,4A,4B']);
     expect(plan.status).toBe(1);
     expect(plan.stderr).toMatch(/content differs[\s\S]*Deployment stopped before any database change/);
   });
@@ -331,11 +331,11 @@ describe('CLI scripts (independent of the working directory)', () => {
     writeFileSync(out, '');
     const plan = run('check-production-migration-plan.ts', ['plan', list, dry], elsewhere, { GITHUB_OUTPUT: out });
     expect(plan.status, plan.stderr).toBe(0);
-    expect(plan.stdout).toMatch(/^Integrity: 21 reviewed migration file\(s\) match the approved SHA-256\.\nPlan: skip/);
+    expect(plan.stdout).toMatch(/^Integrity: 22 reviewed migration file\(s\) match the approved SHA-256\.\nPlan: skip/);
     expect(readFileSync(out, 'utf8')).toBe('mode=skip\nstages=\n');
     const verify = run('check-production-migration-plan.ts', ['verify-applied', list], elsewhere);
     expect(verify.status, verify.stderr).toBe(0);
-    expect(verify.stdout).toMatch(/^Integrity: 21 reviewed migration file\(s\) match the approved SHA-256\.\nVerified:/);
+    expect(verify.stdout).toMatch(/^Integrity: 22 reviewed migration file\(s\) match the approved SHA-256\.\nVerified:/);
   });
 });
 
@@ -350,11 +350,65 @@ describe('stock status: Expand only, no Contract (3C) in this release', () => {
       .replace(/\s+/g, ' ')
       .toLowerCase();
 
-  it('the release has exactly the Expand stages 3A, 3B and 4A; no 3C stage and no migration after 4A', () => {
-    expect(MIGRATION_STAGES.map((s) => s.id)).toEqual(['3A', '3B', '4A']);
+  it('the release has exactly the Expand stages 3A, 3B, 4A and 4B; no 3C stage and no migration after 4B', () => {
+    expect(MIGRATION_STAGES.map((s) => s.id)).toEqual(['3A', '3B', '4A', '4B']);
     expect(MIGRATION_STAGES[1].files).toContain(STOCK_FILE);
     expect(readdirSync(DEFAULT_MIGRATIONS_DIR).sort()).toEqual([...REVIEWED_MIGRATION_FILES].sort());
-    expect(REVIEWED_MIGRATION_FILES.at(-1)).toBe('20261107090000_telegram_bot_connection.sql');
+    expect(REVIEWED_MIGRATION_FILES.at(-1)).toBe('20261113090000_stage_4b_admin_discounts_broadcasts.sql');
+  });
+
+  it('4B (admin, discounts, Telegram communications) is Expand: existing tables only gain nullable columns, nothing is dropped or revoked from a table, every public function is service_role only', () => {
+    const file = MIGRATION_STAGES[3].files[0];
+    const sql = sqlOf(file);
+    // Statements outside function bodies ($$ … $$): what the migration itself executes.
+    const top = sql.replace(/\$\$[\s\S]*?\$\$/g, ' ');
+    expect(top, file).not.toMatch(/\bdrop\b/);
+    expect(top, file).not.toMatch(/\b(rename|alter column|set not null|drop not null|set default)\b/);
+    // Only DDL and privileges: no row of any table is written by the migration itself (data changes happen only
+    // inside the RPCs it defines).
+    const statements = top.split(';').map((s) => s.trim()).filter(Boolean);
+    expect(statements.length).toBeGreaterThan(50);
+    for (const statement of statements) {
+      expect(statement).toMatch(/^(select set_config\(|alter table |grant |revoke |create (table|index|unique index|trigger|or replace function) )/);
+    }
+
+    // Existing tables: ADD COLUMN only, every new column nullable and without a default (no table rewrite, and the
+    // frontend / Edge Functions deployed before this stage keep reading and writing the tables as before).
+    const alters = [...top.matchAll(/alter table ([a-z_.]+) ([^;]+);/g)].map((m) => ({ table: m[1]!, body: m[2]! }));
+    expect(alters.map((a) => a.table).sort()).toEqual(['private.shop_bot_welcome', 'private.shop_deletions', 'public.order_items', 'public.products']);
+    for (const { table, body } of alters) {
+      expect(body, table).toMatch(/^add column /);
+      expect(body, table).not.toMatch(/\bnot null\b|\bdefault\b/);
+    }
+
+    // The only grants to a browser role: writing the new discount column of a product (RLS still decides the rows).
+    const browserGrants = [...top.matchAll(/grant [^;]*\b(?:anon|authenticated)\b[^;]*;/g)].map((m) => m[0]);
+    expect(browserGrants).toEqual([
+      'grant insert (discount_price_minor) on public.products to authenticated;',
+      'grant update (discount_price_minor) on public.products to authenticated;',
+    ]);
+    // Revokes only close new private objects and functions; no privilege is taken from an existing public table.
+    for (const revoke of [...top.matchAll(/revoke [^;]+;/g)].map((m) => m[0])) {
+      expect(revoke).toMatch(/^revoke all on (function public\.|all functions in schema private |sequence private\.|private\.)/);
+      expect(revoke).toMatch(/ from public, anon, authenticated;$/);
+    }
+
+    const created = [...new Set([...top.matchAll(/create or replace function (public\.[a-z0-9_]+)\(/g)].map((m) => m[1]!))];
+    expect(created.length).toBeGreaterThan(0);
+    for (const fn of created) {
+      expect(top, fn).toMatch(new RegExp(`revoke all on function ${fn.replace('.', '\\.')}\\([^)]*\\) from public, anon, authenticated;`));
+      expect(top, fn).toMatch(new RegExp(`grant execute on function ${fn.replace('.', '\\.')}\\([^)]*\\) to service_role;`));
+    }
+    // RPCs that existed before this stage are replaced in place (same name and arguments), never dropped: the Edge
+    // Functions deployed before 4B keep calling them.
+    for (const kept of [
+      'public.order_to_json(p_order_id uuid)',
+      'public.platform_create_demo_shop(p_actor uuid, p_template_id uuid, p_slug text, p_name text)',
+      'public.platform_demo_delete_begin(p_actor uuid, p_shop_id uuid, p_confirm_slug text)',
+    ]) {
+      expect(top, kept).toContain(`create or replace function ${kept}`);
+    }
+    expect(top).toMatch(/create or replace function public\.create_order_v2\( p_shop_slug text, p_customer_tg_id bigint, p_customer_snapshot jsonb, p_items jsonb, p_idempotency_key uuid, p_request_hash text, p_fulfillment_method text, p_delivery_address text, p_comment text, p_expected_currency text, p_expected_total_minor bigint \)/);
   });
 
   it('4A (bot connection) is additive: no drop, no change of an existing table, every new public function service_role only', () => {

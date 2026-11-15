@@ -7,7 +7,7 @@ import type { Server } from 'node:http';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTelegramMockServer, type MockBotState, type MockMessage } from '../../../scripts/lib/telegram-mock';
 import { connectBot, disconnectBot, getBot, handleWebhookUpdate, saveWelcome, syncBot, type BotDeps, type Rpc } from './bot-connection';
-import { DEFAULT_MANAGER_BUTTON_TEXT, DEFAULT_OPEN_BUTTON_TEXT, DEFAULT_WELCOME_TEXT, sha256Hex } from './bot-welcome';
+import { DEFAULT_MANAGER_BUTTON_TEXT, DEFAULT_OPEN_BUTTON_TEXT, DEFAULT_WELCOME_TEXT, sha256Hex, UNSUBSCRIBED_TEXT } from './bot-welcome';
 
 let server: Server;
 let base = '';
@@ -39,7 +39,7 @@ const messages = async (chatId: number): Promise<MockMessage[]> => ((await (awai
 const failNext = (chatId: number, times: number, status = 500) =>
   fetch(`${base}/__mock/fail`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: String(chatId), times, status }) });
 
-// ---- In-memory stand-in for the bot_* RPCs (same rules as 20261107090000) ---------------------------------------
+// ---- In-memory stand-in for the bot_* RPCs (same rules as 20261107090000 and 20261113090000) --------------------
 
 interface Shop {
   id: string;
@@ -68,8 +68,16 @@ interface Welcome {
   open_button_text: string;
   manager_button_text: string;
   manager_url: string | null;
+  open_button_emoji_id: string | null;
+  manager_button_emoji_id: string | null;
   updated_at: string;
 }
+interface Subscriber {
+  chat_id: number;
+  status: 'active' | 'unsubscribed' | 'blocked';
+}
+
+const EMOJI_ID_RE = /^[0-9]{5,25}$/;
 
 class FakeDb {
   shops = new Map<string, Shop>();
@@ -77,8 +85,18 @@ class FakeDb {
   conns = new Map<string, Conn>();
   welcome = new Map<string, Welcome>();
   updates = new Set<string>();
+  /** private.bot_subscribers: one row per (shop, bot, Telegram user). */
+  subscribers = new Map<string, Subscriber>();
+  /** true: bot_webhook_track fails (the database is unavailable). */
+  trackFails = false;
   attempts: Array<{ shop: string; actor: string }> = [];
   calls: string[] = [];
+
+  /** The user's row in the audience of the shop's CURRENT bot. */
+  subscriber(shopId: string, tgUserId: number): Subscriber | undefined {
+    const c = this.conns.get(shopId);
+    return c ? this.subscribers.get(`${shopId}/${c.bot_id}/${tgUserId}`) : undefined;
+  }
 
   addShop(slug: string, name: string): Shop & { actor: string } {
     const shop = { id: randomUUID(), slug, name, status: 'active', owner: randomUUID() };
@@ -113,7 +131,16 @@ class FakeDb {
         : null,
       welcome: w
         ? { ...w, customized: true }
-        : { welcome_text: DEFAULT_WELCOME_TEXT, open_button_text: DEFAULT_OPEN_BUTTON_TEXT, manager_button_text: DEFAULT_MANAGER_BUTTON_TEXT, manager_url: null, customized: false, updated_at: null },
+        : {
+            welcome_text: DEFAULT_WELCOME_TEXT,
+            open_button_text: DEFAULT_OPEN_BUTTON_TEXT,
+            manager_button_text: DEFAULT_MANAGER_BUTTON_TEXT,
+            manager_url: null,
+            open_button_emoji_id: null,
+            manager_button_emoji_id: null,
+            customized: false,
+            updated_at: null,
+          },
     };
   }
 
@@ -207,16 +234,42 @@ class FakeDb {
         }
         return this.settings(shop.id);
       }
-      case 'bot_save_welcome': {
+      case 'bot_save_welcome_v2': {
         const shop = this.assert(a.p_shop_id, a.p_actor);
+        const emojiId = (v: unknown) => String(v ?? '').trim() || null;
+        const openEmoji = emojiId(a.p_open_button_emoji_id);
+        const managerEmoji = emojiId(a.p_manager_button_emoji_id);
+        // The CHECK constraints of private.shop_bot_welcome.
+        if ([openEmoji, managerEmoji].some((id) => id !== null && !EMOJI_ID_RE.test(id))) throw new Error('invalid_welcome');
         this.welcome.set(shop.id, {
           welcome_text: String(a.p_welcome_text),
           open_button_text: String(a.p_open_button_text),
           manager_button_text: String(a.p_manager_button_text),
           manager_url: (a.p_manager_url as string) || null,
+          open_button_emoji_id: openEmoji,
+          manager_button_emoji_id: managerEmoji,
           updated_at: now,
         });
         return this.settings(shop.id);
+      }
+      case 'bot_webhook_track': {
+        if (this.trackFails) throw new Error('connection refused');
+        const entry = [...this.conns.entries()].find(([, c]) => c.connection_id === a.p_connection_id);
+        const event = String(a.p_event);
+        const userId = Number(a.p_tg_user_id);
+        if (!entry || !(userId > 0) || !['start', 'message', 'stop', 'blocked', 'unblocked'].includes(event)) return null;
+        const key = `${entry[0]}/${entry[1].bot_id}/${userId}`;
+        const row = this.subscribers.get(key);
+        if (event === 'start' || event === 'message' || event === 'stop') {
+          // A plain message keeps an unsubscribed user unsubscribed; a blocked user who writes again is active.
+          const status = event === 'start' ? 'active' : event === 'stop' ? 'unsubscribed' : !row || row.status === 'blocked' ? 'active' : row.status;
+          this.subscribers.set(key, { chat_id: Number(a.p_chat_id), status });
+          return status;
+        }
+        // my_chat_member only updates a known user; "unblocked" only lifts a block.
+        if (!row || (event === 'unblocked' && row.status !== 'blocked')) return null;
+        row.status = event === 'blocked' ? 'blocked' : 'active';
+        return row.status;
       }
       case 'bot_webhook_begin': {
         const entry = [...this.conns.entries()].find(([, c]) => c.connection_id === a.p_connection_id);
@@ -286,6 +339,44 @@ const startUpdate = (chatId: number, text = '/start', chatType = 'private') => (
   message: { message_id: 1, date: 1, text, chat: { id: chatId, type: chatType }, from: { id: chatId, is_bot: false, first_name: 'Buyer' } },
 });
 const newChat = () => 500_000_000 + Math.floor(Math.random() * 400_000_000);
+/** A private message with extra fields (e.g. entities). */
+const messageUpdate = (chatId: number, message: Record<string, unknown>) => ({
+  update_id: updateSeq++,
+  message: { message_id: 1, date: 1, chat: { id: chatId, type: 'private' }, from: { id: chatId, is_bot: false, first_name: 'Buyer' }, ...message },
+});
+/** my_chat_member: the user blocked ('kicked') or unblocked / restarted ('member') the bot. */
+const memberUpdate = (chatId: number, status: 'kicked' | 'member') => ({
+  update_id: updateSeq++,
+  my_chat_member: {
+    chat: { id: chatId, type: 'private' },
+    from: { id: chatId, is_bot: false, first_name: 'Buyer' },
+    date: 1,
+    old_chat_member: { status: status === 'kicked' ? 'member' : 'kicked' },
+    new_chat_member: { status },
+  },
+});
+
+// Premium (custom) emoji ids are public numbers; these are made up.
+const FIRE = '5368324170671202286';
+const HAND = '5368324170671202287';
+const tag = (id: string, fallback: string) => `<tg-emoji emoji-id="${id}">${fallback}</tg-emoji>`;
+
+/** A shop with a connected bot and a manager link. `prefix` picks the mock's behaviour for the bot (e.g. NOEMOJI). */
+async function connected(slug = 'noir-vapor', name = 'Noir Vapor', prefix = 'FAKE') {
+  const shop = db.addShop(slug, name);
+  const t = token(prefix);
+  await connectBot(deps, { shopId: shop.id, actor: shop.actor, botToken: t });
+  await saveWelcome(deps, shop.id, shop.actor, {
+    welcomeText: DEFAULT_WELCOME_TEXT,
+    openButtonText: 'Открыть приложение',
+    managerButtonText: 'Связаться с менеджером',
+    managerUrl: 'https://t.me/noir_manager',
+  });
+  return { shop, t, connectionId: connIdOf(shop.id), secret: lastSecret() };
+}
+/** Delivers updates to the webhook of one connection, as Telegram does. */
+const sender = (c: { connectionId: string; secret: string }) => (update: unknown) =>
+  handleWebhookUpdate(deps, { connectionId: c.connectionId, secretToken: c.secret, update });
 
 async function expectFlowError(p: Promise<unknown>, code: string) {
   await expect(p).rejects.toMatchObject({ code });
@@ -310,7 +401,8 @@ describe('connect', () => {
     expect(s.webhook!.url).toBe(`https://ref.supabase.co/functions/v1/telegram-webhook?c=${connIdOf(A.id)}`);
     expect(s.webhook!.url).not.toContain(t.split(':')[1]);
     expect(s.webhook!.secret_token).toBe(lastSecret());
-    expect(s.webhook!.allowed_updates).toEqual(['message']);
+    // Private messages (/start, /stop) and block / unblock of the bot — nothing else is requested.
+    expect(s.webhook!.allowed_updates).toEqual(['message', 'my_chat_member']);
     // Only the hash of the webhook secret is stored; the token only in the (fake) Vault.
     expect(db.conns.get(A.id)!.webhook_secret_hash).toBe(await sha256Hex(lastSecret()));
     expect(JSON.stringify([...db.conns.values()])).not.toContain(t.split(':')[1]);
@@ -449,19 +541,6 @@ describe('welcome settings and buttons', () => {
 });
 
 describe('webhook: /start', () => {
-  async function connected(slug = 'noir-vapor', name = 'Noir Vapor') {
-    const shop = db.addShop(slug, name);
-    const t = token();
-    await connectBot(deps, { shopId: shop.id, actor: shop.actor, botToken: t });
-    await saveWelcome(deps, shop.id, shop.actor, {
-      welcomeText: DEFAULT_WELCOME_TEXT,
-      openButtonText: 'Открыть приложение',
-      managerButtonText: 'Связаться с менеджером',
-      managerUrl: 'https://t.me/noir_manager',
-    });
-    return { shop, t, connectionId: connIdOf(shop.id), secret: lastSecret() };
-  }
-
   it('answers /start with the welcome (shop name substituted) and exactly two buttons: the Mini App and the manager', async () => {
     const { connectionId, secret, t } = await connected();
     const chat = newChat();
@@ -643,6 +722,234 @@ describe('sync and disconnect', () => {
     const res = await disconnectBot(deps, A.id, A.actor);
     expect(res.cleanup.telegram).toBe('token_revoked');
     expect(db.conns.size).toBe(0);
+  });
+});
+
+describe('webhook: the audience of the bot', () => {
+  it('records who started the bot; /stop unsubscribes and is confirmed; only /start subscribes again', async () => {
+    const c = await connected();
+    const send = sender(c);
+    const chat = newChat();
+    expect(db.subscriber(c.shop.id, chat)).toBeUndefined();
+
+    await send(startUpdate(chat));
+    expect(db.subscriber(c.shop.id, chat)).toEqual({ chat_id: chat, status: 'active' });
+
+    expect(await send(startUpdate(chat, '/stop'))).toEqual({ status: 200, body: { ok: true, handled: true } });
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('unsubscribed');
+    // An ordinary message does not subscribe again.
+    expect((await send(startUpdate(chat, 'Здравствуйте'))).body).toEqual({ ok: true, handled: false });
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('unsubscribed');
+
+    await send(startUpdate(chat, '/start'));
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('active');
+
+    const msgs = await messages(chat);
+    expect(msgs.map((m) => m.text.split('\n')[0])).toEqual(['Добро пожаловать в Noir Vapor', UNSUBSCRIBED_TEXT, 'Добро пожаловать в Noir Vapor']);
+    // The confirmation is plain text without buttons.
+    expect(msgs[1]).toMatchObject({ parse_mode: null, reply_markup: null, entities: null });
+  });
+
+  it('a user who wrote without /start is known as well; a command addressed to another bot is an ordinary message', async () => {
+    const c = await connected();
+    const send = sender(c);
+    const chat = newChat();
+    expect((await send(startUpdate(chat, 'Есть в наличии?'))).body).toEqual({ ok: true, handled: false });
+    expect(db.subscriber(c.shop.id, chat)).toEqual({ chat_id: chat, status: 'active' });
+    await send(startUpdate(chat, '/stop@some_other_bot'));
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('active');
+    expect(await messages(chat)).toEqual([]);
+    // Addressed to this bot (in any letter case).
+    await send(startUpdate(chat, `/stop@MOCK_${botIdOf(c.t)}_bot`));
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('unsubscribed');
+  });
+
+  it('my_chat_member: blocking the bot is recorded, unblocking lifts only a block, and nothing is answered', async () => {
+    const c = await connected();
+    const send = sender(c);
+    const chat = newChat();
+    await send(startUpdate(chat));
+    expect(await send(memberUpdate(chat, 'kicked'))).toEqual({ status: 200, body: { ok: true, handled: false } });
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('blocked');
+    await send(memberUpdate(chat, 'member'));
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('active');
+
+    // Unsubscribed with /stop: "member" does not subscribe again — only /start does.
+    await send(startUpdate(chat, '/stop'));
+    await send(memberUpdate(chat, 'member'));
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('unsubscribed');
+
+    // A user the bot never saw is not added by a block.
+    const stranger = newChat();
+    await send(memberUpdate(stranger, 'kicked'));
+    expect(db.subscriber(c.shop.id, stranger)).toBeUndefined();
+    expect(await messages(stranger)).toEqual([]);
+    // The welcome and the /stop confirmation only.
+    expect(await messages(chat)).toHaveLength(2);
+  });
+
+  it('groups, channels and bots are never recorded', async () => {
+    const c = await connected();
+    const send = sender(c);
+    db.calls.length = 0;
+    await send(startUpdate(-100123, '/start', 'supergroup'));
+    await send({ update_id: updateSeq++, my_chat_member: { chat: { id: -100123, type: 'supergroup' }, new_chat_member: { status: 'kicked' } } });
+    const botChat = newChat();
+    await send({ update_id: updateSeq++, message: { text: '/start', chat: { id: botChat, type: 'private' }, from: { id: botChat, is_bot: true } } });
+    await send({ update_id: updateSeq++, channel_post: { text: '/start', chat: { id: -100456, type: 'channel' } } });
+    expect(db.calls).not.toContain('bot_webhook_track');
+    expect(db.subscribers.size).toBe(0);
+    expect(await messages(botChat)).toEqual([]);
+  });
+
+  it('an update that cannot be recorded is released (503) and handled when Telegram delivers it again', async () => {
+    const c = await connected();
+    const send = sender(c);
+    const chat = newChat();
+    const update = startUpdate(chat);
+    db.trackFails = true;
+    expect((await send(update)).status).toBe(503);
+    expect(await messages(chat)).toEqual([]);
+    db.trackFails = false;
+    expect(await send(update)).toEqual({ status: 200, body: { ok: true, handled: true } });
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('active');
+    expect(await messages(chat)).toHaveLength(1);
+  });
+
+  it('a shop that is not active: the user is recorded, nothing is answered', async () => {
+    const c = await connected();
+    db.shops.get(c.shop.id)!.status = 'suspended';
+    const chat = newChat();
+    expect(await sender(c)(startUpdate(chat))).toEqual({ status: 200, body: { ok: true, handled: false } });
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('active');
+    expect(await messages(chat)).toEqual([]);
+  });
+
+  it("each bot has its own audience: another shop's bot knows nobody, and a replaced bot starts empty", async () => {
+    const a = await connected('noir-vapor', 'Noir Vapor');
+    const b = await connected('mint-lab', 'Mint Lab');
+    const chat = newChat();
+    await sender(a)(startUpdate(chat));
+    expect(db.subscriber(a.shop.id, chat)!.status).toBe('active');
+    expect(db.subscriber(b.shop.id, chat)).toBeUndefined();
+
+    // Telegram does not let a bot write to the users of another bot.
+    await connectBot(deps, { shopId: a.shop.id, actor: a.shop.actor, botToken: token() });
+    expect(db.subscriber(a.shop.id, chat)).toBeUndefined();
+  });
+});
+
+describe('webhook: /emoji (ids of Premium emoji, for the owner)', () => {
+  it('answers with the id of every Premium emoji of the message, as plain text', async () => {
+    const c = await connected();
+    const chat = newChat();
+    const update = messageUpdate(chat, {
+      text: '/emoji 🔥👍',
+      entities: [
+        { type: 'bot_command', offset: 0, length: 6 },
+        { type: 'custom_emoji', offset: 7, length: 2, custom_emoji_id: FIRE },
+        { type: 'custom_emoji', offset: 9, length: 2, custom_emoji_id: HAND },
+      ],
+    });
+    expect(await sender(c)(update)).toEqual({ status: 200, body: { ok: true, handled: true } });
+    const [msg, ...rest] = await messages(chat);
+    expect(rest).toEqual([]);
+    expect(msg!.text.split('\n').slice(0, 3)).toEqual(['ID Premium Emoji:', `🔥 — ${FIRE}`, `👍 — ${HAND}`]);
+    // No parse mode: the example tag in the answer is shown literally.
+    expect(msg).toMatchObject({ parse_mode: null, entities: null, reply_markup: null });
+    expect(msg!.text).toContain('<tg-emoji emoji-id="ID">');
+    // For the audience it is an ordinary message.
+    expect(db.subscriber(c.shop.id, chat)!.status).toBe('active');
+  });
+
+  it('without a Premium emoji it explains what to send; an answer that failed is not re-delivered', async () => {
+    const c = await connected();
+    const send = sender(c);
+    const chat = newChat();
+    await send(messageUpdate(chat, { text: '/emoji' }));
+    expect((await messages(chat))[0]!.text).toContain('Отправьте команду /emoji');
+    await failNext(chat, 1);
+    expect(await send(messageUpdate(chat, { text: '/emoji 🔥' }))).toEqual({ status: 200, body: { ok: true, handled: true } });
+    expect(await messages(chat)).toHaveLength(1);
+  });
+});
+
+describe('Premium emoji in the welcome', () => {
+  const rich = {
+    welcomeText: `Привет ${tag(HAND, '👋')} в {название_магазина}`,
+    openButtonText: '🛍 Каталог',
+    managerButtonText: 'Менеджер',
+    managerUrl: '@noir_manager',
+    openButtonEmojiId: FIRE,
+    managerButtonEmojiId: ` ${HAND} `,
+  };
+  const store = `${PUBLIC}/s/noir-vapor/`;
+
+  it('the tag in the text becomes a custom_emoji entity and the button ids become icons — sent without a parse mode', async () => {
+    const c = await connected();
+    const saved = await saveWelcome(deps, c.shop.id, c.shop.actor, rich);
+    expect(saved.settings.welcome).toMatchObject({ welcome_text: rich.welcomeText, open_button_emoji_id: FIRE, manager_button_emoji_id: HAND });
+
+    const chat = newChat();
+    await sender(c)(startUpdate(chat));
+    const [msg, ...rest] = await messages(chat);
+    expect(rest).toEqual([]);
+    expect(msg!.text).toBe('Привет 👋 в Noir Vapor');
+    expect(msg!.parse_mode).toBeNull();
+    // "Привет " is 7 UTF-16 code units; 👋 is a surrogate pair.
+    expect(msg!.entities).toEqual([{ type: 'custom_emoji', offset: 7, length: 2, custom_emoji_id: HAND }]);
+    expect(msg!.reply_markup).toEqual({
+      inline_keyboard: [
+        [{ text: '🛍 Каталог', web_app: { url: store }, icon_custom_emoji_id: FIRE }],
+        [{ text: 'Менеджер', url: 'https://t.me/noir_manager', icon_custom_emoji_id: HAND }],
+      ],
+    });
+    // The Menu Button has no icon: Telegram shows only its text.
+    expect((await state(botIdOf(c.t))).menu_button).toEqual({ type: 'web_app', text: '🛍 Каталог', web_app: { url: store } });
+  });
+
+  it('a bot that may not use Premium emoji still answers /start once: Unicode emoji, buttons without icons', async () => {
+    const c = await connected('noir-vapor', 'Noir Vapor', 'NOEMOJI');
+    await saveWelcome(deps, c.shop.id, c.shop.actor, rich);
+    const chat = newChat();
+    expect(await sender(c)(startUpdate(chat))).toEqual({ status: 200, body: { ok: true, handled: true } });
+    const [msg, ...rest] = await messages(chat);
+    expect(rest).toEqual([]);
+    expect(msg!.text).toBe('Привет 👋 в Noir Vapor');
+    expect(msg!.entities).toBeNull();
+    expect(msg!.reply_markup).toEqual({
+      inline_keyboard: [[{ text: '🛍 Каталог', web_app: { url: store } }], [{ text: 'Менеджер', url: 'https://t.me/noir_manager' }]],
+    });
+  });
+
+  it('button emoji ids are validated; an empty value removes the icon; an absent one (an older admin page) keeps it', async () => {
+    const A = db.addShop('noir-vapor', 'Noir Vapor');
+    const input = { welcomeText: 'Hi', openButtonText: 'Open', managerButtonText: 'Manager', managerUrl: '' };
+    for (const bad of ['abc', '1234', '12345x', '<b>']) {
+      await expectFlowError(saveWelcome(deps, A.id, A.actor, { ...input, openButtonEmojiId: bad }), 'invalid_emoji_id');
+      await expectFlowError(saveWelcome(deps, A.id, A.actor, { ...input, managerButtonEmojiId: bad }), 'invalid_emoji_id');
+    }
+    expect(db.welcome.has(A.id)).toBe(false);
+
+    await saveWelcome(deps, A.id, A.actor, { ...input, openButtonEmojiId: FIRE, managerButtonEmojiId: HAND });
+    const kept = await saveWelcome(deps, A.id, A.actor, { ...input, welcomeText: 'Hello' });
+    expect(kept.settings.welcome).toMatchObject({ welcome_text: 'Hello', open_button_emoji_id: FIRE, manager_button_emoji_id: HAND });
+    const removed = await saveWelcome(deps, A.id, A.actor, { ...input, openButtonEmojiId: '', managerButtonEmojiId: HAND });
+    expect(removed.settings.welcome).toMatchObject({ open_button_emoji_id: null, manager_button_emoji_id: HAND });
+  });
+
+  it('the length limit applies to the message as sent (a tag counts as its emoji); at most 100 Premium emoji', async () => {
+    const L = db.addShop('long-name', 'N'.repeat(80));
+    const input = { openButtonText: 'Open', managerButtonText: 'Manager', managerUrl: '' };
+    // Sent: 3980 + 2 (the emoji) + 80 (the name) = 4062 characters. With the 54-character tag counted it would be 4114.
+    const fits = `${'x'.repeat(3980)}${tag(FIRE, '🔥')}{название_магазина}`;
+    expect((await saveWelcome(deps, L.id, L.actor, { ...input, welcomeText: fits })).settings.welcome.welcome_text).toBe(fits);
+    // Sent: 4015 + 2 + 80 = 4097.
+    await expectFlowError(saveWelcome(deps, L.id, L.actor, { ...input, welcomeText: `${'x'.repeat(4015)}${tag(FIRE, '🔥')}{название_магазина}` }), 'welcome_too_long');
+
+    const many = (n: number) => Array.from({ length: n }, () => tag('11111', '🔥')).join('');
+    await expectFlowError(saveWelcome(deps, L.id, L.actor, { ...input, welcomeText: many(101) }), 'too_many_custom_emoji');
+    expect((await saveWelcome(deps, L.id, L.actor, { ...input, welcomeText: many(100) })).settings.welcome.welcome_text).toBe(many(100));
   });
 });
 

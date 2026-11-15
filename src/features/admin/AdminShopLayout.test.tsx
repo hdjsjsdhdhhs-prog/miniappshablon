@@ -31,6 +31,8 @@ describe('AdminShopLayout', () => {
       ['Оформление', '/admin/shops/noir-vapor/settings'],
       ['Уведомления', '/admin/shops/noir-vapor/notifications'],
       ['Подключение бота', '/admin/shops/noir-vapor/bot'],
+      // «Рассылка» sits right after (to the right of) «Подключение бота».
+      ['Рассылка', '/admin/shops/noir-vapor/broadcast'],
     ]);
   });
 });

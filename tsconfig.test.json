@@ -21,7 +21,13 @@
     "supabase/functions/_shared/bot-welcome.ts",
     "supabase/functions/_shared/bot-welcome.test.ts",
     "supabase/functions/_shared/bot-connection.ts",
-    "supabase/functions/_shared/bot-connection.test.ts"
+    "supabase/functions/_shared/bot-connection.test.ts",
+    "supabase/functions/_shared/telegram-rich.ts",
+    "supabase/functions/_shared/telegram-rich.test.ts",
+    "supabase/functions/_shared/broadcast.ts",
+    "supabase/functions/_shared/broadcast.test.ts",
+    "supabase/functions/_shared/customer-notification.ts",
+    "supabase/functions/_shared/customer-notification.test.ts"
   ],
   "exclude": []
 }

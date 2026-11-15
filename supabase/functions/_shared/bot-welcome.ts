@@ -22,10 +22,14 @@ export const DEFAULT_WELCOME_TEXT =
   'По вопросам и помощи нажмите кнопку "Связаться с менеджером" ниже.';
 
 export interface WelcomeSettings {
+  /** May contain <tg-emoji emoji-id="…">🙂</tg-emoji> tags (Premium emoji, see telegram-rich.ts). */
   welcome_text: string;
   open_button_text: string;
   manager_button_text: string;
   manager_url: string | null;
+  /** icon_custom_emoji_id of the buttons (Premium emoji); absent / null: no icon. */
+  open_button_emoji_id?: string | null;
+  manager_button_emoji_id?: string | null;
 }
 
 // Public usernames: 5–32 chars, start with a letter, letters/digits/underscore, no trailing underscore.
@@ -92,10 +96,16 @@ export function buildWelcomeKeyboard(input: {
   storefrontUrl: string;
   managerButtonText: string;
   managerUrl: string | null;
+  /** Premium emoji shown before the button text (icon_custom_emoji_id); the text itself may carry a regular emoji. */
+  openButtonEmojiId?: string | null;
+  managerButtonEmojiId?: string | null;
 }): InlineKeyboardMarkup {
-  const rows: InlineKeyboardMarkup['inline_keyboard'] = [[{ text: input.openButtonText, web_app: { url: input.storefrontUrl } }]];
+  const icon = (id: string | null | undefined) => (id ? { icon_custom_emoji_id: id } : {});
+  const rows: InlineKeyboardMarkup['inline_keyboard'] = [
+    [{ text: input.openButtonText, web_app: { url: input.storefrontUrl }, ...icon(input.openButtonEmojiId) }],
+  ];
   const manager = normalizeManagerUrl(input.managerUrl);
-  if (manager) rows.push([{ text: input.managerButtonText, url: manager }]);
+  if (manager) rows.push([{ text: input.managerButtonText, url: manager, ...icon(input.managerButtonEmojiId) }]);
   return { inline_keyboard: rows };
 }
 
@@ -204,3 +214,93 @@ export function parseStartCommand(update: unknown, botUsername: string): StartCo
   const payload = m[2]?.trim() || null;
   return { chatId: msg.chat.id as number, payload: payload ? payload.slice(0, 512) : null };
 }
+
+/**
+ * What an update says about a user of the bot, in a PRIVATE chat only:
+ *   start      /start (the welcome is sent)            stop       /stop (no more broadcasts)
+ *   message    any other message of the user           blocked / unblocked   my_chat_member: the user stopped /
+ *                                                                           restarted the bot
+ * Groups, channels, other bots and everything else → null.
+ */
+export type PrivateUpdate =
+  | { kind: 'start'; userId: number; chatId: number; payload: string | null }
+  // "/emoji <Premium emoji…>": the owner asks for the ids of the custom emoji in the message (see emojiIdsReply).
+  | { kind: 'emoji'; userId: number; chatId: number; emoji: CustomEmojiRef[] }
+  | { kind: 'stop' | 'message' | 'blocked' | 'unblocked'; userId: number; chatId: number };
+
+/** A Premium (custom) emoji found in a message: its id and the regular emoji it covers. */
+export interface CustomEmojiRef {
+  id: string;
+  fallback: string;
+}
+
+interface TgPrivateUpdateLike {
+  message?: { text?: unknown; entities?: unknown; chat?: { id?: unknown; type?: unknown }; from?: { id?: unknown; is_bot?: unknown } };
+  my_chat_member?: { chat?: { id?: unknown; type?: unknown }; new_chat_member?: { status?: unknown } };
+}
+
+const isUserId = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) > 0;
+
+/** At most this many ids are listed in one answer to /emoji. */
+const EMOJI_REPLY_MAX = 20;
+
+/** `custom_emoji` entities of a message (Bot API MessageEntity; offsets in UTF-16 code units), without repeats. */
+function customEmojiOf(text: string, entities: unknown): CustomEmojiRef[] {
+  if (!Array.isArray(entities)) return [];
+  const out: CustomEmojiRef[] = [];
+  for (const e of entities as Array<{ type?: unknown; offset?: unknown; length?: unknown; custom_emoji_id?: unknown } | null>) {
+    if (e?.type !== 'custom_emoji' || typeof e.custom_emoji_id !== 'string' || !/^\d{5,25}$/.test(e.custom_emoji_id)) continue;
+    if (!Number.isSafeInteger(e.offset) || !Number.isSafeInteger(e.length) || (e.offset as number) < 0 || (e.length as number) < 1) continue;
+    const id = e.custom_emoji_id;
+    if (out.some((x) => x.id === id)) continue;
+    out.push({ id, fallback: text.slice(e.offset as number, (e.offset as number) + (e.length as number)) });
+    if (out.length >= EMOJI_REPLY_MAX) break;
+  }
+  return out;
+}
+
+/**
+ * Answer to /emoji (plain text, no parse_mode — the tag below is shown literally): the id of every Premium emoji of
+ * the message, ready to be pasted into the welcome / broadcast settings. Ids of custom emoji are public.
+ */
+export function emojiIdsReply(emoji: CustomEmojiRef[]): string {
+  if (emoji.length === 0) {
+    return 'Отправьте команду /emoji и нужные Premium Emoji в одном сообщении, например: /emoji 🔥\nВ ответ придут их ID.';
+  }
+  return [
+    'ID Premium Emoji:',
+    ...emoji.map((e) => `${e.fallback} — ${e.id}`),
+    '',
+    'В тексте сообщения: <tg-emoji emoji-id="ID">🙂</tg-emoji>. На кнопке: поле «Premium Emoji ID».',
+  ].join('\n');
+}
+
+export function parsePrivateUpdate(update: unknown, botUsername: string): PrivateUpdate | null {
+  const u = update as TgPrivateUpdateLike | null;
+  const member = u?.my_chat_member;
+  if (member) {
+    if (member.chat?.type !== 'private' || !isUserId(member.chat.id)) return null;
+    const status = member.new_chat_member?.status;
+    if (status === 'kicked') return { kind: 'blocked', userId: member.chat.id, chatId: member.chat.id };
+    if (status === 'member') return { kind: 'unblocked', userId: member.chat.id, chatId: member.chat.id };
+    return null;
+  }
+  const msg = u?.message;
+  if (!msg || msg.chat?.type !== 'private' || !isUserId(msg.chat.id) || msg.from?.is_bot === true) return null;
+  const chatId = msg.chat.id;
+  const userId = isUserId(msg.from?.id) ? msg.from.id : chatId;
+  const start = parseStartCommand(update, botUsername);
+  if (start) return { kind: 'start', userId, chatId, payload: start.payload };
+  if (typeof msg.text === 'string') {
+    const mine = (addressee: string | undefined) => !addressee || addressee.toLowerCase() === botUsername.toLowerCase();
+    const stop = /^\/stop(?:@([A-Za-z0-9_]{3,64}))?$/.exec(msg.text.trim());
+    if (stop && mine(stop[1])) return { kind: 'stop', userId, chatId };
+    // Matched on the text as received: the entity offsets refer to it.
+    const emoji = /^\/emoji(?:@([A-Za-z0-9_]{3,64}))?(?:\s|$)/.exec(msg.text);
+    if (emoji && mine(emoji[1])) return { kind: 'emoji', userId, chatId, emoji: customEmojiOf(msg.text, msg.entities) };
+  }
+  return { kind: 'message', userId, chatId };
+}
+
+/** Answer to /stop. */
+export const UNSUBSCRIBED_TEXT = 'Вы отписались от рассылки этого магазина. Чтобы снова получать сообщения, отправьте /start.';

@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { formatMoney } from '@/domain/money';
 import { AdminShopContext } from '../admin-context';
 import type { AdminProduct, AdminShop } from '../api';
 import { ProductEditPage } from './ProductEditPage';
@@ -73,6 +74,7 @@ describe('ProductEditPage: one price per product', () => {
       name: 'Noir Salt 30 мл',
       description: '',
       base_price_minor: 69000,
+      discount_price_minor: null,
       is_published: true,
       is_featured: false,
       sort_order: 0,
@@ -136,5 +138,48 @@ describe('ProductEditPage: one price per product', () => {
     expect(api.saveProductWithPrice).toHaveBeenCalledWith('p1', expect.objectContaining({ base_price_minor: 70000 }));
     // The plain update (which would leave variant prices untouched) is not used for the card.
     expect(api.updateProduct).not.toHaveBeenCalled();
+  });
+
+  it('the discount price is optional; a price below the regular one is previewed as on the storefront and saved with the product', async () => {
+    renderPage();
+    const discount = await screen.findByTestId('product-discount-input');
+    expect(screen.getByLabelText(/Цена со скидкой/)).toBe(discount);
+    expect(discount).toHaveValue('');
+    expect(screen.queryByTestId('product-discount-preview')).not.toBeInTheDocument();
+
+    await userEvent.type(discount, '590');
+    const preview = screen.getByTestId('product-discount-preview');
+    expect(preview.textContent).toContain(formatMoney(59000, 'RUB'));
+    // The regular price is the struck-through one.
+    expect(preview.querySelector('s')!.textContent).toBe(formatMoney(69000, 'RUB'));
+
+    await userEvent.click(screen.getByTestId('product-save'));
+    await waitFor(() => expect(api.saveProductWithPrice).toHaveBeenCalledTimes(1));
+    expect(api.saveProductWithPrice).toHaveBeenCalledWith('p1', expect.objectContaining({ base_price_minor: 69000, discount_price_minor: 59000 }));
+  });
+
+  it('an existing discount is shown, and clearing the field removes it', async () => {
+    product.discount_price_minor = 59000;
+    renderPage();
+    const discount = await screen.findByTestId('product-discount-input');
+    expect(discount).toHaveValue('590');
+    await userEvent.clear(discount);
+    await userEvent.click(screen.getByTestId('product-save'));
+    await waitFor(() => expect(api.saveProductWithPrice).toHaveBeenCalledTimes(1));
+    expect(api.saveProductWithPrice).toHaveBeenCalledWith('p1', expect.objectContaining({ base_price_minor: 69000, discount_price_minor: null }));
+  });
+
+  it.each([
+    ['690', 'Цена со скидкой должна быть ниже обычной цены'],
+    ['800', 'Цена со скидкой должна быть ниже обычной цены'],
+    ['0', 'Цена со скидкой должна быть больше нуля'],
+    ['abc', 'Цена в формате 990 или 990,50'],
+  ])('a discount of "%s" is refused and nothing is saved', async (value, message) => {
+    renderPage();
+    await userEvent.type(await screen.findByTestId('product-discount-input'), value);
+    await userEvent.click(screen.getByTestId('product-save'));
+    expect(await screen.findByTestId('product-discount-error')).toHaveTextContent(message);
+    expect(screen.queryByTestId('product-discount-preview')).not.toBeInTheDocument();
+    expect(api.saveProductWithPrice).not.toHaveBeenCalled();
   });
 });

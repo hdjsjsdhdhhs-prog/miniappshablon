@@ -17,7 +17,7 @@ export const STOCK_STATUSES = ['in_stock', 'low_stock', 'out_of_stock'] as const
 export const STOREFRONT_VARIANT_EMBED = 'product_variants(id, flavor, color, stock_status, is_active, sort_order)';
 /** The storefront's product columns (PRODUCT_COLUMNS in src/features/storefront/api.ts). */
 export const STOREFRONT_PRODUCT_COLUMNS =
-  'id, name, base_price_minor, category_id, description, ' +
+  'id, name, base_price_minor, discount_price_minor, category_id, description, ' +
   'categories!inner(name, slug, is_active, archived_at), ' +
   `${STOREFRONT_VARIANT_EMBED}, ` +
   'product_images(id, storage_path, is_primary, sort_order, alt_text)';

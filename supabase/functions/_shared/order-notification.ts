@@ -7,7 +7,10 @@ export interface NotificationOrderItem {
   product_name: string;
   variant_label: string;
   quantity: number;
+  /** Price charged for one unit (the server's snapshot). */
   unit_price_minor: number;
+  /** List price of the unit when it was sold with a discount; null / absent otherwise. */
+  original_unit_price_minor?: number | null;
   line_total_minor: number;
 }
 
@@ -98,8 +101,13 @@ export function formatOrderNotification(input: OrderNotificationInput): string {
   lines.push('<b>Товары:</b>');
   order.items.forEach((item, i) => {
     const variant = item.variant_label?.trim() ? ` · ${e(item.variant_label.trim())}` : '';
+    // A discounted line shows the list price struck through before the price actually charged.
+    const old =
+      typeof item.original_unit_price_minor === 'number' && item.original_unit_price_minor > item.unit_price_minor
+        ? `<s>${formatMinor(item.original_unit_price_minor, order.currency)}</s> `
+        : '';
     lines.push(
-      `${i + 1}. ${e(item.product_name)}${variant} — ${item.quantity} × ${formatMinor(item.unit_price_minor, order.currency)} = ${formatMinor(item.line_total_minor, order.currency)}`,
+      `${i + 1}. ${e(item.product_name)}${variant} — ${item.quantity} × ${old}${formatMinor(item.unit_price_minor, order.currency)} = ${formatMinor(item.line_total_minor, order.currency)}`,
     );
   });
   lines.push('');

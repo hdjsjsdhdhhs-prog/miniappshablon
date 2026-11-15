@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatMoney, minorToInput, parseMoneyInput } from './money';
-import { lineTotalMinor, orderTotalMinor, productPriceMinor, totalQuantity } from './pricing';
+import { isValidDiscount, lineTotalMinor, orderTotalMinor, productOldPriceMinor, productPriceMinor, totalQuantity } from './pricing';
 
 describe('pricing', () => {
   it('one price per product: the product price, whatever variants it has', () => {
@@ -9,6 +9,27 @@ describe('pricing', () => {
     expect(productPriceMinor(noirSalt)).toBe(69000);
     const aurumPod = { basePriceMinor: 249000, variants: [{ color: 'Графит' }, { color: 'Золото' }] };
     expect(productPriceMinor(aurumPod)).toBe(249000);
+  });
+
+  it('a discount: the buyer pays the discount price and the list price is the one shown struck through', () => {
+    const noirSalt = { basePriceMinor: 69000, discountPriceMinor: 59000 };
+    expect(productPriceMinor(noirSalt)).toBe(59000);
+    expect(productOldPriceMinor(noirSalt)).toBe(69000);
+    // Without a discount everything is as before: the product price, and no old price.
+    for (const plain of [{ basePriceMinor: 69000 }, { basePriceMinor: 69000, discountPriceMinor: null }, { basePriceMinor: 69000, discountPriceMinor: undefined }]) {
+      expect(productPriceMinor(plain)).toBe(69000);
+      expect(productOldPriceMinor(plain)).toBeNull();
+    }
+  });
+
+  it('a discount is a positive whole amount strictly below the price; anything else is ignored, never charged', () => {
+    expect(isValidDiscount(69000, 59000)).toBe(true);
+    expect(isValidDiscount(69000, 1)).toBe(true);
+    for (const bad of [69000, 70000, 0, -100, 590.5, Number.NaN, null, undefined]) {
+      expect(isValidDiscount(69000, bad), String(bad)).toBe(false);
+      expect(productPriceMinor({ basePriceMinor: 69000, discountPriceMinor: bad }), String(bad)).toBe(69000);
+      expect(productOldPriceMinor({ basePriceMinor: 69000, discountPriceMinor: bad }), String(bad)).toBeNull();
+    }
   });
 
   it('computes line and order totals in integer minor units', () => {

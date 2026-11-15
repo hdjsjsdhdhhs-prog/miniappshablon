@@ -11,7 +11,10 @@ export interface OrderItemDto {
   variant_label: string;
   flavor: string | null;
   color: string | null;
+  /** Price charged for one unit (snapshot taken by the server when the order was created). */
   unit_price_minor: number;
+  /** List price of the unit when it was sold with a discount; null / absent otherwise and for older orders. */
+  original_unit_price_minor?: number | null;
   quantity: number;
   line_total_minor: number;
 }

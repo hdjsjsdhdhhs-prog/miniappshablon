@@ -152,9 +152,9 @@ jobs:
       # Gate (scripts/lib/migration-plan.ts): local file names, remote history AND dry-run (JSON) must agree on one state.
       # `db push` has no version/stage selector: it applies EVERY local migration missing from the remote history, so
       # the gate derives the pending whole stages and requires the dry-run to plan exactly their reviewed files:
-      #   apply — baseline (incl. 2026-10-26) applied; pending = whole stages 3A+3B+4A (one push, in stage order),
-      #           3B+4A or 4A only;
-      #   skip  — baseline, 3A, 3B and 4A confirmed applied, nothing pending, dry-run up to date (repeat run).
+      #   apply — baseline (incl. 2026-10-26) applied; pending = whole stages 3A+3B+4A+4B (one push, in stage order),
+      #           3B+4A+4B, 4A+4B or 4B only;
+      #   skip  — baseline, 3A, 3B, 4A and 4B confirmed applied, nothing pending, dry-run up to date (repeat run).
       # Anything else (partial stage, 3B before 3A, unknown/missing/renamed file, inconsistent history, CLI error)
       # stops before db push. Every `check-production-migration-plan.ts` call also re-reads and re-hashes all
       # migration files first (SHA-256 integrity), so content changed after any earlier step stops the job too.

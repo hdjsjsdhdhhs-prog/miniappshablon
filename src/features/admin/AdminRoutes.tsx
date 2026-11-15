@@ -4,6 +4,7 @@ import { PageSpinner } from '@/components/state-views';
 import { useSession } from './auth';
 import { AdminShopLayout } from './AdminShopLayout';
 import { BotConnectionPage } from './pages/BotConnectionPage';
+import { BroadcastPage } from './pages/BroadcastPage';
 import { useAssurance } from './mfa';
 import { MfaPage } from './pages/MfaPage';
 import { useIsPlatformAdmin } from './use-platform-admin';
@@ -61,6 +62,7 @@ export default function AdminRoutes() {
             <Route path="settings" element={<SettingsPage />} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="bot" element={<BotConnectionPage />} />
+            <Route path="broadcast" element={<BroadcastPage />} />
           </Route>
           <Route path="platform" element={<PlatformShopsPage />} />
           <Route path="mfa" element={<MfaPage />} />

@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { localStack, publishesDbPort } from '../scripts/lib/local-stack.ts';
 import { resolveSupabaseEnv, serviceClient } from '../scripts/lib/supabase-env.ts';
 import { totp } from '../scripts/lib/totp.ts';
+import { DARK_PREMIUM_THEME } from '../src/domain/theme.ts';
 
 // E2E helpers for throw-away accounts and shops on the LOCAL stack (guards: playwright.config.ts, global-setup.ts).
 
@@ -121,6 +122,37 @@ export async function createDemoShop(admin: Account, templateSlug: string, slug:
   const res = await platformAdmin(await accessToken(admin), { action: 'create-demo', templateId: tpl.id, slug, name });
   if (res.status !== 201) throw new Error(`create-demo failed: ${res.status} ${JSON.stringify(res.body)}`);
   return res.body!.shop as { id: string; slug: string };
+}
+
+/**
+ * A regular (non-DEMO) LIVE shop with one category and one published product "Liquid" (one variant "Mint", in stock),
+ * owned by `ownerId`. Written with the service role: the specs that use it exercise what happens AFTER the catalog exists.
+ */
+export async function createLiveShop(
+  ownerId: string,
+  slug: string,
+  name: string,
+  opts: { priceMinor?: number; stock?: number } = {},
+): Promise<{ id: string; slug: string; name: string; productId: string; variantId: string }> {
+  const { data: shop, error } = await db.from('shops').insert({ slug, name, theme_config: DARK_PREMIUM_THEME, currency: 'RUB', mode: 'live' }).select('id').single();
+  if (error) throw error;
+  const { data: cat, error: ce } = await db.from('categories').insert({ shop_id: shop.id, name: 'Жидкости', slug: 'liquids' }).select('id').single();
+  if (ce) throw ce;
+  const { data: product, error: pe } = await db
+    .from('products')
+    .insert({ shop_id: shop.id, category_id: cat.id, name: 'Liquid', base_price_minor: opts.priceMinor ?? 69_000, is_published: true })
+    .select('id')
+    .single();
+  if (pe) throw pe;
+  const { data: variant, error: ve } = await db
+    .from('product_variants')
+    .insert({ shop_id: shop.id, product_id: product.id, flavor: 'Mint', stock_quantity: opts.stock ?? 10 })
+    .select('id')
+    .single();
+  if (ve) throw ve;
+  const { error: me } = await db.from('shop_memberships').insert({ shop_id: shop.id, user_id: ownerId, role: 'owner' });
+  if (me) throw me;
+  return { id: shop.id, slug, name, productId: product.id, variantId: variant.id };
 }
 
 export async function deleteShops(ids: string[]): Promise<void> {

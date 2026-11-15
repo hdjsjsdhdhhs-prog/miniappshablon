@@ -31,8 +31,10 @@ export const CI_WORKFLOW_PATH = '.github/workflows/ci.yml';
  * automatically by a release — if the reviewed manifest (scripts/lib/migration-plan.ts) gains any other stage, the
  * preflight stops before production is touched, and the Supabase job re-checks the planned stages before `db push`.
  * 4A (shop's own Telegram bot, 20261107090000) is an Expand stage: additive tables / functions only.
+ * 4B (admin, discounts, Telegram communications, 20261113090000) is an Expand stage: new nullable columns, private
+ * tables and service-role RPCs; replaced RPCs keep their signature (checked by migration-integrity.test.ts).
  */
-export const RELEASE_ALLOWED_STAGES: readonly string[] = ['3A', '3B', '4A'];
+export const RELEASE_ALLOWED_STAGES: readonly string[] = ['3A', '3B', '4A', '4B'];
 
 /** Deployment environments of the release, each of which must exist and be protected before anything runs. */
 export const RELEASE_ENVIRONMENTS = ['production', 'production-frontend'] as const;

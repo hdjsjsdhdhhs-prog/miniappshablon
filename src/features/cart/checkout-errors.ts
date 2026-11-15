@@ -4,7 +4,7 @@ import { ApiError } from './checkout-api';
 export interface CheckoutErrorView {
   message: string;
   /** Server-confirmed updates to apply to the local cart (stock: statuses only, never quantities). */
-  reconcile?: { prices?: Record<string, number>; stock?: Record<string, StockStatus> };
+  reconcile?: { prices?: Record<string, number>; originalPrices?: Record<string, number | null>; stock?: Record<string, StockStatus> };
   removeVariantIds?: string[];
   resetIdempotencyKey?: boolean;
 }
@@ -47,10 +47,14 @@ export function describeCheckoutError(err: unknown): CheckoutErrorView {
       return { message: `Слишком много попыток заказать больше, чем есть в наличии. Попробуйте ещё раз${wait}` };
     }
     case 'price_changed': {
-      const prices = (d as { prices?: Array<{ variant_id: string; unit_price_minor: number }> } | null)?.prices ?? [];
+      // The server reports the price it charges now and, for a discounted line, its list price.
+      const prices = (d as { prices?: Array<{ variant_id: string; unit_price_minor: number; original_unit_price_minor?: number | null }> } | null)?.prices ?? [];
       return {
         message: 'Цены изменились — корзина обновлена. Проверьте сумму и подтвердите заказ.',
-        reconcile: { prices: Object.fromEntries(prices.map((p) => [p.variant_id, p.unit_price_minor])) },
+        reconcile: {
+          prices: Object.fromEntries(prices.map((p) => [p.variant_id, p.unit_price_minor])),
+          originalPrices: Object.fromEntries(prices.map((p) => [p.variant_id, p.original_unit_price_minor ?? null])),
+        },
       };
     }
     case 'item_unavailable':

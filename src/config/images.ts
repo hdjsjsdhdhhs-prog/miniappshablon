@@ -13,8 +13,10 @@ export const IMAGE_SETTINGS = {
   cover: { maxWidthOrHeight: 1920, maxSizeMB: 0.8, quality: 0.82 },
   logo: { maxWidthOrHeight: 512, maxSizeMB: 0.2, quality: 0.9 },
   category: { maxWidthOrHeight: 800, maxSizeMB: 0.3, quality: 0.82 },
+  /** Photo of a Telegram broadcast: JPEG (what Telegram shows as a photo), sent to the Bot API as a file. */
+  broadcast: { maxWidthOrHeight: 1280, maxSizeMB: 0.5, quality: 0.85 },
   /** Minimal source dimension accepted by tenant:validate. */
   minDimension: 128,
 } as const;
 
-export type ImageKind = 'product' | 'cover' | 'logo' | 'category';
+export type ImageKind = 'product' | 'cover' | 'logo' | 'category' | 'broadcast';

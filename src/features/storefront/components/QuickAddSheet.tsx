@@ -6,8 +6,7 @@ import { toast } from 'sonner';
 import { ProductImage } from '@/components/product-image';
 import { Button } from '@/components/ui/button';
 import { DialogClose, DialogDescription, DialogOverlay, DialogTitle } from '@/components/ui/dialog';
-import { formatMoney } from '@/domain/money';
-import { productPriceMinor } from '@/domain/pricing';
+import { productOldPriceMinor, productPriceMinor } from '@/domain/pricing';
 import { bestStockStatus, isAvailable, STOCK_STATUS_LABELS, type StockStatus } from '@/domain/stock';
 import {
   canAddToCart,
@@ -22,6 +21,7 @@ import { cn } from '@/lib/utils';
 import { NotFoundError, type ProductDetail } from '../api';
 import { useProduct } from '../hooks';
 import { useShop } from '../shop-context';
+import { Price } from './Price';
 import { QuantityStepper } from './QuantityStepper';
 
 const REASONS: Record<string, string> = {
@@ -134,6 +134,7 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
   const variant = needsChoice && flavor === null && color === null ? null : findVariant(sellable, sel);
   // One price per product, shown once in the header; it does not depend on the chosen flavor/color.
   const price = productPriceMinor(p);
+  const oldPrice = productOldPriceMinor(p);
 
   const inCart = variant ? (cart.lines.find((l) => l.variantId === variant.id)?.quantity ?? 0) : 0;
   // Business limit only (the exact stock is the server's business at checkout).
@@ -201,6 +202,7 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
         name: data.name,
         variantLabel: variantLabel(check.variant),
         unitPriceMinor: productPriceMinor(data),
+        originalUnitPriceMinor: productOldPriceMinor(data),
         imagePath: data.images[0]?.storage_path ?? null,
         maxQuantity: MAX_LINE_QUANTITY,
       },
@@ -236,7 +238,7 @@ function SheetBody({ listed, onDone }: { listed: ProductDetail; onDone: () => vo
           <div className="min-w-0 flex-1 space-y-0.5">
             <DialogTitle className="line-clamp-2 text-base leading-snug font-semibold">{p.name}</DialogTitle>
             <p className="text-lg font-semibold tracking-tight tabular-nums" data-testid="quick-price">
-              {formatMoney(price, shop.currency)}
+              <Price priceMinor={price} oldPriceMinor={oldPrice} currency={shop.currency} />
             </p>
             <DialogDescription className="sr-only">Выбор варианта и количества для добавления в корзину</DialogDescription>
           </div>

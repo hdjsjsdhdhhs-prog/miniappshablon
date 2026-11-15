@@ -126,10 +126,14 @@ export interface BotConnection {
 }
 
 export interface BotWelcome {
+  /** May contain Premium emoji tags: <tg-emoji emoji-id="…">🙂</tg-emoji>. */
   welcome_text: string;
   open_button_text: string;
   manager_button_text: string;
   manager_url: string | null;
+  /** Premium emoji shown before the button text (Telegram icon_custom_emoji_id); null / absent: none. */
+  open_button_emoji_id?: string | null;
+  manager_button_emoji_id?: string | null;
   customized: boolean;
   updated_at: string | null;
 }
@@ -149,6 +153,9 @@ export interface BotWelcomeInput {
   openButtonText: string;
   managerButtonText: string;
   managerUrl: string;
+  /** '' removes the icon. */
+  openButtonEmojiId: string;
+  managerButtonEmojiId: string;
 }
 
 export const botApi = {
@@ -184,6 +191,19 @@ const BOT_ERRORS: Record<string, string> = {
   invalid_manager_button_text: 'Введите текст кнопки связи с менеджером (до 64 символов).',
   invalid_manager_url: 'Укажите Telegram менеджера в виде https://t.me/username или @username.',
   invalid_welcome: 'Проверьте текст приветствия и кнопок.',
+  invalid_emoji_id: 'ID Premium Emoji — это число из цифр, например 5368324170671202286.',
+  too_many_custom_emoji: 'В одном сообщении может быть не больше 100 Premium Emoji.',
+  // «Рассылка»
+  invalid_broadcast_text: 'Введите текст сообщения (до 4096 символов).',
+  broadcast_too_long: 'Сообщение слишком длинное: с фотографией Telegram принимает до 1024 символов, без неё — до 4096.',
+  invalid_broadcast_button: 'Введите текст кнопки (до 64 символов).',
+  invalid_broadcast_photo: 'Фотография не найдена. Загрузите её ещё раз.',
+  invalid_broadcast: 'Не удалось запустить рассылку. Обновите страницу и повторите.',
+  no_recipients: 'Пока некому отправлять: бота ещё никто не запустил (или все отписались).',
+  broadcast_in_progress: 'Предыдущая рассылка ещё отправляется. Дождитесь её завершения или остановите её.',
+  broadcast_rate_limited: 'Сегодня уже отправлено 10 рассылок. Следующую можно запустить завтра.',
+  broadcast_not_found: 'Рассылка не найдена.',
+  broadcast_expired: 'Рассылка старше двух суток — повторить её уже нельзя. Создайте новую.',
   telegram_rate_limited: 'Telegram временно ограничил запросы. Повторите через минуту.',
   telegram_unavailable: 'Telegram сейчас недоступен. Повторите позже.',
   telegram_bad_request: 'Telegram отклонил запрос. Повторите попытку.',
@@ -198,6 +218,63 @@ export function botErrorText(errorOrCode: unknown): string {
     errorOrCode instanceof AdminApiError ? errorOrCode.code : typeof errorOrCode === 'string' ? errorOrCode.split(':')[0]!.trim() : 'unknown_error';
   return BOT_ERRORS[code] ?? 'Не удалось выполнить действие. Повторите попытку.';
 }
+
+// ---- «Рассылка»: a message to everyone who started the shop's own bot ---------------------------------
+// Served by the bot-connection Edge Function (same bot, same Vault secret, same rights). The recipients are chosen on
+// the server: users who started THIS shop's connected bot and did not unsubscribe / block it.
+
+export interface Broadcast {
+  id: string;
+  status: 'sending' | 'completed' | 'cancelled';
+  message_text: string;
+  photo_path: string | null;
+  button_text: string | null;
+  button_emoji_id: string | null;
+  total: number;
+  /** pending includes messages being sent right now. */
+  counts: { pending: number; sent: number; failed: number; blocked: number; cancelled: number };
+  /** Telegram's flood control makes the broadcast wait until this time. */
+  resume_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface BroadcastView {
+  overview: {
+    shop: { id: string; slug: string; name: string };
+    bot: { bot_username: string; status: string } | null;
+    /** Users of the connected bot. */
+    audience: { active: number; unsubscribed: number; blocked: number };
+    active: Broadcast | null;
+    history: Broadcast[];
+  };
+  storefront_url: string | null;
+  limits: { text: number; caption: number; button: number };
+}
+
+/** State of the worker step: send (more to do), paused (Telegram asked to wait), waiting (retries due later), busy, done. */
+export type BroadcastWorkerState = 'send' | 'paused' | 'waiting' | 'busy' | 'done';
+
+export interface BroadcastDraft {
+  /** One key per "send": repeating the request (double click, retry after a network error) starts nothing new. */
+  idempotencyKey: string;
+  text: string;
+  photoPath: string | null;
+  button: { text: string; emojiId: string | null } | null;
+}
+
+export const broadcastApi = {
+  get: (shopId: string) => callAdminFunction<BroadcastView>('bot-connection', { action: 'broadcast-get', shopId }),
+  start: (shopId: string, broadcast: BroadcastDraft) =>
+    callAdminFunction<BroadcastView & { replayed: boolean }>('bot-connection', { action: 'broadcast-start', shopId, broadcast }),
+  /** One worker step (a few seconds of sending); called repeatedly while a broadcast is running. */
+  run: (shopId: string) =>
+    callAdminFunction<BroadcastView & { worker: { state: BroadcastWorkerState; sent: number } }>('bot-connection', { action: 'broadcast-run', shopId }),
+  cancel: (shopId: string, broadcastId: string) => callAdminFunction<BroadcastView>('bot-connection', { action: 'broadcast-cancel', shopId, broadcastId }),
+  retry: (shopId: string, broadcastId: string) =>
+    callAdminFunction<BroadcastView & { retried: number }>('bot-connection', { action: 'broadcast-retry', shopId, broadcastId }),
+};
 
 // ---- Platform administration -------------------------------------------------------------
 
@@ -348,6 +425,14 @@ export interface DemoDeletePreview {
   deletion: ShopDeletion | null;
 }
 
+/** What "Удалить магазин" shows for any shop, LIVE included (platform_shop_delete_preview). */
+export interface ShopDeletePreview extends Omit<DemoDeletePreview, 'status' | 'counts'> {
+  status: 'ready' | 'deleting' | 'deleted';
+  counts?: NonNullable<DemoDeletePreview['counts']> & { subscribers: number; broadcasts: number };
+  /** Username of the shop's connected Telegram bot, if any. */
+  bot?: string | null;
+}
+
 /** `deleted` only once every file is gone; `pending`: data deleted and shop blocked, files remain (resume). */
 export interface DemoDeleteResult {
   deletion: { status: 'pending' | 'deleted'; remaining?: number; deletion?: ShopDeletion | null };
@@ -382,6 +467,15 @@ export const platformApi = {
   demoDelete: (shopId: string, confirmSlug: string) => callAdminFunction<DemoDeleteResult>('platform-admin', { action: 'demo-delete', shopId, confirmSlug }),
   /** Continues an interrupted deletion (Storage cleanup + completion). */
   demoDeleteResume: (shopId: string) => callAdminFunction<DemoDeleteResult>('platform-admin', { action: 'demo-delete-resume', shopId }),
+  shopDeletePreview: (shopId: string) =>
+    callAdminFunction<{ preview: ShopDeletePreview }>('platform-admin', { action: 'shop-delete-preview', shopId }).then((r) => r.preview),
+  /**
+   * Opens the step-up for deleting this shop. The server then accepts `shopDelete` only if a TOTP code is verified in
+   * this session AFTER this call (mfa.verifyTotp) — being signed in with MFA is not enough.
+   */
+  shopDeleteChallenge: (shopId: string) => callAdminFunction<{ challenge: { challenged: boolean; expires_in_sec: number } }>('platform-admin', { action: 'shop-delete-challenge', shopId }),
+  /** Deletes ANY shop (LIVE included). Refused without the step-up above and the exact slug. */
+  shopDelete: (shopId: string, confirmSlug: string) => callAdminFunction<DemoDeleteResult>('platform-admin', { action: 'shop-delete', shopId, confirmSlug }),
 };
 
 /** Public storefront link of a shop on the current deployment (https://miniappdemo.pages.dev/s/<slug>/ in production). */

@@ -12,18 +12,19 @@
  * that is missing from the remote history, in version order (and, without --include-all, refuses when such a
  * migration is older than the last applied one). `--dry-run` prints exactly that set. Therefore the gate never
  * "chooses" a stage: it derives which whole stages are pending and requires the dry-run to be exactly their files.
- * Whenever several stages are pending, a single `db push` applies them in stage order (3A, then 3B, then 4A); the
- * gate reports that as e.g. `apply 3A,3B,4A`.
+ * Whenever several stages are pending, a single `db push` applies them in stage order (3A, 3B, 4A, then 4B); the
+ * gate reports that as e.g. `apply 3A,3B,4A,4B`.
  *
  * Reviewed manifest (explicit file names, no patterns, append-only):
  *   * APPLIED_BASELINE_MIGRATION_FILES — reviewed history that must already be applied before any stage
  *     (incl. 20261026090000 / 20261026100000, which belong to the baseline, not to a release stage);
- *   * MIGRATION_STAGES — release stages in order (3A, 3B, then 4A); each is applied only as a whole.
+ *   * MIGRATION_STAGES — release stages in order (3A, 3B, 4A, then 4B); each is applied only as a whole.
  * The local migration directory and the local column of the history must be exactly this manifest.
  *
  * Accepted states (anything else throws, so the job stops before the database is changed):
  *   * apply — baseline applied; stages are a fully-applied prefix followed by a fully-pending suffix
- *     (pending = [3A, 3B, 4A], [3B, 4A] or [4A]); the dry-run plans exactly the pending stages' file names in order.
+ *     (pending = [3A, 3B, 4A, 4B], [3B, 4A, 4B], [4A, 4B] or [4B]); the dry-run plans exactly the pending stages'
+ *     file names in order.
  *   * skip  — baseline and all stages confirmed applied in history, and the dry-run independently reports upToDate
  *     with an empty plan. An empty dry-run alone is never enough.
  * Rejected: partially applied stage, a later stage applied before an earlier one, unapplied baseline, unknown or
@@ -71,6 +72,14 @@ export const MIGRATION_STAGES = [
   {
     id: '4A',
     files: ['20261107090000_telegram_bot_connection.sql'],
+  },
+  // Expand: admin, discounts and Telegram communications (deletion of LIVE shops with step-up MFA, discount price,
+  // «Рассылка», buyer order notification, Premium emoji). Backward compatible with the deployed frontend and Edge
+  // Functions: new nullable columns, new private tables, new service-role RPCs; the existing RPCs it replaces keep
+  // their signature and grants. Nothing is dropped and no privilege is revoked from a table.
+  {
+    id: '4B',
+    files: ['20261113090000_stage_4b_admin_discounts_broadcasts.sql'],
   },
 ] as const;
 

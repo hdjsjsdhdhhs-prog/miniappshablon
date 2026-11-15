@@ -147,6 +147,11 @@ export interface ProductInput {
   description: string;
   category_id: string;
   base_price_minor: number;
+  /**
+   * Optional discount price: positive and lower than base_price_minor (CHECK on products). null removes it; absent
+   * leaves the stored value untouched.
+   */
+  discount_price_minor?: number | null;
   is_published: boolean;
   sort_order: number;
 }
