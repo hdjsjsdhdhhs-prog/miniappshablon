@@ -78,6 +78,15 @@ const EXPECTED: Record<string, Roles> = {
   // Hand-over reservation before any Auth call (20261031090000, audit S2-06): platform-admin Edge Function only.
   'public.platform_reserve_handover(uuid,uuid,text)': r(false, false, true),
   'public.platform_release_handover(uuid,uuid,uuid)': r(false, false, true),
+  // Owner self-registration by an individual link (20261119090000): the platform-admin and owner-registration Edge
+  // Functions only. The link RPCs re-check the platform admin inside; the invite RPCs take the token HASH.
+  'public.platform_owner_link_create(uuid,uuid,text,text,integer)': r(false, false, true),
+  'public.platform_owner_link_revoke(uuid,uuid)': r(false, false, true),
+  'public.owner_invite_throttle(text,text)': r(false, false, true),
+  'public.owner_invite_preview(text)': r(false, false, true),
+  'public.owner_invite_reserve(text,text,uuid)': r(false, false, true),
+  'public.owner_invite_release(text,uuid)': r(false, false, true),
+  'public.owner_invite_complete(text,uuid,uuid,text)': r(false, false, true),
   // Invitation re-send cooldown and release of an expired reservation (20261101090000): platform-admin Edge Function only.
   'public.platform_claim_handover_invitation(uuid,uuid,uuid)': r(false, false, true),
   'public.platform_release_stale_handover(uuid,uuid)': r(false, false, true),

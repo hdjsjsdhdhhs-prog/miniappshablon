@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +15,8 @@ const platform = vi.hoisted(() => ({
   createDemo: vi.fn(),
   handoverCheck: vi.fn(),
   handover: vi.fn(),
+  ownerLinkCreate: vi.fn(),
+  ownerLinkRevoke: vi.fn(),
 }));
 const role = vi.hoisted(() => ({ isAdmin: true }));
 const myShops = vi.hoisted(() => vi.fn());
@@ -230,6 +232,156 @@ describe('Все магазины платформы', () => {
     const result = await within(dialog).findByTestId('handover-result');
     expect(result).toHaveTextContent('владелец client@local.test, режим live, DEMO выключен');
     expect(within(result).getByTestId('handover-invitation')).toHaveTextContent('Письмо-приглашение отправлено на client@local.test');
+  });
+});
+
+const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO-_';
+const invite = (extra: Partial<NonNullable<PlatformShop['owner_invite']>> = {}): NonNullable<PlatformShop['owner_invite']> => ({
+  status: 'active',
+  created_at: '2026-11-19T10:00:00Z',
+  expires_at: '2026-11-21T10:00:00Z',
+  created_by_email: 'creator@local.test',
+  bound_email: null,
+  used_at: null,
+  used_by: null,
+  used_email: null,
+  used_via: null,
+  revoked_at: null,
+  revoked_reason: null,
+  stale: false,
+  in_progress: false,
+  ...extra,
+});
+
+describe('Ссылка для регистрации владельца', () => {
+  it('every row shows the state of its link; a used link shows who registered, with e-mail and date', async () => {
+    platform.list.mockResolvedValue([
+      shop('a', 'A', 'o@local.test', { owner_invite: invite() }),
+      shop('b', 'B', 'buyer@example.com', { owner_invite: invite({ status: 'used', used_at: '2026-11-20T09:30:00Z', used_email: 'buyer@example.com', used_via: 'registration' }) }),
+      shop('c', 'C', null, { is_demo: true, owner_invite: invite({ status: 'expired' }) }),
+      shop('d', 'D', null, { is_demo: true, owner_invite: invite({ status: 'revoked', revoked_at: '2026-11-19T12:00:00Z', revoked_reason: 'manual' }) }),
+      shop('e', 'E', 'o@local.test'),
+    ]);
+    renderAt(<PlatformShopsPage />);
+    const rows = await screen.findAllByTestId('platform-shop');
+    const lines = rows.map((r) => within(r).queryByTestId('platform-shop-invite'));
+    expect(lines.map((l) => l?.getAttribute('data-status') ?? null)).toEqual(['active', 'used', 'expired', 'revoked', null]);
+    expect(lines[0]).toHaveTextContent('Активна');
+    expect(lines[1]).toHaveTextContent('Использована');
+    expect(within(rows[1]!).getByTestId('platform-shop-invite-used')).toHaveTextContent('buyer@example.com');
+    expect(within(rows[1]!).getByTestId('platform-shop-owner')).toHaveTextContent('buyer@example.com');
+    expect(lines[2]).toHaveTextContent('Истекла');
+    expect(lines[3]).toHaveTextContent('Отозвана');
+    // A DEMO shop and an already owned shop both get the button.
+    for (const row of rows) expect(within(row).getByTestId('platform-owner-link')).toHaveTextContent('Ссылка владельцу');
+  });
+
+  it('no link button on a shop that is being deleted', async () => {
+    platform.list.mockResolvedValue([shop('gone', 'Gone', null, { status: 'deleting', is_demo: true })]);
+    renderAt(<PlatformShopsPage />);
+    const row = await screen.findByTestId('platform-shop');
+    expect(within(row).queryByTestId('platform-owner-link')).not.toBeInTheDocument();
+  });
+
+  it('create → the link is shown once with a copy button; the list refreshes to "активна"', async () => {
+    platform.list.mockResolvedValueOnce([shop('noir', 'Noir', null, { is_demo: true })]).mockResolvedValue([shop('noir', 'Noir', null, { is_demo: true, owner_invite: invite() })]);
+    platform.ownerLinkCreate.mockResolvedValue({ token: TOKEN, invite: invite() });
+    const user = userEvent.setup();
+    renderAt(<PlatformShopsPage />);
+    await user.click(await screen.findByTestId('platform-owner-link'));
+    const dialog = screen.getByTestId('owner-link-dialog');
+    expect(within(dialog).queryByTestId('owner-link-status')).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Создать ссылку для регистрации владельца' }));
+
+    expect(platform.ownerLinkCreate).toHaveBeenCalledWith('id-noir', {});
+    const url = await within(dialog).findByTestId('owner-link-url');
+    // The token is in the fragment of the buyer's page, never in the path or the query.
+    expect(url).toHaveValue(`${window.location.origin}/admin/register#${TOKEN}`);
+    const status = await within(dialog).findByTestId('owner-link-status');
+    expect(status).toHaveAttribute('data-status', 'active');
+    expect(status).toHaveTextContent('Создана');
+    expect(status).toHaveTextContent('действует до');
+    expect(within(dialog).getByRole('button', { name: 'Создать новую ссылку взамен старой' })).toBeInTheDocument();
+    expect(within(dialog).getByTestId('owner-link-revoke')).toBeInTheDocument();
+    // The secret is not in an attribute of the copy button.
+    const copy = within(dialog).getByTestId('owner-link-copy');
+    expect(copy.getAttribute('aria-label')).not.toContain(TOKEN);
+    await user.click(copy);
+    expect(await navigator.clipboard.readText()).toBe(`${window.location.origin}/admin/register#${TOKEN}`);
+  });
+
+  it('an optional buyer e-mail limits the link; an invalid one blocks the button; the risk is explained', async () => {
+    platform.list.mockResolvedValue([shop('noir', 'Noir', null, { is_demo: true })]);
+    platform.ownerLinkCreate.mockResolvedValue({ token: TOKEN, invite: invite({ bound_email: 'buyer@example.com' }) });
+    renderAt(<PlatformShopsPage />);
+    await userEvent.click(await screen.findByTestId('platform-owner-link'));
+    const dialog = screen.getByTestId('owner-link-dialog');
+    expect(dialog).toHaveTextContent('первым любой, у кого она оказалась');
+    const create = within(dialog).getByTestId('owner-link-create');
+    await userEvent.type(within(dialog).getByTestId('owner-link-email'), 'broken');
+    expect(create).toBeDisabled();
+    await userEvent.clear(within(dialog).getByTestId('owner-link-email'));
+    await userEvent.type(within(dialog).getByTestId('owner-link-email'), 'buyer@example.com');
+    await userEvent.click(create);
+    expect(platform.ownerLinkCreate).toHaveBeenCalledWith('id-noir', { email: 'buyer@example.com' });
+  });
+
+  it('an active link whose token is no longer in memory cannot be copied: it says why and offers a replacement and a revoke', async () => {
+    platform.list.mockResolvedValueOnce([shop('noir', 'Noir', 'o@local.test', { owner_invite: invite({ bound_email: 'buyer@example.com' }) })]).mockResolvedValue([
+      shop('noir', 'Noir', 'o@local.test', { owner_invite: invite({ status: 'revoked', revoked_at: '2026-11-19T12:00:00Z', revoked_reason: 'manual' }) }),
+    ]);
+    platform.ownerLinkRevoke.mockResolvedValue({ revoked: true, invite: invite({ status: 'revoked' }) });
+    renderAt(<PlatformShopsPage />);
+    await userEvent.click(await screen.findByTestId('platform-owner-link'));
+    const dialog = screen.getByTestId('owner-link-dialog');
+    expect(within(dialog).getByTestId('owner-link-hidden')).toHaveTextContent('Саму ссылку увидеть уже нельзя');
+    expect(within(dialog).queryByTestId('owner-link-url')).not.toBeInTheDocument();
+    expect(within(dialog).getByTestId('owner-link-status')).toHaveTextContent('Только для почты: buyer@example.com');
+    await userEvent.click(within(dialog).getByTestId('owner-link-revoke'));
+    expect(platform.ownerLinkRevoke).toHaveBeenCalledWith('id-noir');
+    await waitFor(() => expect(within(dialog).getByTestId('owner-link-status')).toHaveAttribute('data-status', 'revoked'));
+    expect(within(dialog).getByTestId('owner-link-status')).toHaveTextContent('Отозвана');
+    expect(within(dialog).queryByTestId('owner-link-revoke')).not.toBeInTheDocument();
+  });
+
+  it('a used link shows the registered account and e-mail, and offers a new link (hand over again)', async () => {
+    platform.list.mockResolvedValue([
+      shop('noir', 'Noir', 'buyer@example.com', {
+        owner_invite: invite({ status: 'used', used_at: '2026-11-20T09:30:00Z', used_email: 'buyer@example.com', used_via: 'registration' }),
+      }),
+    ]);
+    renderAt(<PlatformShopsPage />);
+    await userEvent.click(await screen.findByTestId('platform-owner-link'));
+    const dialog = screen.getByTestId('owner-link-dialog');
+    expect(within(dialog).getByTestId('owner-link-used')).toHaveTextContent('Зарегистрировался buyer@example.com');
+    expect(within(dialog).getByTestId('owner-link-used')).toHaveTextContent('не подтверждалась письмом');
+    expect(within(dialog).queryByTestId('owner-link-revoke')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Создать ссылку для регистрации владельца' })).toBeEnabled();
+  });
+
+  it('a link made stale by another owner change is flagged; a registration in progress locks the buttons', async () => {
+    platform.list.mockResolvedValue([shop('noir', 'Noir', 'o@local.test', { owner_invite: invite({ stale: true, in_progress: true }) })]);
+    renderAt(<PlatformShopsPage />);
+    expect(await screen.findByTestId('platform-shop-invite')).toHaveTextContent('владелец изменился');
+    await userEvent.click(screen.getByTestId('platform-owner-link'));
+    const dialog = screen.getByTestId('owner-link-dialog');
+    expect(within(dialog).getByTestId('owner-link-status')).toHaveTextContent('Идёт регистрация');
+    expect(within(dialog).getByTestId('owner-link-status')).toHaveTextContent('Устарела');
+    expect(within(dialog).getByTestId('owner-link-create')).toBeDisabled();
+    expect(within(dialog).getByTestId('owner-link-revoke')).toBeDisabled();
+  });
+
+  it('shows why a link cannot be created (shop not ready, hand-over pending)', async () => {
+    const { AdminApiError } = await vi.importActual<typeof FunctionsApi>('../functions-api');
+    platform.list.mockResolvedValue([shop('noir', 'Noir', null, { is_demo: true })]);
+    platform.ownerLinkCreate.mockRejectedValueOnce(new AdminApiError(409, 'shop_not_ready', ['no_fulfillment'])).mockRejectedValueOnce(new AdminApiError(409, 'handover_pending', null));
+    renderAt(<PlatformShopsPage />);
+    await userEvent.click(await screen.findByTestId('platform-owner-link'));
+    const dialog = screen.getByTestId('owner-link-dialog');
+    await userEvent.click(within(dialog).getByTestId('owner-link-create'));
+    expect(await within(dialog).findByTestId('owner-link-error')).toHaveTextContent('Не включён ни один способ получения');
+    await userEvent.click(within(dialog).getByTestId('owner-link-create'));
+    await waitFor(() => expect(within(dialog).getByTestId('owner-link-error')).toHaveTextContent('ожидает подтверждения другим клиентом'));
   });
 });
 

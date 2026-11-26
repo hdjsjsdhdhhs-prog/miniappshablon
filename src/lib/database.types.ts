@@ -431,6 +431,21 @@ isOneToOne: true
 "order_to_json":
 { Args: { "p_order_id": string }; Returns: Json
                            },
+"owner_invite_complete":
+{ Args: { "p_reservation": string,"p_token_hash": string,"p_user_id": string,"p_via": string }; Returns: Json
+                           },
+"owner_invite_preview":
+{ Args: { "p_token_hash": string }; Returns: Json
+                           },
+"owner_invite_release":
+{ Args: { "p_reservation": string,"p_token_hash": string }; Returns: boolean
+                           },
+"owner_invite_reserve":
+{ Args: { "p_email": string,"p_token_hash": string,"p_user_id"?: string }; Returns: Json
+                           },
+"owner_invite_throttle":
+{ Args: { "p_key": string,"p_scope": string }; Returns: Json
+                           },
 "platform_admin_revoke_sessions":
 { Args: { "p_user_id": string }; Returns: number
                            },
@@ -469,6 +484,12 @@ isOneToOne: true
                            },
 "platform_list_shops":
 { Args: { "p_actor": string }; Returns: Json
+                           },
+"platform_owner_link_create":
+{ Args: { "p_actor": string,"p_bound_email"?: string,"p_shop_id": string,"p_token_hash": string,"p_ttl_hours"?: number }; Returns: Json
+                           },
+"platform_owner_link_revoke":
+{ Args: { "p_actor": string,"p_shop_id": string }; Returns: Json
                            },
 "platform_publish_demo_shop":
 { Args: { "p_actor": string,"p_shop_id": string }; Returns: Json

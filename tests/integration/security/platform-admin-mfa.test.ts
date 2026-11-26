@@ -38,6 +38,9 @@ function actorCalls(actor: string, shopId: string): Array<[string, Record<string
   return [
     ['platform_list_shops', { p_actor: actor }],
     ['platform_find_user', { p_actor: actor, p_email: `nobody-${run}@it.local` }],
+    // Owner registration links (20261119090000).
+    ['platform_owner_link_create', { p_actor: actor, p_shop_id: shopId, p_token_hash: 'a'.repeat(64) }],
+    ['platform_owner_link_revoke', { p_actor: actor, p_shop_id: shopId }],
     ['platform_transfer_shop', { p_actor: actor, p_shop_id: shopId, p_new_owner: Z }],
     ['platform_create_demo_shop', { p_actor: actor, p_template_id: shopId, p_slug: `mfa-${run}`, p_name: 'X' }],
     ['platform_publish_demo_shop', { p_actor: actor, p_shop_id: shopId }],

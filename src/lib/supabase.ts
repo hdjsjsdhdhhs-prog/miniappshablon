@@ -4,6 +4,14 @@ import type { Database } from './database.types';
 import { env } from './env';
 
 /**
+ * True when this page load came from the link of a password-recovery e-mail ("#…&type=recovery"). Read here, before the
+ * client below consumes the fragment: supabase-js signs the user in from it and then REMOVES the tokens from the
+ * address bar, so the page that follows can no longer tell a recovery from an invitation.
+ */
+export const openedByRecoveryLink: boolean =
+  typeof window !== 'undefined' && new URLSearchParams(window.location.hash.replace(/^#/, '')).get('type') === 'recovery';
+
+/**
  * Single browser client (anon key). Buyers stay anonymous: public catalog access is governed by
  * RLS, private buyer operations go through Edge Functions with Telegram initData. Owners sign in
  * with Supabase Auth; the same client then carries their JWT for RLS-protected admin writes.

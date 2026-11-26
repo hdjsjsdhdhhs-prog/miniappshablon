@@ -316,6 +316,30 @@ export interface PlatformShop {
   notifications: { enabled: boolean; status: NotificationStatus } | null;
   /** Hand-over waiting for the client to confirm their e-mail (the shop stays DEMO until then). */
   pending_handover?: PendingHandover | null;
+  /** The newest owner registration link of the shop (never its token or hash). */
+  owner_invite?: OwnerInvite | null;
+}
+
+/** One owner registration link as the platform admin sees it (private.owner_invite_json). */
+export interface OwnerInvite {
+  /** `expired` is derived from `expires_at` by the server. */
+  status: 'active' | 'used' | 'expired' | 'revoked';
+  created_at: string;
+  expires_at: string;
+  created_by_email: string | null;
+  /** Set when the link was issued for one e-mail address only. */
+  bound_email: string | null;
+  used_at: string | null;
+  used_by: string | null;
+  /** E-mail the buyer typed when registering (entered, never verified by a message). */
+  used_email: string | null;
+  used_via: 'registration' | 'claim' | null;
+  revoked_at: string | null;
+  revoked_reason: 'manual' | 'replaced' | null;
+  /** Active, but the shop changed hands another way since: the server will refuse it. */
+  stale: boolean;
+  /** A registration is running right now (the shop is reserved for at most 3 minutes). */
+  in_progress: boolean;
 }
 
 export interface PendingHandover {
@@ -476,6 +500,13 @@ export const platformApi = {
   shopDeleteChallenge: (shopId: string) => callAdminFunction<{ challenge: { challenged: boolean; expires_in_sec: number } }>('platform-admin', { action: 'shop-delete-challenge', shopId }),
   /** Deletes ANY shop (LIVE included). Refused without the step-up above and the exact slug. */
   shopDelete: (shopId: string, confirmSlug: string) => callAdminFunction<DemoDeleteResult>('platform-admin', { action: 'shop-delete', shopId, confirmSlug }),
+  /**
+   * Creates the shop's owner registration link (the previous active one is revoked). The token is in the response ONCE:
+   * the server keeps only its hash, so it cannot be shown again. `email` (optional) limits the link to that address.
+   */
+  ownerLinkCreate: (shopId: string, input: { email?: string; ttlHours?: number } = {}) =>
+    callAdminFunction<{ token: string; invite: OwnerInvite }>('platform-admin', { action: 'owner-link-create', shopId, ...input }),
+  ownerLinkRevoke: (shopId: string) => callAdminFunction<{ revoked: boolean; invite: OwnerInvite | null }>('platform-admin', { action: 'owner-link-revoke', shopId }),
 };
 
 /** Public storefront link of a shop on the current deployment (https://miniappdemo.pages.dev/s/<slug>/ in production). */

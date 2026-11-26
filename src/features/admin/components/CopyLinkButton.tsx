@@ -26,7 +26,8 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export function CopyLinkButton({ url, label = 'Копировать ссылку', testId }: { url: string; label?: string; testId?: string }) {
+/** `secret`: the URL carries a one-time token — it is kept out of the accessibility label (and so out of the DOM attributes). */
+export function CopyLinkButton({ url, label = 'Копировать ссылку', testId, secret = false }: { url: string; label?: string; testId?: string; secret?: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
     <Button
@@ -34,7 +35,7 @@ export function CopyLinkButton({ url, label = 'Копировать ссылку
       size="sm"
       variant="outline"
       data-testid={testId}
-      aria-label={`${label}: ${url}`}
+      aria-label={secret ? label : `${label}: ${url}`}
       onClick={async () => {
         if (await copyText(url)) {
           setCopied(true);

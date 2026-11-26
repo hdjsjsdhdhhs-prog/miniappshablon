@@ -87,4 +87,7 @@ export const RPC_ERRORS: Record<string, number> = {
   // Deletion of any shop incl. LIVE (20261113090000): a TOTP code verified for this very deletion is required.
   mfa_step_up_required: 403,
   bot_cleanup_failed: 409,
+  // Owner registration links (20261119090000).
+  invalid_token_hash: 400,
+  invalid_ttl: 400,
 };
