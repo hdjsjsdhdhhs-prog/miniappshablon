@@ -3,6 +3,10 @@
 //
 // Behaviour is driven by the fake token / chat id, so parallel scenarios do not share state:
 //   token secret starting with "UNAUTHORIZED"  → 401 for every method (wrong token)
+//   token secret starting with "UNAVAILABLE"   → 503 for every method (Telegram Bot API unavailable)
+//   getMe                                      → { id: <the number before ":" in the token>, username: mock_<id>_bot }, exactly
+//                                                like Telegram: tokens of different bots give different Bot IDs, any token of
+//                                                the same bot (a re-issued one has another secret) gives the same Bot ID
 //   token secret starting with "NOEMOJI"       → 400 for a message that uses Premium (custom) emoji — a bot whose owner
 //                                                has no Telegram Premium (custom_emoji entities / icon_custom_emoji_id)
 //   chat id containing "missing"               → getChat: 400 "chat not found"
@@ -173,6 +177,7 @@ export function createTelegramMockServer(log: (line: string) => void = () => und
       const [, botIdRaw, secret, method] = m;
       const botId = Number(botIdRaw);
       if (secret!.startsWith('UNAUTHORIZED')) return tgError(res, 401, 'Unauthorized');
+      if (secret!.startsWith('UNAVAILABLE')) return tgError(res, 503, 'Service Unavailable (mock)');
       const body = await readJson(req);
       const chat = body.chat_id === undefined ? '' : String(body.chat_id);
 

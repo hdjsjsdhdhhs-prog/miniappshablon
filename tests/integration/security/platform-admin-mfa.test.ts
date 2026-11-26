@@ -59,6 +59,8 @@ function actorCalls(actor: string, shopId: string): Array<[string, Record<string
     ['notify_get_settings', { p_shop_id: shopId, p_actor: actor }],
     ['notify_get_credentials', { p_shop_id: shopId, p_actor: actor }],
     ['notify_save_settings', { p_shop_id: shopId, p_actor: actor, p_bot_token: null, p_chat_id: '@mfa_chat', p_meta: {} }],
+    // One Telegram bot, one purpose of a shop (20261126090000).
+    ['notify_assert_bot_available', { p_shop_id: shopId, p_actor: actor, p_bot_id: 123456789 }],
     ['notify_record_check', { p_shop_id: shopId, p_actor: actor, p_ok: true, p_error: null }],
     ['notify_set_enabled', { p_shop_id: shopId, p_actor: actor, p_enabled: false }],
     ['notify_delete_settings', { p_shop_id: shopId, p_actor: actor }],

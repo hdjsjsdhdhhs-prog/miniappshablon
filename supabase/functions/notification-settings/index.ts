@@ -10,7 +10,7 @@ import type { serviceClient } from '../_shared/auth.ts';
 import { corsHeaders, errorResponse, json } from '../_shared/http.ts';
 import { dispatchNotifications } from '../_shared/notify-dispatch.ts';
 import { formatTestMessage } from '../_shared/order-notification.ts';
-import { BotApiError, isValidBotToken, normalizeChatId, TelegramBotApi, verifyConnection } from '../_shared/telegram-bot-api.ts';
+import { BotApiError, isValidBotToken, normalizeChatId, TelegramBotApi, verifyConnection, type TgUser } from '../_shared/telegram-bot-api.ts';
 
 const bodySchema = z.object({
   action: z.enum(['get', 'save', 'check', 'enable', 'disable', 'delete', 'retry']),
@@ -30,6 +30,30 @@ async function rpc(db: Db, req: Request, fn: string, args: Record<string, unknow
     return { ok: false as const, response: errorResponse(req, 500, 'internal_error') };
   }
   return { ok: true as const, data };
+}
+
+/**
+ * Identifies the bot of `token` with getMe and asks SQL whether this bot may serve the shop's notifications (not the shop's
+ * storefront bot: bot_used_for_storefront, 409). A token Telegram does not accept, or one whose id differs from what
+ * getMe reports, is a plain telegram_unauthorized. The token is never part of any answer.
+ */
+async function identifyBot(
+  db: Db,
+  req: Request,
+  actor: { p_shop_id: string; p_actor: string },
+  api: TelegramBotApi,
+  token: string,
+): Promise<{ ok: true; bot: TgUser } | { ok: false; response: Response }> {
+  let bot: TgUser;
+  try {
+    bot = await api.getMe();
+  } catch (err) {
+    return { ok: false, response: telegramError(req, err) };
+  }
+  if (!bot.is_bot || String(bot.id) !== token.split(':')[0]) return { ok: false, response: errorResponse(req, 400, 'telegram_unauthorized') };
+  const available = await rpc(db, req, 'notify_assert_bot_available', { ...actor, p_bot_id: bot.id });
+  if (!available.ok) return { ok: false, response: available.response };
+  return { ok: true, bot };
 }
 
 function telegramError(req: Request, err: unknown): Response {
@@ -82,15 +106,22 @@ Deno.serve(async (req) => {
         if (!tokenForCheck) return errorResponse(req, 400, 'token_required');
       }
 
+      // The Bot ID comes from Telegram (getMe), never from the request: it decides whether this bot may serve the
+      // notifications at all (it must not be this shop's storefront bot) before anything else is asked or stored.
+      const api = new TelegramBotApi(tokenForCheck, { baseUrl: apiBase });
+      const identified = await identifyBot(db, req, actor, api, tokenForCheck);
+      if (!identified.ok) return identified.response;
+      const me = identified.bot;
+
       let meta: Record<string, unknown>;
       try {
-        const { bot, chat } = await verifyConnection(new TelegramBotApi(tokenForCheck, { baseUrl: apiBase }), chatId);
-        meta = { bot_id: bot.id, bot_username: bot.username ?? null, chat_title: chat.title ?? chat.username ?? null, chat_type: chat.type, status: 'ok' };
+        const { chat } = await verifyConnection(api, chatId, me);
+        meta = { bot_id: me.id, bot_username: me.username ?? null, chat_title: chat.title ?? chat.username ?? null, chat_type: chat.type, status: 'ok' };
       } catch (err) {
         // A wrong token or an unknown chat is never stored. Missing rights are stored as "error" so the
         // owner can fix the rights in Telegram and re-check without retyping the token.
         if (!(err instanceof BotApiError) || err.code !== 'bot_cannot_post') return telegramError(req, err);
-        meta = { status: 'error', last_error: `${err.code}: ${err.description}` };
+        meta = { bot_id: me.id, bot_username: me.username ?? null, status: 'error', last_error: `${err.code}: ${err.description}` };
       }
       const saved = await rpc(db, req, 'notify_save_settings', { ...actor, p_bot_token: token, p_chat_id: chatId, p_meta: meta });
       if (!saved.ok) return saved.response;
@@ -118,7 +149,14 @@ Deno.serve(async (req) => {
       }
       try {
         const api = new TelegramBotApi(token, { baseUrl: apiBase });
-        const { bot, chat } = await verifyConnection(api, chatId);
+        // Unsaved values typed into the form: the test message must not go out from the shop's storefront bot either.
+        let me: TgUser | undefined;
+        if (dryRun) {
+          const identified = await identifyBot(db, req, actor, api, token);
+          if (!identified.ok) return identified.response;
+          me = identified.bot;
+        }
+        const { bot, chat } = await verifyConnection(api, chatId, me);
         await api.sendMessage(chatId, formatTestMessage(shopName));
         const settings = dryRun ? current.data : (await rpc(db, req, 'notify_record_check', { ...actor, p_ok: true, p_error: null })).data;
         return json(req, 200, { ok: true, bot: { username: bot.username ?? null }, chat: { title: chat.title ?? chat.username ?? null, type: chat.type }, settings });

@@ -68,6 +68,8 @@ const RPC_STATUS: Record<string, number> = {
   shop_not_found: 404,
   not_connected: 404,
   bot_in_use: 409,
+  // The storefront bot of a shop can not be the bot of its order notifications (20261126090000).
+  bot_used_for_notifications: 409,
   bot_connect_rate_limited: 429,
   invalid_token: 400,
   invalid_connection: 400,

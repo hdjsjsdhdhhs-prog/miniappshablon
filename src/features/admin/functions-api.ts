@@ -96,6 +96,9 @@ const NOTIFICATION_ERRORS: Record<string, string> = {
   notifications_disabled: 'Уведомления были выключены.',
   notifications_removed: 'Настройки уведомлений были удалены.',
   owner_changed: 'Магазин сменил владельца: уведомления прежнего владельца отключены, неотправленные — отменены.',
+  // One Telegram bot, one purpose of a shop (20261126090000). The token is never part of these texts.
+  bot_used_for_storefront:
+    'Этот Telegram-бот уже подключён для витрины Mini App. Для уведомлений необходимо использовать отдельного Telegram-бота. Один бот не может использоваться одновременно для уведомлений и витрины',
 };
 
 /** Human text for an API error or a stored `last_error` ("code: description"). */
@@ -177,6 +180,9 @@ const BOT_ERRORS: Record<string, string> = {
   invalid_token: 'Не удалось подключить бота. Проверьте правильность токена BotFather.',
   telegram_unauthorized: 'Не удалось подключить бота. Проверьте правильность токена BotFather.',
   bot_in_use: 'Этот Telegram-бот уже используется другим магазином платформы.',
+  // One Telegram bot, one purpose of a shop (20261126090000). The token is never part of these texts.
+  bot_used_for_notifications:
+    'Этот Telegram-бот уже подключён в разделе „Уведомления“. Для подключения витрины необходимо создать или использовать другого Telegram-бота. Один бот не может использоваться одновременно для уведомлений и витрины',
   bot_reserved: 'Этого бота нельзя подключить к магазину. Создайте отдельного бота в @BotFather.',
   bot_connect_rate_limited: 'Слишком много попыток подключения. Подождите 15 минут и попробуйте снова.',
   webhook_conflict: 'Этот бот уже подключён к другому сервису.',

@@ -116,6 +116,10 @@ const EXPECTED: Record<string, Roles> = {
   'public.bot_webhook_release(uuid,bigint)': r(false, false, true),
   'public.bot_webhook_record_menu(uuid,text,text)': r(false, false, true),
   'public.bot_initdata_token(text)': r(false, false, true),
+  // One Telegram bot, one purpose of a shop (20261126090000): the notification-settings Edge Function only; the actor
+  // (owner, or platform admin in aal2) is re-checked inside. bot_assert_available / bot_save_connection /
+  // notify_save_settings above are replaced in place with the same signature and grants.
+  'public.notify_assert_bot_available(uuid,uuid,bigint)': r(false, false, true),
   // Stage 4B (20261113090000): Edge Functions only. Audience of a shop's bot and Premium emoji of the welcome
   // (telegram-webhook / bot-connection), «Рассылка» (bot-connection; every admin RPC re-checks the actor), the buyer's
   // order notification (checkout), deletion of any shop with a step-up TOTP (platform-admin, aal2 actor re-checked).

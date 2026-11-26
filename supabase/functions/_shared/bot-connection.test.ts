@@ -91,6 +91,8 @@ class FakeDb {
   trackFails = false;
   attempts: Array<{ shop: string; actor: string }> = [];
   calls: string[] = [];
+  /** private.shop_bot_assignments, purpose 'notifications': the Bot ID of each shop's notification bot (20261126090000). */
+  notifBots = new Map<string, number>();
 
   /** The user's row in the audience of the shop's CURRENT bot. */
   subscriber(shopId: string, tgUserId: number): Subscriber | undefined {
@@ -182,6 +184,7 @@ class FakeDb {
       case 'bot_assert_available': {
         this.assert(a.p_shop_id, a.p_actor);
         for (const [shopId, c] of this.conns) if (c.bot_id === a.p_bot_id && shopId !== a.p_shop_id) throw new Error('bot_in_use');
+        if (this.notifBots.get(String(a.p_shop_id)) === a.p_bot_id) throw new Error('bot_used_for_notifications');
         return { same_bot: this.conns.get(String(a.p_shop_id))?.bot_id === a.p_bot_id };
       }
       case 'bot_get_credentials':
@@ -192,6 +195,7 @@ class FakeDb {
         const t = String(a.p_bot_token);
         if (Number(t.split(':')[0]) !== a.p_bot_id) throw new Error('invalid_token');
         for (const [shopId, c] of this.conns) if (c.bot_id === a.p_bot_id && shopId !== shop.id) throw new Error('bot_in_use');
+        if (this.notifBots.get(shop.id) === a.p_bot_id) throw new Error('bot_used_for_notifications');
         const old = this.conns.get(shop.id);
         const secretId = randomUUID();
         this.vault.set(secretId, t);
@@ -444,6 +448,89 @@ describe('connect', () => {
     expect(db.conns.has(B.id)).toBe(false);
     // Shop A's webhook and Menu Button are untouched.
     expect(await state(botIdOf(t))).toEqual(before);
+  });
+
+  describe('one bot, one purpose: the storefront bot is never the bot of the order notifications', () => {
+    it('refuses the notification bot of the SAME shop (identified by its Bot ID from getMe), changes nothing in Telegram and stores nothing', async () => {
+      const A = db.addShop('noir-vapor', 'Noir Vapor');
+      const t = token();
+      db.notifBots.set(A.id, botIdOf(t));
+      const err = await connectBot(deps, { shopId: A.id, actor: A.actor, botToken: t }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: 'bot_used_for_notifications', status: 409 });
+      expect(noSecretIn(err)).toBe(true);
+      expect(String((err as Error).message)).not.toContain(t.split(':')[1]);
+      // Refused BEFORE anything is set on the bot: no webhook, no Menu Button; nothing in the database or Vault.
+      const s = await state(botIdOf(t));
+      expect(s.webhook).toBeNull();
+      expect(s.menu_button).toEqual({ type: 'default' });
+      expect(db.conns.size).toBe(0);
+      expect(db.vault.size).toBe(0);
+      expect(db.calls).not.toContain('bot_save_connection');
+    });
+
+    it('the decision is made by the Bot ID, not by the text of the token: another token of the same bot is refused too', async () => {
+      const A = db.addShop('noir-vapor', 'Noir Vapor');
+      const t = token();
+      db.notifBots.set(A.id, botIdOf(t));
+      const reissued = `${botIdOf(t)}:FAKE_${randomBytes(18).toString('hex')}`;
+      tokens.push(reissued);
+      await expectFlowError(connectBot(deps, { shopId: A.id, actor: A.actor, botToken: reissued }), 'bot_used_for_notifications');
+      expect(db.conns.size).toBe(0);
+    });
+
+    it('a different bot is connected and works next to the notification bot', async () => {
+      const A = db.addShop('noir-vapor', 'Noir Vapor');
+      const notifications = token();
+      const storefront = token();
+      db.notifBots.set(A.id, botIdOf(notifications));
+      const res = await connectBot(deps, { shopId: A.id, actor: A.actor, botToken: storefront });
+      expect(res.settings.connection).toMatchObject({ bot_id: botIdOf(storefront), status: 'connected' });
+      expect(db.notifBots.get(A.id)).toBe(botIdOf(notifications));
+      expect((await state(botIdOf(storefront))).webhook!.url).toContain(connIdOf(A.id));
+      // The notification bot is never touched by the storefront.
+      expect((await state(botIdOf(notifications))).webhook).toBeNull();
+    });
+
+    it('replacing the storefront bot with the notification bot is refused and the working connection keeps everything', async () => {
+      const A = db.addShop('noir-vapor', 'Noir Vapor');
+      const storefront = token();
+      const notifications = token();
+      await connectBot(deps, { shopId: A.id, actor: A.actor, botToken: storefront });
+      db.notifBots.set(A.id, botIdOf(notifications));
+      const before = { conn: { ...db.conns.get(A.id)! }, vault: [...db.vault.values()], tg: await state(botIdOf(storefront)) };
+      await expectFlowError(connectBot(deps, { shopId: A.id, actor: A.actor, botToken: notifications }), 'bot_used_for_notifications');
+      expect(db.conns.get(A.id)).toEqual(before.conn);
+      expect([...db.vault.values()]).toEqual(before.vault);
+      expect(await state(botIdOf(storefront))).toEqual(before.tg);
+      expect((await state(botIdOf(notifications))).webhook).toBeNull();
+    });
+
+    it('re-saving the same storefront bot in the same section is not a conflict', async () => {
+      const A = db.addShop('noir-vapor', 'Noir Vapor');
+      const storefront = token();
+      db.notifBots.set(A.id, botIdOf(token()));
+      await connectBot(deps, { shopId: A.id, actor: A.actor, botToken: storefront });
+      const again = await connectBot(deps, { shopId: A.id, actor: A.actor, botToken: storefront });
+      expect(again.settings.connection!.bot_id).toBe(botIdOf(storefront));
+    });
+
+    it("another shop's notification bot does not matter (the rule is per shop)", async () => {
+      const A = db.addShop('noir-vapor', 'Noir Vapor');
+      const B = db.addShop('mint-lab', 'Mint Lab');
+      const t = token();
+      db.notifBots.set(B.id, botIdOf(t));
+      const res = await connectBot(deps, { shopId: A.id, actor: A.actor, botToken: t });
+      expect(res.settings.connection!.bot_id).toBe(botIdOf(t));
+    });
+
+    it('a wrong token and an unavailable Telegram are reported with their own codes, never as a duplicate bot', async () => {
+      const A = db.addShop('noir-vapor', 'Noir Vapor');
+      db.notifBots.set(A.id, botIdOf(token()));
+      await expectFlowError(connectBot(deps, { shopId: A.id, actor: A.actor, botToken: token('UNAUTHORIZED') }), 'telegram_unauthorized');
+      const down = { ...deps, apiBase: 'http://127.0.0.1:1' };
+      const err = await connectBot(down, { shopId: A.id, actor: A.actor, botToken: token() }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: 'network_error', status: 502 });
+    });
   });
 
   it("the platform's own bot cannot be connected to a shop", async () => {
