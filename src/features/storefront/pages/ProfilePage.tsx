@@ -5,13 +5,15 @@ import { Link } from 'react-router';
 import { EmptyState, ErrorState, PageSpinner } from '@/components/state-views';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { BONUS_UNIT_MINOR, formatBonuses } from '@/domain/loyalty';
 import { formatMoney } from '@/domain/money';
 import { isOrderStatus, ORDER_STATUS_LABELS } from '@/domain/order-status';
 import { queryKeys } from '@/domain/query-keys';
-import { ApiError, fetchMyOrders } from '@/features/cart/checkout-api';
+import { ApiError, fetchMyOrders, type OrderDto } from '@/features/cart/checkout-api';
 import { FULFILLMENT_LABELS } from '@/features/cart/checkout-schema';
 import { unverifiedTelegramUser } from '@/features/telegram/init-data-user';
 import { getTelegramEnv } from '@/features/telegram/telegram';
+import { BonusCard } from '../components/BonusCard';
 import { Price } from '../components/Price';
 import { ShopLogo } from '../components/ShopLogo';
 import { buildDemoOrder, shouldShowDemoProfile } from '../demo-profile';
@@ -50,6 +52,7 @@ function OrderCard({
   totalMinor,
   currency,
   testId,
+  breakdown,
 }: {
   title: string;
   status: string;
@@ -58,6 +61,8 @@ function OrderCard({
   totalMinor: number;
   currency: string;
   testId: string;
+  /** Discounts / bonuses of the order, between the lines and the total (orders without any pass nothing). */
+  breakdown?: ReactNode;
 }) {
   return (
     <li className="glass-card space-y-2 rounded-xl p-4" data-testid={testId}>
@@ -81,11 +86,55 @@ function OrderCard({
           </li>
         ))}
       </ul>
+      {breakdown}
       <p className="flex justify-between border-t pt-2 font-semibold">
         <span>Итого</span>
         <span className="tabular-nums">{formatMoney(totalMinor, currency)}</span>
       </p>
     </li>
+  );
+}
+
+function discountLabel(o: OrderDto): string {
+  const info = o.discount_info ?? {};
+  if (o.discount_type === 'promo') return `Промокод ${info.code ?? ''}`;
+  return `Скидка за сумму заказа${info.percent ? ` ${info.percent}%` : ''}`;
+}
+
+/** The discounts and bonuses an order was placed with, and the bonuses it earned. Nothing for a plain order. */
+function OrderBreakdown({ order }: { order: OrderDto }) {
+  const discount = order.discount_minor ?? 0;
+  const spent = order.bonus_spent ?? 0;
+  const showPrice = order.items_total_minor != null && (discount > 0 || spent > 0);
+  if (!showPrice && order.bonus_accrued == null) return null;
+  return (
+    <div className="space-y-1 border-t pt-2 text-sm" data-testid="my-order-breakdown">
+      {showPrice && (
+        <>
+          <p className="flex justify-between gap-2 text-muted-foreground">
+            <span>Сумма товаров</span>
+            <span className="tabular-nums">{formatMoney(order.items_total_minor!, order.currency)}</span>
+          </p>
+          {discount > 0 && (
+            <p className="flex justify-between gap-2 text-emerald-500" data-testid="my-order-discount">
+              <span>{discountLabel(order)}</span>
+              <span className="tabular-nums">−{formatMoney(discount, order.currency)}</span>
+            </p>
+          )}
+          {spent > 0 && (
+            <p className="flex justify-between gap-2 text-emerald-500" data-testid="my-order-bonus-spent">
+              <span>Оплачено бонусами ({formatBonuses(spent)})</span>
+              <span className="tabular-nums">−{formatMoney(spent * BONUS_UNIT_MINOR, order.currency)}</span>
+            </p>
+          )}
+        </>
+      )}
+      {order.bonus_accrued != null && (
+        <p className="text-emerald-500" data-testid="my-order-bonus-accrued">
+          За этот заказ начислено {formatBonuses(order.bonus_accrued)}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -179,7 +228,7 @@ function TelegramProfile() {
     );
   }
 
-  const { user, orders } = query.data;
+  const { user, orders, loyalty } = query.data;
   return (
     <main className="space-y-5 px-4 pt-4 pb-6">
       <ProfileHeader
@@ -192,6 +241,8 @@ function TelegramProfile() {
       >
         {user.username && <p className="text-sm text-muted-foreground">@{user.username}</p>}
       </ProfileHeader>
+
+      {loyalty && <BonusCard profile={loyalty} />}
 
       <section aria-labelledby="orders-title" className="space-y-3">
         <h2 id="orders-title" className="text-lg font-semibold">
@@ -231,6 +282,7 @@ function TelegramProfile() {
                 }))}
                 totalMinor={o.total_minor}
                 currency={o.currency}
+                breakdown={<OrderBreakdown order={o} />}
               />
             ))}
           </ul>

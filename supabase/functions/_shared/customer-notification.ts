@@ -9,7 +9,7 @@
 //
 // The message carries only what the buyer already knows about the order: number, items, total and the way of
 // receiving it. No address, no comment, no Telegram id, no name.
-import { escapeHtml, formatMinor, type NotificationOrder } from './order-notification.ts';
+import { escapeHtml, formatMinor, priceBreakdownLines, type NotificationOrder } from './order-notification.ts';
 import { BotApiError, redactToken, TelegramBotApi } from './telegram-bot-api.ts';
 
 export type Rpc = (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
@@ -22,6 +22,7 @@ export function formatCustomerOrderMessage(order: NotificationOrder): string {
   const head = ['✅ <b>Ваш заказ оформлен!</b>', '', `<b>Номер заказа:</b> №${order.order_number}`, '<b>Состав заказа:</b>'];
   const method = order.fulfillment_method === 'delivery' ? 'доставка' : order.fulfillment_method === 'pickup' ? 'самовывоз' : null;
   const tail = [
+    ...priceBreakdownLines(order),
     `<b>Сумма:</b> ${formatMinor(order.total_minor, order.currency)}`,
     ...(method ? [`<b>Способ получения:</b> ${method}`] : []),
     '',

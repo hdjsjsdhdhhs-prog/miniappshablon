@@ -1,3 +1,4 @@
+import type { BonusProfile, CartQuote } from '@/domain/loyalty';
 import { functionsUrl } from '@/lib/supabase';
 import { env } from '@/lib/env';
 import type { CartLine } from './cart-store';
@@ -35,6 +36,17 @@ export interface OrderDto {
   is_test: boolean;
   created_at: string;
   items: OrderItemDto[];
+  /**
+   * Price breakdown — present only for an order placed with the bonus program / discounts / promo codes of the shop
+   * (20261125090000): total_minor = items_total_minor − discount_minor − bonus_spent × 100.
+   */
+  items_total_minor?: number;
+  discount_type?: 'threshold' | 'promo' | null;
+  discount_minor?: number;
+  discount_info?: { percent?: number | null; min_total_minor?: number; code?: string; kind?: 'percent' | 'fixed'; fixed_minor?: number | null } | null;
+  bonus_spent?: number;
+  /** Bonuses credited when the shop confirmed the order; absent until then. */
+  bonus_accrued?: number;
 }
 
 export class ApiError extends Error {
@@ -73,9 +85,14 @@ export interface CheckoutInput {
   currency: string;
   idempotencyKey: string;
   lines: readonly CartLine[];
+  /** What the buyer saw: the amount to pay after discounts and bonuses (the server recomputes it and refuses a mismatch). */
   expectedTotalMinor: number;
   fulfillment: CheckoutFulfillment;
   comment: string;
+  /** Promo code the buyer applied (the server resolves it in THIS shop; never an amount). */
+  promoCode?: string | null;
+  /** Whole bonuses to spend (never more than the buyer's balance; the server refuses more). */
+  bonusSpend?: number;
 }
 
 export function submitCheckout(initData: string, input: CheckoutInput) {
@@ -87,15 +104,32 @@ export function submitCheckout(initData: string, input: CheckoutInput) {
     items: input.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
     fulfillment: input.fulfillment,
     comment: input.comment,
+    // Only when used, so a shop without these features receives exactly the request it always did.
+    ...(input.promoCode ? { promoCode: input.promoCode } : {}),
+    ...(input.bonusSpend && input.bonusSpend > 0 ? { bonusSpend: input.bonusSpend } : {}),
   });
 }
 
 export function fetchMyOrders(initData: string, shopSlug: string) {
-  return callFunction<{ user: { id: number; first_name: string | null; username: string | null }; orders: OrderDto[] }>(
-    'my-orders',
-    initData,
-    { shopSlug },
-  );
+  return callFunction<{
+    user: { id: number; first_name: string | null; username: string | null };
+    orders: OrderDto[];
+    /** Bonus balance and history in this shop; null / absent: no bonus program and no balance. */
+    loyalty?: BonusProfile | null;
+  }>('my-orders', initData, { shopSlug });
+}
+
+/**
+ * The price of the cart as checkout would charge it, computed by the server (discounts, promo code, bonuses). Nothing is
+ * reserved or spent by asking.
+ */
+export function fetchCartQuote(initData: string, input: { shopSlug: string; lines: readonly CartLine[]; promoCode?: string | null; bonusSpend?: number }) {
+  return callFunction<{ quote: CartQuote }>('cart-quote', initData, {
+    shopSlug: input.shopSlug,
+    items: input.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
+    ...(input.promoCode ? { promoCode: input.promoCode } : {}),
+    ...(input.bonusSpend && input.bonusSpend > 0 ? { bonusSpend: input.bonusSpend } : {}),
+  }).then((r) => r.quote);
 }
 
 /**
@@ -105,15 +139,16 @@ export function fetchMyOrders(initData: string, shopSlug: string) {
 export function checkoutKeyFor(
   shopId: string,
   lines: readonly CartLine[],
-  order: Pick<CheckoutInput, 'fulfillment' | 'comment'>,
+  order: Pick<CheckoutInput, 'fulfillment' | 'comment' | 'promoCode' | 'bonusSpend'>,
 ): string {
-  // Must cover everything the server hashes (items + fulfillment + comment), otherwise a retry with an edited
-  // address/comment would reuse the key and be rejected as idempotency_conflict.
+  // Must cover everything the server hashes (items + fulfillment + comment + promo code + bonuses), otherwise a retry
+  // with an edited address/comment/promo code would reuse the key and be rejected as idempotency_conflict.
   const fingerprint = JSON.stringify([
     [...lines].map((l) => `${l.variantId}:${l.quantity}`).sort(),
     order.fulfillment.method,
     order.fulfillment.method === 'delivery' ? order.fulfillment.address.trim() : null,
     order.comment.trim(),
+    ...(order.promoCode || (order.bonusSpend ?? 0) > 0 ? [order.promoCode?.trim().toUpperCase() ?? null, order.bonusSpend ?? 0] : []),
   ]);
   const storageKey = `tma-checkout-key:${shopId}`;
   try {

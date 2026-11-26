@@ -12,6 +12,7 @@ import { CategoriesPage } from './pages/CategoriesPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { LoginPage } from './pages/LoginPage';
+import { LoyaltyPage } from './pages/LoyaltyPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { OrdersPage } from './pages/OrdersPage';
 import { OwnerRegistrationPage } from './pages/OwnerRegistrationPage';
@@ -66,6 +67,7 @@ export default function AdminRoutes() {
             <Route path="orders" element={<OrdersPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="notifications" element={<NotificationsPage />} />
+            <Route path="loyalty" element={<LoyaltyPage />} />
             <Route path="bot" element={<BotConnectionPage />} />
             <Route path="broadcast" element={<BroadcastPage />} />
           </Route>

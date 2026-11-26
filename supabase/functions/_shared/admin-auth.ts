@@ -90,4 +90,17 @@ export const RPC_ERRORS: Record<string, number> = {
   // Owner registration links (20261119090000).
   invalid_token_hash: 400,
   invalid_ttl: 400,
+  // Bonuses, automatic discounts and promo codes (20261125090000).
+  invalid_percent: 400,
+  invalid_rule: 400,
+  rule_exists: 409,
+  rule_not_found: 404,
+  too_many_rules: 409,
+  invalid_promo: 400,
+  invalid_promo_code: 400,
+  promo_exists: 409,
+  promo_not_found: 404,
+  promo_in_use: 409,
+  too_many_promos: 409,
+  limit_below_used: 409,
 };

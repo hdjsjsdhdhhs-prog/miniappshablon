@@ -43,7 +43,21 @@ Deno.serve(async (req) => {
     return errorResponse(req, 500, 'internal_error');
   }
 
+  // Bonus balance and history of THIS buyer in THIS shop (null: no bonus program and no balance). Additive: a failure
+  // here never hides the orders.
+  let loyalty: unknown = null;
+  if (!body.orderId) {
+    const profile = await serviceClient().rpc('loyalty_customer_profile', {
+      p_shop_slug: body.shopSlug,
+      p_customer_tg_id: auth.data.user.id,
+      p_limit: 30,
+    });
+    if (profile.error) console.error('loyalty_customer_profile failed', profile.error.code ?? '', profile.error.message);
+    else loyalty = profile.data;
+  }
+
   return json(req, 200, {
+    loyalty,
     user: {
       id: auth.data.user.id,
       first_name: auth.data.user.first_name ?? null,

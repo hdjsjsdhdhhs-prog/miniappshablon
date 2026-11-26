@@ -6,14 +6,17 @@ import { ProductImage } from '@/components/product-image';
 import { EmptyState } from '@/components/state-views';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { BONUS_UNIT_MINOR } from '@/domain/loyalty';
 import { formatMoney } from '@/domain/money';
 import { lineTotalMinor } from '@/domain/pricing';
 import { queryKeys } from '@/domain/query-keys';
 import { ApiError, checkoutKeyFor, clearCheckoutKey, submitCheckout, type OrderDto } from '@/features/cart/checkout-api';
 import { describeCheckoutError } from '@/features/cart/checkout-errors';
+import { CartPricingPanel } from '@/features/cart/CartPricing';
 import { CheckoutForm } from '@/features/cart/CheckoutForm';
 import { FULFILLMENT_LABELS, toFulfillment, type CheckoutFormValues, type FulfillmentMethod } from '@/features/cart/checkout-schema';
 import { useCart } from '@/features/cart/useCart';
+import { useCartPricing } from '@/features/cart/useCartPricing';
 import { getTelegramEnv } from '@/features/telegram/telegram';
 import { Price } from '../components/Price';
 import { QuantityStepper } from '../components/QuantityStepper';
@@ -27,6 +30,14 @@ interface DemoPlaced {
   method: FulfillmentMethod;
 }
 
+/** " (скидка 300 ₽, оплачено бонусами 50 ₽)" for an order placed with discounts / bonuses; "" for every other order. */
+function placedSavings(o: OrderDto): string {
+  const parts: string[] = [];
+  if ((o.discount_minor ?? 0) > 0) parts.push(`скидка ${formatMoney(o.discount_minor!, o.currency)}`);
+  if ((o.bonus_spent ?? 0) > 0) parts.push(`оплачено бонусами ${formatMoney(o.bonus_spent! * BONUS_UNIT_MINOR, o.currency)}`);
+  return parts.length ? ` (${parts.join(', ')})` : '';
+}
+
 export function CartPage() {
   const shop = useShop();
   const cart = useCart(shop.id);
@@ -36,15 +47,31 @@ export function CartPage() {
   const [placed, setPlaced] = useState<OrderDto | null>(null);
   const [demoPlaced, setDemoPlaced] = useState<DemoPlaced | null>(null);
 
+  // Discounts, promo code and bonuses of the shop (server-computed). Asked only where a real order can be placed; a shop
+  // that uses none of them gets a quote without them and the cart below stays exactly as it was.
+  const pricing = useCartPricing({
+    shopId: shop.id,
+    shopSlug: shop.slug,
+    lines: cart.lines,
+    baseTotalMinor: cart.totalMinor,
+    enabled: !shop.isDemo && tg.inTelegram && !!tg.rawInitData && shop.mode === 'live',
+    initData: tg.rawInitData ?? '',
+  });
+
   const checkout = useMutation({
     mutationFn: (values: CheckoutFormValues) => {
-      const order = { fulfillment: toFulfillment(values), comment: values.comment };
+      const order = {
+        fulfillment: toFulfillment(values),
+        comment: values.comment,
+        promoCode: pricing.promoCode,
+        bonusSpend: pricing.bonusSpend,
+      };
       return submitCheckout(tg.rawInitData ?? '', {
         shopSlug: shop.slug,
         currency: shop.currency,
         idempotencyKey: checkoutKeyFor(shop.id, cart.lines, order),
         lines: cart.lines,
-        expectedTotalMinor: cart.totalMinor,
+        expectedTotalMinor: pricing.totalMinor,
         ...order,
       });
     },
@@ -61,6 +88,10 @@ export function CartPage() {
       if (view.reconcile) cart.reconcile(view.reconcile);
       view.removeVariantIds?.forEach((id) => cart.remove(id));
       if (view.resetIdempotencyKey) clearCheckoutKey(shop.id);
+      // A refused promo code / bonuses are forgotten; the quote is asked again (balance, limits and prices may have moved).
+      if (view.dropPromo) pricing.clearPromo();
+      if (view.dropBonus) pricing.clearBonus();
+      void queryClient.invalidateQueries({ queryKey: ['shop', shop.id, 'cart-quote'] });
       // The owner changed the delivery/pickup settings meanwhile: reload them so the form shows what is offered now.
       if (err instanceof ApiError && err.code === 'fulfillment_unavailable') void queryClient.invalidateQueries({ queryKey: queryKeys.shop(shop.slug) });
     },
@@ -105,7 +136,7 @@ export function CartPage() {
         <EmptyState
           icon={<CheckCircleIcon weight="fill" className="text-success" />}
           title={`Заказ №${placed.order_number} отправлен`}
-          description={`Сумма ${formatMoney(placed.total_minor, placed.currency)}. Магазин свяжется с вами для подтверждения, оплата и получение согласуются отдельно.${placed.is_test ? ' Это тестовый заказ demo-витрины.' : ''}`}
+          description={`Сумма ${formatMoney(placed.total_minor, placed.currency)}${placedSavings(placed)}. Магазин свяжется с вами для подтверждения, оплата и получение согласуются отдельно.${placed.is_test ? ' Это тестовый заказ demo-витрины.' : ''}`}
           action={
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button asChild>
@@ -184,12 +215,26 @@ export function CartPage() {
         ))}
       </ul>
 
-      <div className="glass-panel flex items-center justify-between rounded-xl p-4">
-        <span className="text-muted-foreground">Итого</span>
-        <span className="text-lg font-bold tabular-nums" data-testid="cart-total">
-          {formatMoney(cart.totalMinor, shop.currency)}
-        </span>
-      </div>
+      {pricing.active ? (
+        <CartPricingPanel pricing={pricing} />
+      ) : (
+        <div className="glass-panel flex items-center justify-between rounded-xl p-4">
+          <span className="text-muted-foreground">Итого</span>
+          <span className="text-lg font-bold tabular-nums" data-testid="cart-total">
+            {formatMoney(cart.totalMinor, shop.currency)}
+          </span>
+        </div>
+      )}
+      {pricing.failed && (
+        <Alert variant="destructive" role="alert" data-testid="cart-quote-failed">
+          <AlertDescription className="flex flex-wrap items-center gap-2">
+            Не удалось рассчитать сумму заказа со скидками.
+            <Button type="button" variant="outline" size="sm" onClick={pricing.refetch}>
+              Повторить
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
       <p className="text-xs text-muted-foreground">
         Цены и наличие проверяются магазином при оформлении. Онлайн-оплаты нет: заказ подтверждает магазин, оплата и получение согласуются отдельно.
       </p>
@@ -227,9 +272,9 @@ export function CartPage() {
           // Remount when the owner's settings change, so the default method follows what is offered.
           key={`${shop.fulfillment.delivery}-${shop.fulfillment.pickup}`}
           fulfillment={shop.fulfillment}
-          disabled={!canOrder}
+          disabled={!canOrder || !pricing.ready}
           submitting={checkout.isPending}
-          submitLabel={`${shop.isDemo ? 'Оформить тестовый заказ' : 'Оформить заказ'} · ${formatMoney(cart.totalMinor, shop.currency)}`}
+          submitLabel={`${shop.isDemo ? 'Оформить тестовый заказ' : 'Оформить заказ'} · ${formatMoney(shop.isDemo ? cart.totalMinor : pricing.totalMinor, shop.currency)}`}
           onSubmit={submit}
         />
       </section>

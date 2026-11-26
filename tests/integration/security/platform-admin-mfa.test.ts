@@ -112,6 +112,19 @@ function actorCalls(actor: string, shopId: string): Array<[string, Record<string
     ['platform_shop_delete_preview', { p_actor: actor, p_shop_id: shopId }],
     ['platform_shop_delete_challenge', { p_actor: actor, p_shop_id: shopId }],
     ['platform_shop_delete_begin', { p_actor: actor, p_shop_id: shopId, p_confirm_slug: 'x' }],
+    // Bonuses, automatic discounts and promo codes (20261125090000): private.assert_can_manage_shop / assert_shop_member_actor.
+    ['loyalty_get_overview', { p_shop_id: shopId, p_actor: actor }],
+    ['loyalty_save_settings', { p_shop_id: shopId, p_actor: actor, p_bonus_enabled: null, p_bonus_percent: null, p_discount_enabled: null, p_promo_enabled: null }],
+    ['loyalty_save_rule', { p_shop_id: shopId, p_actor: actor, p_rule_id: null, p_min_total_minor: 300000, p_percent: 5 }],
+    ['loyalty_delete_rule', { p_shop_id: shopId, p_actor: actor, p_rule_id: Z }],
+    [
+      'loyalty_save_promo',
+      { p_shop_id: shopId, p_actor: actor, p_promo_id: null, p_code: 'MFACODE', p_discount_type: 'percent', p_value: 5, p_max_activations: 5, p_is_active: true },
+    ],
+    ['loyalty_set_promo_active', { p_shop_id: shopId, p_actor: actor, p_promo_id: Z, p_active: false }],
+    ['loyalty_delete_promo', { p_shop_id: shopId, p_actor: actor, p_promo_id: Z }],
+    ['loyalty_promo_history', { p_shop_id: shopId, p_actor: actor, p_promo_id: Z, p_limit: 5 }],
+    ['bonus_notify_claim', { p_actor: actor, p_shop_id: shopId, p_order_id: null, p_limit: 1 }],
   ];
 }
 
@@ -224,6 +237,19 @@ describe('platform admin without MFA (password only, aal1, no factor)', () => {
       { action: 'save-welcome', shopId: live.id, welcome: { welcomeText: 'x', openButtonText: 'x', managerButtonText: 'x', managerUrl: '' } },
     ]) {
       const res = await callAdminFunction('bot-connection', pa.client, body);
+      expect([body.action, res.status, (res.body?.error as { code?: string }).code]).toEqual([body.action, 403, 'mfa_required']);
+    }
+  });
+
+  it('loyalty («Бонусы и промокоды») for any shop → 403 mfa_required', async () => {
+    for (const body of [
+      { action: 'get', shopId: live.id },
+      { action: 'save-settings', shopId: live.id, bonusEnabled: true },
+      { action: 'rule-save', shopId: live.id, minTotalMinor: 300000, percent: 5 },
+      { action: 'promo-save', shopId: live.id, code: 'MFACODE', discountType: 'percent', value: 5, maxActivations: 5 },
+      { action: 'dispatch', shopId: live.id },
+    ]) {
+      const res = await callAdminFunction('loyalty', pa.client, body);
       expect([body.action, res.status, (res.body?.error as { code?: string }).code]).toEqual([body.action, 403, 'mfa_required']);
     }
   });

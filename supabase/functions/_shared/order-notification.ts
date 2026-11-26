@@ -26,6 +26,39 @@ export interface NotificationOrder {
   is_test?: boolean;
   created_at: string;
   items: NotificationOrderItem[];
+  /**
+   * Price breakdown of an order placed with the bonus program / discounts / promo codes (20261125090000); absent for every
+   * other order: total_minor = items_total_minor − discount_minor − bonus_spent × 100.
+   */
+  items_total_minor?: number | null;
+  discount_type?: 'threshold' | 'promo' | null;
+  discount_minor?: number | null;
+  discount_info?: { percent?: number | null; min_total_minor?: number; code?: string } | null;
+  bonus_spent?: number | null;
+}
+
+/** 1 bonus = 1 whole currency unit = 100 minor units (private.bonus_unit_minor). */
+const BONUS_UNIT_MINOR = 100;
+
+/**
+ * «Сумма товаров / Скидка / Оплачено бонусами» lines, only for an order that has a discount or spent bonuses — a plain order
+ * produces none, so its message stays exactly what it was.
+ */
+export function priceBreakdownLines(order: NotificationOrder): string[] {
+  const discount = order.discount_minor ?? 0;
+  const spent = order.bonus_spent ?? 0;
+  if (order.items_total_minor == null || (discount <= 0 && spent <= 0)) return [];
+  const lines = [`<b>Сумма товаров:</b> ${formatMinor(order.items_total_minor, order.currency)}`];
+  if (discount > 0) {
+    const info = order.discount_info ?? {};
+    const title =
+      order.discount_type === 'promo'
+        ? `Промокод ${escapeHtml(String(info.code ?? ''))}`
+        : `Скидка за сумму заказа${info.percent ? ` ${info.percent}%` : ''}`;
+    lines.push(`<b>${title}:</b> −${formatMinor(discount, order.currency)}`);
+  }
+  if (spent > 0) lines.push(`<b>Оплачено бонусами (${spent}):</b> −${formatMinor(spent * BONUS_UNIT_MINOR, order.currency)}`);
+  return lines;
 }
 
 export interface VerifiedCustomer {
@@ -111,6 +144,7 @@ export function formatOrderNotification(input: OrderNotificationInput): string {
     );
   });
   lines.push('');
+  lines.push(...priceBreakdownLines(order));
   lines.push(`<b>Итого:</b> ${formatMinor(order.total_minor, order.currency)}`);
   lines.push(`<b>Дата:</b> ${formatOrderTime(order.created_at, input.timeZone)}`);
   return lines.join('\n');
