@@ -47,6 +47,7 @@ pnpm db:start        # = supabase start + локальные секреты Edge
    pnpm exec supabase functions deploy platform-admin
    pnpm exec supabase functions deploy bot-connection
    pnpm exec supabase functions deploy telegram-webhook
+   pnpm exec supabase functions deploy owner-registration
    ```
    Для production то же самое делает job `supabase` ручного release workflow `.github/workflows/release.yml`
    (reusable `.github/workflows/supabase-deploy.yml`, environment `production`: secrets `SUPABASE_ACCESS_TOKEN`,
@@ -65,7 +66,43 @@ pnpm db:start        # = supabase start + локальные секреты Edge
 4. Auth → Providers → **Email: включён**, **Allow new users to sign up: выключено** (Auth → Settings).
    Владельцев создаёт администратор: `pnpm owner:add --slug <slug> --email <email>`
    (пароль берётся из `OWNER_PASSWORD` или генерируется и печатается один раз).
-5. В Auth → URL Configuration укажите Site URL и redirect `https://<домен>/admin`.
+   Кроме того, администратор платформы может создать **персональную одноразовую ссылку** на регистрацию владельца
+   конкретного магазина (платформенная админка → «Все магазины» → «Ссылка владельцу», миграция
+   `20261119090000_*`, функция `owner-registration`). Покупатель сам вводит почту и пароль и сразу попадает в админку
+   магазина; письмо не отправляется, подтверждение почты не нужно, «Allow new users to sign up» остаётся выключенным
+   (аккаунт создаётся Auth Admin API на сервере). Введённый адрес при этом **не проверяется**: ошибка в почте означает,
+   что письмо восстановления пароля до владельца не дойдёт.
+5. В Auth → URL Configuration укажите Site URL и redirect `https://<домен>/admin` **и**
+   `https://<домен>/admin/set-password` (Supabase сверяет redirect URL точно: на эту страницу ведут письмо
+   восстановления пароля из «Забыли пароль?» и письмо-приглашение). Встроенная почта Supabase (без своего SMTP)
+   сильно ограничена: письма уходят в малом количестве в час, а без собственного SMTP — только на адреса участников
+   команды проекта; точные значения смотрите в актуальной документации Supabase Auth (rate limits / SMTP). Поэтому
+   восстановление пароля для клиентов надёжно работает только после подключения собственного SMTP.
+
+   **Собственный SMTP (Resend) — только для писем восстановления, регистрация от него не зависит.** Регистрация по
+   ссылке не вызывает `signUp` и не шлёт писем, поэтому ни SMTP, ни переключатель «Confirm email» на неё не влияют.
+   **Статус: подключён.** Custom SMTP включён в hosted-проекте, домен `auth.miniappshop.online` в Resend — Verified.
+   Доставка письма восстановления через hosted Supabase проверена владельцем проекта вручную (реальный запрос, письмо
+   пришло на внешний адрес). Это подтверждение со слов владельца: из репозитория настройки hosted-проекта не
+   проверяются, автоматические тесты письма наружу не отправляют (только локальный Mailpit). Параметры, с которыми
+   он подключён, и порядок ручного (пере)подключения:
+
+   | Поле | Значение |
+   | --- | --- |
+   | Sender email | `no-reply@auth.miniappshop.online` |
+   | Sender name | `MiniApp Shop` |
+   | Host | `smtp.resend.com` |
+   | Port | `465` |
+   | Username | `resend` |
+   | Password | API Key Resend с правом отправки (вводится только в Dashboard; в репозиторий, логи и промпты не попадает) |
+
+   Что остаётся проверить в Dashboard (проверка доставки этого не покрывает): Authentication → URL Configuration
+   содержит точный адрес `https://<домен>/admin/set-password` — иначе ссылка из письма уведёт на Site URL.
+
+   Проверка после подключения или смены параметров: Authentication → Rate Limits («Rate limit for sending emails» — по умолчанию 30/ч
+   после включения custom SMTP; при необходимости поднимите); «Забыли пароль?» на **тестовом** адресе → письмо пришло от
+   `no-reply@auth.miniappshop.online` → ссылка ведёт на `/admin/set-password`. Domain в Resend должен оставаться
+   Verified (DKIM и SPF). Окружение разработки SMTP не использует: письма уходят в локальный Mailpit.
 6. Администратор платформы (раздел «Все магазины платформы», передача магазинов клиентам) назначается только
    оператором: `pnpm owner:add --email <email> --platform-admin`. Права проверяются на сервере по таблице
    `platform_admins`; email, метаданные пользователя или данные из браузера роль не дают.

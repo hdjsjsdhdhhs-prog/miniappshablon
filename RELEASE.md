@@ -13,8 +13,8 @@ preflight ──▶ supabase ──▶ smoke-api ──▶ frontend ──▶ sm
 
 | Job | Что делает | Доступ |
 | --- | --- | --- |
-| `preflight` | запуск вручную из `refs/heads/main`; `sha` — полный SHA и равен коммиту запуска; коммит в истории `main`; CI-run (`ci.yml`, push в `main`) и три обязательные проверки (`Lint · types · unit · build`, `Edge Functions · deno check`, `SQL/integration + Playwright (local Supabase in Docker)`) зелёные на этом SHA; ровно одно из двух: `backup_verified = true` и непустой `backup_reference` (режим `BACKUP_VERIFIED`, **только утверждение оператора**: pipeline не проверяет ни наличие, ни целостность, ни восстановимость копии) **или** `data_loss_accepted = true` при пустом `backup_reference` (режим `DATA_LOSS_ACCEPTED_NO_BACKUP`: копии нет, потеря текущих данных принята) — см. [Backup](#backup--открытый-блокер); SHA-256 manifest миграций; в manifest только разрешённые стадии (3A, 3B, 4A, 4B); окружения `production` и `production-frontend` существуют и защищены | `GITHUB_TOKEN`: contents/actions/checks read. Секретов нет |
-| `supabase` | `supabase-deploy.yml`: guard (main, вызов только из `release.yml@refs/heads/main`, SHA), integrity, Session Pooler, history + dry-run → Migration Gate, allowlist стадий, `db push` целыми стадиями с перепроверкой, `verify-applied`, деплой 6 Edge Functions | environment `production` (одобрение владельца, только `main`). Secrets не на уровне job: `SUPABASE_DB_URL` — только шаги Session Pooler / migration list / dry-run / db push / verify; `SUPABASE_ACCESS_TOKEN` — link и functions deploy/list; `SUPABASE_DB_PASSWORD` — только link. `pnpm install`, checkout и проверки Gate секретов не получают. Эти три имени `release.yml` передаёт явно (`secrets:` вызова, объявлены в `workflow_call.secrets`; без этого вызванный workflow видит их пустыми даже в `production`), шаг link падает сразу, если token или пароль пусты |
+| `preflight` | запуск вручную из `refs/heads/main`; `sha` — полный SHA и равен коммиту запуска; коммит в истории `main`; CI-run (`ci.yml`, push в `main`) и три обязательные проверки (`Lint · types · unit · build`, `Edge Functions · deno check`, `SQL/integration + Playwright (local Supabase in Docker)`) зелёные на этом SHA; ровно одно из двух: `backup_verified = true` и непустой `backup_reference` (режим `BACKUP_VERIFIED`, **только утверждение оператора**: pipeline не проверяет ни наличие, ни целостность, ни восстановимость копии) **или** `data_loss_accepted = true` при пустом `backup_reference` (режим `DATA_LOSS_ACCEPTED_NO_BACKUP`: копии нет, потеря текущих данных принята) — см. [Backup](#backup--открытый-блокер); SHA-256 manifest миграций; в manifest только разрешённые стадии (3A, 3B, 4A, 4B, 4C, 4D); окружения `production` и `production-frontend` существуют и защищены | `GITHUB_TOKEN`: contents/actions/checks read. Секретов нет |
+| `supabase` | `supabase-deploy.yml`: guard (main, вызов только из `release.yml@refs/heads/main`, SHA), integrity, Session Pooler, history + dry-run → Migration Gate, allowlist стадий, `db push` целыми стадиями с перепроверкой, `verify-applied`, деплой 9 Edge Functions | environment `production` (одобрение владельца, только `main`). Secrets не на уровне job: `SUPABASE_DB_URL` — только шаги Session Pooler / migration list / dry-run / db push / verify; `SUPABASE_ACCESS_TOKEN` — link и functions deploy/list; `SUPABASE_DB_PASSWORD` — только link. `pnpm install`, checkout и проверки Gate секретов не получают. Эти три имени `release.yml` передаёт явно (`secrets:` вызова, объявлены в `workflow_call.secrets`; без этого вызванный workflow видит их пустыми даже в `production`), шаг link падает сразу, если token или пароль пусты |
 | `smoke-api` | только безопасные запросы с публичным ключом: Auth health; `product_variants.stock_status` читается и содержит только `in_stock / low_stock / out_of_stock`; запросы витрины (embed и фильтр по `stock_status`); RPC `admin_variant_stock` существует и отказывает anon (42501); каждая Edge Function отвечает своим 405 на GET; `checkout` без Telegram initData → 401 `telegram_auth_failed` (до разбора тела и до БД). **Обратная совместимость, fail-closed:** точные запросы старого frontend (`main` 741d478) — embed `product_variants(… stock_quantity …)`, фильтр `in_stock.stock_quantity > 0`, `product_variants?select=*` (те же права, что у `select('*')` старой админки); каждый вариант обязан содержать числовой `stock_quantity`. Любая ошибка останавливает релиз до `frontend`. Перед frontend повторно проверяет защиту окружений | `GITHUB_TOKEN`: contents/actions read; `vars.VITE_SUPABASE_*` (публичные) |
 | `frontend` | checkout ровно выбранного SHA, `pnpm install --frozen-lockfile`, production build, `check:bundle-secrets`, `wrangler pages deploy … --branch=main --commit-hash=<sha>` | environment `production-frontend` (одобрение владельца). Только этот job и только шаг деплоя получают secrets окружения `PRODUCTION_CLOUDFLARE_API_TOKEN`, `PRODUCTION_CLOUDFLARE_ACCOUNT_ID`; variable окружения `PRODUCTION_CLOUDFLARE_PAGES_PROJECT`. Старые `CLOUDFLARE_*` не используются (без fallback) |
 | `smoke-web` | URL этого деплоя и production-адрес: app shell на `/`, `/s/<slug>/`, `/s/<slug>/catalog`, `/admin`; все JS-чанки загружаются; бандл запрашивает `stock_status`, не запрашивает legacy `stock_quantity`; ссылается на ожидаемый Supabase-проект | только публичные адреса |
@@ -100,7 +100,7 @@ preflight. Ввести произвольный коммит нельзя: **н
 - Схема БД и Edge Functions уже новые, frontend остаётся предыдущим.
 - Release-миграции обязаны быть **Expand**: старый frontend должен работать на новой схеме. Pipeline не применяет
   Contract-стадии: preflight и Supabase job пропускают только стадии из `RELEASE_ALLOWED_STAGES`
-  (`scripts/lib/release.ts`, сейчас `3A`, `3B`, `4A`, `4B`). Появление `3C` в manifest или в плане останавливает релиз до `db push`.
+  (`scripts/lib/release.ts`, сейчас `3A`, `3B`, `4A`, `4B`, `4C`, `4D`). Появление `3C` в manifest или в плане останавливает релиз до `db push`.
 - Подключение бота магазина (4A, `20261107090000_telegram_bot_connection.sql`) — **Expand**: только новые таблицы
   в схеме `private`, новые RPC (EXECUTE только у `service_role`) и триггер на `private.shop_transfers`; существующие
   таблицы, строки и функции не меняются. Перед первым релизом с 4A владелец задаёт Edge Function secret
@@ -116,6 +116,27 @@ preflight. Ввести произвольный коммит нельзя: **н
   Новых Edge Functions и секретов нет. Особенности после релиза: аудитория ботов начинается пустой (в неё попадают
   те, кто написал боту уже после 4B); боты, подключённые до 4B, получают события блокировки (`my_chat_member`)
   только после повторного подключения — до этого блокировка определяется по ответу Telegram 403 при отправке.
+- Саморегистрация владельца по одноразовой ссылке (4C, `20261119090000_owner_registration_links.sql`) — **Expand**:
+  новые таблицы в схеме `private` (ссылки с хешем токена, счётчик попыток), одна nullable-колонка в
+  `private.shop_handover_reservations`, расширенный список допустимых значений `shop_lifecycle_events.action` (только
+  добавление), новые RPC (EXECUTE только у `service_role`) и триггер на `public.shops`, который срабатывает лишь когда
+  магазин становится `deleting`. `platform_list_shops` получает новый ключ, прежний frontend его игнорирует. Ничего не
+  удаляется и права не отзываются. Новая Edge Function `owner-registration` (публичная, `verify_jwt = false`: доступ
+  даёт токен ссылки, проверяемый по SHA-256 в PostgreSQL) деплоится последним шагом; новых секретов нет. Auth не
+  меняется: `enable_signup` остаётся `false`, подтверждение почты в проекте не трогается — аккаунт создаётся через
+  Auth Admin API сразу подтверждённым, поэтому письмо при регистрации не уходит. Продовые настройки Supabase Auth
+  релиз не меняет; для восстановления пароля нужны Redirect URLs из SETUP.md. Собственный SMTP (Resend,
+  `auth.miniappshop.online`) уже подключён к hosted-проекту вручную, доставка письма восстановления проверена
+  владельцем; релиз его не трогает и не требует повторной проверки.
+- Бонусы, скидки от суммы заказа и промокоды (4D, `20261125090000_loyalty_bonuses_discounts_promos.sql`) — **Expand**:
+  новые таблицы в схеме `private` (настройки программы, правила скидок, промокоды, погашения, счета и журнал бонусов,
+  очередь уведомлений), новые nullable / с значением по умолчанию колонки в `public.orders`, новые RPC (EXECUTE только
+  у `service_role`; управление из админки — только через Edge Function `loyalty` с проверкой членства в магазине).
+  `create_order_v2` не меняется: `create_order_v3` оборачивает его и для магазина без этих функций делегирует ему без
+  изменений. `order_to_json`, `admin_set_order_status` и `private.shop_delete_begin` заменены с теми же сигнатурами и
+  правами. Все три механизма **выключены** для каждого магазина по умолчанию, поэтому у существующих магазинов
+  поведение корзины, цен и заказов не меняется. Новые Edge Functions `loyalty` (админка) и `cart-quote` (расчёт
+  корзины для покупателя) деплоятся последними шагами; новых секретов нет, уведомления идут через бота самого магазина.
 - `smoke-api` проверяет запросы старого frontend **fail-closed** (предупреждений больше нет): если хотя бы один из них
   не работает, `smoke-api` падает и `frontend` не запускается. Это значит, что БД уже несовместима с frontend,
   который сейчас обслуживает покупателей: не одобряйте frontend «вслепую», а восстановите БД из копии или выпустите
@@ -143,14 +164,14 @@ HEAD `main`: пока `main` не сдвинулся, это тот же SHA. В
 
 **Деплой функций не атомарный.** Job `supabase / Migrations + Edge Functions (production)` (`supabase-deploy.yml`, job
 `deploy`) после `verify-applied` выполняет **последовательные шаги** одного job: `checkout` → `my-orders` →
-`notification-settings` → `platform-admin` → `bot-connection` → `telegram-webhook` → `List deployed Edge Functions`. Каждый шаг — отдельный
+`notification-settings` → `platform-admin` → `bot-connection` → `telegram-webhook` → `owner-registration` → `loyalty` → `cart-quote` → `List deployed Edge Functions`. Каждый шаг — отдельный
 `supabase functions deploy <name>` (таймаут шага 10 минут, у списка — 5). `continue-on-error` и условий у них нет.
 
 **Что происходит, если падает N-й шаг** (ошибка CLI или Management API, таймаут шага, таймаут job):
 - шаги после N и `List deployed Edge Functions` не выполняются, job падает;
 - миграции к этому моменту **уже применены** и подтверждены `verify-applied` (функции деплоятся только после этого
   шага). Откатывать БД из-за сбоя функции не нужно;
-- функции 1…N−1 уже работают на коде этого SHA, функции N+1…6 — на предыдущем коде. Состояние функции N
+- функции 1…N−1 уже работают на коде этого SHA, функции N+1…9 — на предыдущем коде. Состояние функции N
   **неизвестно**: сбой мог произойти до или после того, как платформа приняла новую версию. В production одновременно
   работают **функции разных версий**;
 - `smoke-api`, `frontend` и `smoke-web` пропускаются (`needs`), frontend остаётся предыдущим. Smoke смешанный
@@ -164,9 +185,9 @@ SHA»).
 - **Re-run failed jobs** — перезапускает упавшие jobs и **зависящие от них**: `supabase / …` (снова одобрение
   `production`), затем `smoke-api`, `frontend`, `smoke-web`. `preflight` не повторяется, его outputs (SHA) берутся из
   первой попытки (compare с текущим `main` заново не выполняется). Job `deploy` проходит все шаги заново: guard, integrity, project ref, link, Session Pooler, history +
-  dry-run. Gate видит, что все стадии применены (`skip`), и `db push` **не выполняется**. Затем **все шесть** шагов
+  dry-run. Gate видит, что все стадии применены (`skip`), и `db push` **не выполняется**. Затем **все девять** шагов
   `functions deploy` выполняются снова, включая уже успешные (повторный деплой того же кода). Это следует из того, что
-  все шесть — безусловные шаги одного job. Если повтор упадёт раньше (например, Gate увидит неожиданное состояние
+  все девять — безусловные шаги одного job. Если повтор упадёт раньше (например, Gate увидит неожиданное состояние
   истории), функции не деплоятся.
 - **Re-run a specific job** (`supabase / Migrations + Edge Functions (production)`) — тот же job и его зависимые
   (`smoke-api`, `frontend`, `smoke-web`); при единственном упавшем job результат тот же, что у Re-run failed jobs.
@@ -183,7 +204,7 @@ SHA»).
    повтор не исправит.
 2. В логе этой попытки шаг `Verify migration history after push` прошёл (иначе это не сбой функций, а сбой
    миграций — см. «Прерванный db push (Cancel или таймаут)»).
-3. Supabase Dashboard → Edge Functions: версия и время обновления каждой из шести функций — какие уже обновлены,
+3. Supabase Dashboard → Edge Functions: версия и время обновления каждой из девяти функций — какие уже обновлены,
    в каком состоянии функция N.
 4. Повтор деплоит **тот же SHA**: исправление кода повтором не попадёт в production.
 
@@ -191,7 +212,7 @@ SHA»).
 - проблема в доступе (`SUPABASE_ACCESS_TOKEN` в environment `production` просрочен или без прав) — владелец меняет
   секрет вручную, затем Re-run failed jobs (secrets читаются при старте job);
 - проблема в коде функции этого SHA — исправление через PR в `main`, затем новый релиз нового HEAD (Gate `skip` для
-  БД, все шесть функций из нового SHA). До этого смешанное состояние функций сохраняется, frontend не обновлён;
+  БД, все девять функций из нового SHA). До этого смешанное состояние функций сохраняется, frontend не обновлён;
 - если смешанное состояние недопустимо до исправления — владелец вручную, **вне pipeline**, своими учётными
   данными деплоит прежнюю версию затронутых функций из checkout предыдущего релизного коммита
   (`supabase functions deploy <name> --project-ref xcbugcjmddtubytpvffa`). Новый запуск pipeline старый коммит не
@@ -221,7 +242,7 @@ SHA»).
 
 ## Бюджет времени job `deploy`
 
-Job `supabase / Migrations + Edge Functions (production)` ограничен **200 минутами** (`timeout-minutes` job;
+Job `supabase / Migrations + Edge Functions (production)` ограничен **230 минутами** (`timeout-minutes` job;
 ожидание одобрения `production` не считается; максимум GitHub — 360). Бюджет (минуты), согласованность проверяет
 `scripts/lib/workflows.test.ts`:
 
@@ -229,13 +250,13 @@ Job `supabase / Migrations + Edge Functions (production)` ограничен **2
 | --- | --- | --- | --- |
 | До `db push`, ничего не меняют в БД | guard 2, checkout 5, SHA 1, pnpm setup 5, setup-node 5, `pnpm install` 10, integrity 5, project ref 2, link 5, Session Pooler 1, `migration list` 5, history + dry-run 10, план 5, стадии 2, бюджет 2 | таймаут **каждого** шага, сумма 65 | 65 |
 | Резерв БД | `Apply migrations` (перепроверка + `db push`) и `Verify migration history after push` | **без** таймаута шага, резерв 60 | 125 |
-| Edge Functions | 6 × `functions deploy` по 10, `functions list` 5 | таймауты шагов, 65 | 190 |
-| Запас runner | Set up job, post-шаги | 10 | 200 |
+| Edge Functions | 9 × `functions deploy` по 10, `functions list` 5 | таймауты шагов, 95 | 220 |
+| Запас runner | Set up job, post-шаги | 10 | 230 |
 
 Таймауты шагов сами по себе не гарантируют резерв (время между шагами, Set up job, будущий шаг без таймаута).
 Поэтому guard записывает время старта, а шаг `Time budget left for db push` (только в режиме `apply`) перед
 `Apply migrations` **измеряет** прошедшее время и не начинает `db push`, если прошло больше 65 минут
-(200 − 60 − 65 − 10). Это остановка **до** изменений БД: Re-run после устранения причины безопасен. Если сработает
+(230 − 60 − 95 − 10). Это остановка **до** изменений БД: Re-run после устранения причины безопасен. Если сработает
 таймаут шага до `db push` — тоже. Если таймаут job всё же сработает внутри `Apply migrations` — см. следующий раздел.
 
 ## Прерванный db push (Cancel или таймаут)
@@ -250,13 +271,13 @@ pipeline не узнаёт.
   `supabase_migrations.schema_migrations` отправляются одним pipeline-batch, который PostgreSQL выполняет как одну
   неявную транзакцию. Исключение — операторы, несовместимые с pipeline (`CREATE/DROP INDEX CONCURRENTLY`,
   `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, `CLUSTER`): CLI выполняет их отдельно, такой файл применяется
-  **не** целиком. В стадиях 3A/3B/4A/4B таких операторов нет (проверяет `workflows.test.ts`). Это вывод из чтения
+  **не** целиком. В стадиях 3A/3B/4A/4B/4C/4D таких операторов нет (проверяет `workflows.test.ts`). Это вывод из чтения
   исходников этой версии CLI, а **не** проверенная гарантия; при обновлении CLI его нужно перепроверить.
 - Файлы, завершившиеся до прерывания, **остаются применёнными**: автоматического отката нет.
 - Результат файла, выполнявшегося в момент прерывания, **неизвестен**: он мог быть откачен, а мог быть и
   зафиксирован — сервер может продолжать выполнять уже полученный batch после того, как runner исчез. Нельзя
   утверждать ни «файл всегда откатывается», ни «файл всегда фиксируется».
-- Стадия (3A, 3B, 4A или 4B) поэтому может остаться **частично применённой**.
+- Стадия (3A, 3B, 4A, 4B, 4C или 4D) поэтому может остаться **частично применённой**.
 
 **Порядок действий — до любого повтора:**
 1. **Не нажимайте Re-run** (ни failed, ни all) и не запускайте новый релиз. Gate отклонит частично применённую
@@ -268,7 +289,7 @@ pipeline не узнаёт.
    Пока сессия миграции активна, результат ещё не определён — дождитесь её завершения.
 3. Прочитайте удалённую историю (только чтение): `supabase migration list --db-url "<Session Pooler URI>"` или
    `select version, name from supabase_migrations.schema_migrations order by version;`.
-4. Сравните с manifest: `MIGRATION_STAGES` в `scripts/lib/migration-plan.ts` (3A — 5 файлов, 3B — 4, 4A — 1, 4B — 1) и baseline
+4. Сравните с manifest: `MIGRATION_STAGES` в `scripts/lib/migration-plan.ts` (3A — 5 файлов, 3B — 4, 4A — 1, 4B — 1, 4C — 1, 4D — 2) и baseline
    `APPLIED_BASELINE_MIGRATION_FILES`. Для каждой стадии: **применена целиком**, **не начата** или **частично**.
    Тот же вывод делает Gate локально, ничего не меняя: `migration list … --output-format json > list.json`,
    `db push --dry-run … --output-format json > dry.json`, затем
