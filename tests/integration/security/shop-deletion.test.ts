@@ -178,7 +178,7 @@ async function expectGone(F: Fixture): Promise<void> {
   expect(await vaultSecrets(F.shop.id, 'shop_tg_notify')).toBe('0');
   expect(await vaultSecrets(F.shop.id, 'shop_tg_bot')).toBe('0');
   expect(await objectsUnder(`${F.shop.id}/`)).toEqual([]);
-  for (const table of ['shop_bot_connections', 'shop_bot_welcome', 'bot_subscribers', 'shop_broadcasts', 'broadcast_recipients', 'customer_order_notifications', 'order_notifications', 'shop_delete_challenges']) {
+  for (const table of ['shop_bot_connections', 'shop_bot_assignments', 'shop_bot_welcome', 'bot_subscribers', 'shop_broadcasts', 'broadcast_recipients', 'customer_order_notifications', 'order_notifications', 'shop_delete_challenges']) {
     expect(await sql(`select count(*) from private.${table} where shop_id = '${F.shop.id}';`), table).toBe('0');
   }
   expect(await sql(`select count(*) from vault.decrypted_secrets where decrypted_secret = '${F.token}';`)).toBe('0');

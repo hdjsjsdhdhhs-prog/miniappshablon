@@ -17,7 +17,7 @@ export class AdminApiError extends Error {
   }
 }
 
-async function callAdminFunction<T>(name: 'notification-settings' | 'platform-admin' | 'bot-connection', body: unknown): Promise<T> {
+async function callAdminFunction<T>(name: 'notification-settings' | 'platform-admin' | 'bot-connection' | 'loyalty', body: unknown): Promise<T> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new AdminApiError(401, 'auth_required', null);
@@ -96,6 +96,9 @@ const NOTIFICATION_ERRORS: Record<string, string> = {
   notifications_disabled: 'Уведомления были выключены.',
   notifications_removed: 'Настройки уведомлений были удалены.',
   owner_changed: 'Магазин сменил владельца: уведомления прежнего владельца отключены, неотправленные — отменены.',
+  // One Telegram bot, one purpose of a shop (20261126090000). The token is never part of these texts.
+  bot_used_for_storefront:
+    'Этот Telegram-бот уже подключён для витрины Mini App. Для уведомлений необходимо использовать отдельного Telegram-бота. Один бот не может использоваться одновременно для уведомлений и витрины',
 };
 
 /** Human text for an API error or a stored `last_error` ("code: description"). */
@@ -177,6 +180,9 @@ const BOT_ERRORS: Record<string, string> = {
   invalid_token: 'Не удалось подключить бота. Проверьте правильность токена BotFather.',
   telegram_unauthorized: 'Не удалось подключить бота. Проверьте правильность токена BotFather.',
   bot_in_use: 'Этот Telegram-бот уже используется другим магазином платформы.',
+  // One Telegram bot, one purpose of a shop (20261126090000). The token is never part of these texts.
+  bot_used_for_notifications:
+    'Этот Telegram-бот уже подключён в разделе „Уведомления“. Для подключения витрины необходимо создать или использовать другого Telegram-бота. Один бот не может использоваться одновременно для уведомлений и витрины',
   bot_reserved: 'Этого бота нельзя подключить к магазину. Создайте отдельного бота в @BotFather.',
   bot_connect_rate_limited: 'Слишком много попыток подключения. Подождите 15 минут и попробуйте снова.',
   webhook_conflict: 'Этот бот уже подключён к другому сервису.',
@@ -276,6 +282,134 @@ export const broadcastApi = {
     callAdminFunction<BroadcastView & { retried: number }>('bot-connection', { action: 'broadcast-retry', shopId, broadcastId }),
 };
 
+// ---- «Бонусы и промокоды»: bonus program, automatic discounts, promo codes ----------------------------------------------
+// Served by the `loyalty` Edge Function. Everything is per shop and OFF until the owner turns it on; the amounts of an
+// order are always computed on the server (see src/domain/loyalty.ts for the rule).
+
+export interface LoyaltySettings {
+  bonus_enabled: boolean;
+  /** Percent of the confirmed order's payable amount credited as bonuses (two decimals at most). */
+  bonus_percent: number;
+  discount_enabled: boolean;
+  promo_enabled: boolean;
+  /** False until the first save: nothing was ever configured for this shop. */
+  configured: boolean;
+  updated_at: string | null;
+}
+
+export interface LoyaltyRule {
+  id: string;
+  /** Minimum items total, in minor units, from which the discount applies. */
+  min_total_minor: number;
+  percent: number;
+}
+
+export type PromoAdminStatus = 'active' | 'finished' | 'disabled';
+
+export interface LoyaltyPromo {
+  id: string;
+  code: string;
+  discount_type: 'percent' | 'fixed';
+  percent: number | null;
+  fixed_minor: number | null;
+  max_activations: number;
+  /** Activations that count against the limit: reserved by an order or confirmed. */
+  used_count: number;
+  /** Of used_count: reserved by an order that is not confirmed yet. */
+  pending_count: number;
+  is_active: boolean;
+  status: PromoAdminStatus;
+  created_at: string;
+}
+
+export interface LoyaltyOverview {
+  shop: { id: string; slug: string; currency: string };
+  settings: LoyaltySettings;
+  rules: LoyaltyRule[];
+  promos: LoyaltyPromo[];
+  stats: {
+    customers: number;
+    balance_total: number;
+    earned_total: number;
+    spent_total: number;
+    notifications: { pending: number; sent: number; dead: number } | null;
+  };
+  recent: Array<{
+    id: number;
+    kind: 'accrual' | 'spend' | 'accrual_reversal' | 'spend_refund';
+    amount: number;
+    order_number: number;
+    customer: string;
+    username: string | null;
+    created_at: string;
+  }>;
+}
+
+export interface PromoUsage {
+  order_number: number;
+  order_status: string;
+  status: 'reserved' | 'redeemed' | 'released';
+  discount_minor: number;
+  created_at: string;
+  redeemed_at: string | null;
+  released_at: string | null;
+}
+
+export interface PromoInput {
+  promoId?: string;
+  code: string;
+  discountType: 'percent' | 'fixed';
+  /** Percent (1–90) or the amount in minor units. */
+  value: number;
+  maxActivations: number;
+  isActive: boolean;
+}
+
+export const loyaltyApi = {
+  get: (shopId: string) => callAdminFunction<{ overview: LoyaltyOverview }>('loyalty', { action: 'get', shopId }).then((r) => r.overview),
+  saveSettings: (shopId: string, patch: { bonusEnabled?: boolean; bonusPercent?: number; discountEnabled?: boolean; promoEnabled?: boolean }) =>
+    callAdminFunction<{ overview: LoyaltyOverview }>('loyalty', { action: 'save-settings', shopId, ...patch }).then((r) => r.overview),
+  saveRule: (shopId: string, rule: { ruleId?: string; minTotalMinor: number; percent: number }) =>
+    callAdminFunction<{ overview: LoyaltyOverview }>('loyalty', { action: 'rule-save', shopId, ...rule }).then((r) => r.overview),
+  deleteRule: (shopId: string, ruleId: string) =>
+    callAdminFunction<{ overview: LoyaltyOverview }>('loyalty', { action: 'rule-delete', shopId, ruleId }).then((r) => r.overview),
+  savePromo: (shopId: string, promo: PromoInput) =>
+    callAdminFunction<{ overview: LoyaltyOverview }>('loyalty', { action: 'promo-save', shopId, ...promo }).then((r) => r.overview),
+  setPromoActive: (shopId: string, promoId: string, active: boolean) =>
+    callAdminFunction<{ overview: LoyaltyOverview }>('loyalty', { action: 'promo-set-active', shopId, promoId, active }).then((r) => r.overview),
+  deletePromo: (shopId: string, promoId: string) =>
+    callAdminFunction<{ overview: LoyaltyOverview }>('loyalty', { action: 'promo-delete', shopId, promoId }).then((r) => r.overview),
+  promoHistory: (shopId: string, promoId: string) =>
+    callAdminFunction<{ history: PromoUsage[] }>('loyalty', { action: 'promo-history', shopId, promoId }).then((r) => r.history),
+  /** Sends the «🎁 начислено …» messages queued by confirmations of this shop (Telegram only through the shop's own bot). */
+  dispatch: (shopId: string) => callAdminFunction<{ sent: number; failed: number; skipped: number }>('loyalty', { action: 'dispatch', shopId }),
+};
+
+const LOYALTY_ERRORS: Record<string, string> = {
+  invalid_percent: 'Процент должен быть больше 0 и не больше 100, не более двух знаков после запятой.',
+  invalid_rule: 'Проверьте правило: сумма больше нуля, скидка от 1% до 90%.',
+  rule_exists: 'Правило с такой минимальной суммой уже есть. Измените его или выберите другую сумму.',
+  rule_not_found: 'Правило не найдено — возможно, оно уже удалено. Обновите страницу.',
+  too_many_rules: 'Можно создать не больше 20 правил скидок.',
+  invalid_promo: 'Проверьте промокод: скидка в процентах от 1% до 90% или фиксированная сумма, лимит от 1 активации.',
+  invalid_promo_code: 'Промокод: от 3 до 32 символов — латинские буквы, цифры, «_» и «-».',
+  promo_exists: 'Такой промокод в вашем магазине уже есть.',
+  promo_not_found: 'Промокод не найден — возможно, он уже удалён. Обновите страницу.',
+  promo_in_use: 'Этот промокод уже использовали — удалить его нельзя, но его можно отключить.',
+  too_many_promos: 'Можно создать не больше 200 промокодов.',
+  limit_below_used: 'Лимит не может быть меньше числа уже использованных активаций.',
+  network_error: 'Нет связи с сервером. Проверьте интернет и повторите.',
+  forbidden: 'Раздел «Бонусы и промокоды» доступен только владельцу магазина.',
+  mfa_required: 'Для этого действия нужна двухфакторная авторизация.',
+  auth_required: 'Сессия истекла. Войдите снова.',
+};
+
+/** Human text for an API error. Never a technical description. */
+export function loyaltyErrorText(error: unknown): string {
+  const code = error instanceof AdminApiError ? error.code : 'unknown_error';
+  return LOYALTY_ERRORS[code] ?? 'Не удалось выполнить действие. Повторите попытку.';
+}
+
 // ---- Platform administration -------------------------------------------------------------
 
 export interface PlatformMember {
@@ -316,6 +450,30 @@ export interface PlatformShop {
   notifications: { enabled: boolean; status: NotificationStatus } | null;
   /** Hand-over waiting for the client to confirm their e-mail (the shop stays DEMO until then). */
   pending_handover?: PendingHandover | null;
+  /** The newest owner registration link of the shop (never its token or hash). */
+  owner_invite?: OwnerInvite | null;
+}
+
+/** One owner registration link as the platform admin sees it (private.owner_invite_json). */
+export interface OwnerInvite {
+  /** `expired` is derived from `expires_at` by the server. */
+  status: 'active' | 'used' | 'expired' | 'revoked';
+  created_at: string;
+  expires_at: string;
+  created_by_email: string | null;
+  /** Set when the link was issued for one e-mail address only. */
+  bound_email: string | null;
+  used_at: string | null;
+  used_by: string | null;
+  /** E-mail the buyer typed when registering (entered, never verified by a message). */
+  used_email: string | null;
+  used_via: 'registration' | 'claim' | null;
+  revoked_at: string | null;
+  revoked_reason: 'manual' | 'replaced' | null;
+  /** Active, but the shop changed hands another way since: the server will refuse it. */
+  stale: boolean;
+  /** A registration is running right now (the shop is reserved for at most 3 minutes). */
+  in_progress: boolean;
 }
 
 export interface PendingHandover {
@@ -476,6 +634,13 @@ export const platformApi = {
   shopDeleteChallenge: (shopId: string) => callAdminFunction<{ challenge: { challenged: boolean; expires_in_sec: number } }>('platform-admin', { action: 'shop-delete-challenge', shopId }),
   /** Deletes ANY shop (LIVE included). Refused without the step-up above and the exact slug. */
   shopDelete: (shopId: string, confirmSlug: string) => callAdminFunction<DemoDeleteResult>('platform-admin', { action: 'shop-delete', shopId, confirmSlug }),
+  /**
+   * Creates the shop's owner registration link (the previous active one is revoked). The token is in the response ONCE:
+   * the server keeps only its hash, so it cannot be shown again. `email` (optional) limits the link to that address.
+   */
+  ownerLinkCreate: (shopId: string, input: { email?: string; ttlHours?: number } = {}) =>
+    callAdminFunction<{ token: string; invite: OwnerInvite }>('platform-admin', { action: 'owner-link-create', shopId, ...input }),
+  ownerLinkRevoke: (shopId: string) => callAdminFunction<{ revoked: boolean; invite: OwnerInvite | null }>('platform-admin', { action: 'owner-link-revoke', shopId }),
 };
 
 /** Public storefront link of a shop on the current deployment (https://miniappdemo.pages.dev/s/<slug>/ in production). */

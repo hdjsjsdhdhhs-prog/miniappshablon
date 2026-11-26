@@ -87,4 +87,23 @@ export const RPC_ERRORS: Record<string, number> = {
   // Deletion of any shop incl. LIVE (20261113090000): a TOTP code verified for this very deletion is required.
   mfa_step_up_required: 403,
   bot_cleanup_failed: 409,
+  // One Telegram bot, one purpose of a shop (20261126090000): a bot of the storefront can not send the notifications and back.
+  bot_used_for_storefront: 409,
+  bot_used_for_notifications: 409,
+  // Owner registration links (20261119090000).
+  invalid_token_hash: 400,
+  invalid_ttl: 400,
+  // Bonuses, automatic discounts and promo codes (20261125090000).
+  invalid_percent: 400,
+  invalid_rule: 400,
+  rule_exists: 409,
+  rule_not_found: 404,
+  too_many_rules: 409,
+  invalid_promo: 400,
+  invalid_promo_code: 400,
+  promo_exists: 409,
+  promo_not_found: 404,
+  promo_in_use: 409,
+  too_many_promos: 409,
+  limit_below_used: 409,
 };

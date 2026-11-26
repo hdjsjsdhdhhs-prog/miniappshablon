@@ -17,12 +17,33 @@ import { DeleteDemoDialog } from '../components/DeleteDemoDialog';
 import { DeleteShopDialog } from '../components/DeleteShopDialog';
 import { MFA_REQUIRED_TEXT } from '../mfa';
 import { HandoverDialog } from '../components/HandoverDialog';
+import { OwnerLinkDialog } from '../components/OwnerLinkDialog';
 import { TransferShopDialog } from '../components/TransferShopDialog';
+import { OWNER_INVITE_STATUS } from '../owner-invite-status';
 import { AdminApiError, platformApi, publicShopUrl, type PlatformShop } from '../functions-api';
 import { matchesShopSearch, storefrontPath } from '../shop-search';
 import { useIsPlatformAdmin } from '../use-platform-admin';
 
 const date = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('ru-RU') : null);
+
+const dateTime = (iso: string) => new Date(iso).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
+
+/** One line about the shop's owner registration link: status, term, and — once used — who registered and when. */
+function OwnerInviteLine({ invite }: { invite: NonNullable<PlatformShop['owner_invite']> }) {
+  const status = OWNER_INVITE_STATUS[invite.status];
+  return (
+    <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground" data-testid="platform-shop-invite" data-status={invite.status}>
+      Ссылка владельца: <Badge variant={status.variant}>{status.label}</Badge>
+      {invite.status === 'active' && <span>до {dateTime(invite.expires_at)}</span>}
+      {invite.status === 'used' && invite.used_at && (
+        <span data-testid="platform-shop-invite-used">
+          {invite.used_email} · {dateTime(invite.used_at)}
+        </span>
+      )}
+      {invite.stale && <span className="text-destructive">владелец изменился — создайте новую</span>}
+    </p>
+  );
+}
 
 function NotificationBadge({ n }: { n: PlatformShop['notifications'] }) {
   if (!n) return <span className="text-muted-foreground">не настроены</span>;
@@ -43,12 +64,17 @@ export function PlatformShopsPage() {
   const [query, setQuery] = useState('');
   const [transferring, setTransferring] = useState<PlatformShop | null>(null);
   const [handingOver, setHandingOver] = useState<PlatformShop | null>(null);
+  // Owner registration link: the shop whose dialog is open (by id, so it follows list refreshes) and the tokens issued in
+  // this browser session. A token lives only here, in memory; the server keeps just its hash and cannot show it again.
+  const [linkShopId, setLinkShopId] = useState<string | null>(null);
+  const [issued, setIssued] = useState<Record<string, string>>({});
   const [deleting, setDeleting] = useState<PlatformShop | null>(null);
   const [creating, setCreating] = useState(false);
   const visible = useMemo(
     () => (shops.data ?? []).filter((s) => matchesShopSearch(query, s.name, s.slug, ...s.members.map((m) => m.email))),
     [shops.data, query],
   );
+  const linkShop = linkShopId ? (shops.data ?? []).find((s) => s.id === linkShopId) ?? null : null;
   const mfaRequired = shops.error instanceof AdminApiError && shops.error.code === 'mfa_required';
   const denied = isAdmin.data === false || (shops.error instanceof AdminApiError && shops.error.status === 403 && !mfaRequired);
 
@@ -124,6 +150,7 @@ export function PlatformShopsPage() {
                       Владелец:{' '}
                       {owners.length ? owners.map((o) => o.email ?? o.user_id).join(', ') : <span className="text-muted-foreground">не назначен</span>}
                     </p>
+                    {s.owner_invite && <OwnerInviteLine invite={s.owner_invite} />}
                     <p className="text-xs text-muted-foreground">
                       Создан {date(s.created_at)}
                       {s.last_transfer_at && ` · передан ${date(s.last_transfer_at)}`} · уведомления: <NotificationBadge n={s.notifications} />
@@ -143,6 +170,12 @@ export function PlatformShopsPage() {
                   <Button asChild size="sm" variant="outline">
                     <Link to={`/admin/shops/${s.slug}`}>Админка</Link>
                   </Button>
+                  {s.status !== 'deleting' && (
+                    // Works for a DEMO shop and for a shop that already has an owner (it is then handed over again).
+                    <Button size="sm" variant="outline" onClick={() => setLinkShopId(s.id)} data-testid="platform-owner-link">
+                      Ссылка владельцу
+                    </Button>
+                  )}
                   {s.status === 'deleting' ? (
                     <Button size="sm" variant="destructive" onClick={() => setDeleting(s)} data-testid="platform-demo-delete-resume">
                       Продолжить удаление
@@ -176,6 +209,22 @@ export function PlatformShopsPage() {
       )}
       {transferring && <TransferShopDialog shop={transferring} open onOpenChange={(o) => !o && setTransferring(null)} />}
       {handingOver && <HandoverDialog shop={handingOver} open onOpenChange={(o) => !o && setHandingOver(null)} />}
+      {linkShop && (
+        <OwnerLinkDialog
+          shop={linkShop}
+          open
+          onOpenChange={(o) => !o && setLinkShopId(null)}
+          issuedToken={issued[linkShop.id] ?? null}
+          onIssued={(token) =>
+            setIssued((prev) => {
+              const next = { ...prev };
+              if (token) next[linkShop.id] = token;
+              else delete next[linkShop.id];
+              return next;
+            })
+          }
+        />
+      )}
       {/* DEMO: slug only (unchanged). Any other shop: slug + a fresh TOTP code, both checked by the server. */}
       {deleting &&
         (deleting.is_demo ? (

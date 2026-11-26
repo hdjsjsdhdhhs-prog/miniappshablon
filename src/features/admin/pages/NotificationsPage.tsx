@@ -1,4 +1,4 @@
-import { TelegramLogoIcon } from '@phosphor-icons/react';
+import { TelegramLogoIcon, WarningCircleIcon } from '@phosphor-icons/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -254,6 +254,15 @@ export function NotificationsPage() {
 
       <aside className="space-y-3 text-sm lg:sticky lg:top-4 lg:self-start">
         <p className="font-medium">Как подключить</p>
+        <Alert role="note" className="border-amber-500/70 bg-amber-50 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" data-testid="notifications-separate-bot-warning">
+          <WarningCircleIcon aria-hidden weight="fill" />
+          <AlertDescription className="text-current">
+            <p>
+              <strong className="font-semibold">Важно:</strong> для уведомлений необходимо использовать отдельного Telegram-бота. Не подключайте сюда бота,
+              который используется для витрины Mini App. Для витрины создайте второго бота через @BotFather
+            </p>
+          </AlertDescription>
+        </Alert>
         <ol className="list-decimal space-y-2 pl-5 text-muted-foreground">
           <li>
             Создайте отдельного бота в <span className="font-medium text-foreground">@BotFather</span> (команда /newbot) и скопируйте

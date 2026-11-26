@@ -10,9 +10,12 @@ import { MfaPage } from './pages/MfaPage';
 import { useIsPlatformAdmin } from './use-platform-admin';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { LoginPage } from './pages/LoginPage';
+import { LoyaltyPage } from './pages/LoyaltyPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { OrdersPage } from './pages/OrdersPage';
+import { OwnerRegistrationPage } from './pages/OwnerRegistrationPage';
 import { PlatformShopsPage } from './pages/PlatformShopsPage';
 import { ProductEditPage } from './pages/ProductEditPage';
 import { ProductsPage } from './pages/ProductsPage';
@@ -51,6 +54,9 @@ export default function AdminRoutes() {
       <Routes>
         <Route index element={<LoginPage />} />
         <Route path="set-password" element={<SetPasswordPage />} />
+        {/* Public pages: the buyer's registration (needs a link token in the fragment) and «Забыли пароль?». */}
+        <Route path="register" element={<OwnerRegistrationPage />} />
+        <Route path="forgot-password" element={<ForgotPasswordPage />} />
         <Route element={<RequireAuth />}>
           <Route path="shops" element={<ShopsPage />} />
           <Route path="shops/:slug" element={<AdminShopLayout />}>
@@ -61,6 +67,7 @@ export default function AdminRoutes() {
             <Route path="orders" element={<OrdersPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="notifications" element={<NotificationsPage />} />
+            <Route path="loyalty" element={<LoyaltyPage />} />
             <Route path="bot" element={<BotConnectionPage />} />
             <Route path="broadcast" element={<BroadcastPage />} />
           </Route>

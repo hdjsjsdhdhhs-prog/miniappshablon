@@ -309,9 +309,12 @@ export function canPost(chat: TgChat, member: TgChatMember): boolean {
   return true;
 }
 
-/** getMe + getChat + rights check. Throws BotApiError with a stable code. */
-export async function verifyConnection(api: TelegramBotApi, chatId: string) {
-  const bot = await api.getMe();
+/**
+ * getMe + getChat + rights check. Throws BotApiError with a stable code. `knownBot`: the bot already identified with
+ * getMe by the caller (the Bot ID is checked against the shop's other purposes first), so it is not asked twice.
+ */
+export async function verifyConnection(api: TelegramBotApi, chatId: string, knownBot?: TgUser) {
+  const bot = knownBot ?? (await api.getMe());
   const chat = await api.getChat(chatId);
   const member = await api.getChatMember(chatId, bot.id);
   if (!canPost(chat, member)) {

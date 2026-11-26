@@ -14,6 +14,11 @@
 //     | { action: 'demo-delete-resume', shopId }
 //     | { action: 'shop-delete-preview', shopId } | { action: 'shop-delete-challenge', shopId }
 //     | { action: 'shop-delete', shopId, confirmSlug }
+//     | { action: 'owner-link-create', shopId, email?, ttlHours? } | { action: 'owner-link-revoke', shopId }
+// Owner registration link (20261119090000): `owner-link-create` generates a 256-bit token HERE, hands only its SHA-256 to
+// the SQL (the database never sees the secret) and returns the token ONCE in the response (Cache-Control: no-store);
+// it is not stored anywhere and cannot be shown again. The shop id is bound to the hash in SQL, so the link can
+// register one owner of this one shop only. The buyer's side is the separate public function `owner-registration`.
 // MFA (20261102090000): every action requires an aal2 access token. An aal1 token is refused here before any RPC,
 // Auth or Storage call, and independently the SQL refuses every platform right unless the forwarded session is a
 // live aal2 session of the actor (the session is forwarded only for an aal2 token).
@@ -30,6 +35,7 @@ import { actorClient, RPC_ERRORS, telegramApiBase, verifyAdminUser, type AdminCa
 import { serviceClient } from '../_shared/auth.ts';
 import { cleanupBot } from '../_shared/bot-connection.ts';
 import { corsHeaders, errorResponse, json, parseDbErrorDetails } from '../_shared/http.ts';
+import { generateInviteToken, hashInviteToken } from '../_shared/owner-invite.ts';
 import { removeShopMedia } from '../_shared/shop-media-cleanup.ts';
 import { BotApiError, TelegramBotApi } from '../_shared/telegram-bot-api.ts';
 
@@ -61,6 +67,9 @@ const bodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('shop-delete-preview'), shopId: z.uuid() }),
   z.object({ action: z.literal('shop-delete-challenge'), shopId: z.uuid() }),
   z.object({ action: z.literal('shop-delete'), shopId: z.uuid(), confirmSlug: z.string().trim().min(1).max(40) }),
+  // Optional: bind the link to the buyer's e-mail; ttlHours defaults to 48 in SQL (1..168).
+  z.object({ action: z.literal('owner-link-create'), shopId: z.uuid(), email: z.email().max(254).optional(), ttlHours: z.number().int().min(1).max(168).optional() }),
+  z.object({ action: z.literal('owner-link-revoke'), shopId: z.uuid() }),
 ]);
 
 type Body = z.infer<typeof bodySchema>;
@@ -276,6 +285,25 @@ async function deleteShop(
   return json(req, result.status === 'deleted' ? 200 : 202, { deletion: result, storage: { removed: cleanup.removed, error: cleanup.error } });
 }
 
+/**
+ * "Создать ссылку для регистрации владельца": the token exists only in this response. The previous active link of the
+ * shop is revoked by the SQL in the same transaction. The token is never logged.
+ */
+async function createOwnerLink(req: Request, db: SupabaseClient, actor: string, body: Extract<Body, { action: 'owner-link-create' }>) {
+  const token = generateInviteToken();
+  const { data, error } = await db.rpc('platform_owner_link_create', {
+    p_actor: actor,
+    p_shop_id: body.shopId,
+    p_token_hash: await hashInviteToken(token),
+    p_bound_email: body.email ?? null,
+    p_ttl_hours: body.ttlHours ?? null,
+  });
+  if (error) return rpcError(req, body.action, error);
+  const res = json(req, 201, { token, invite: (data as { invite: unknown }).invite });
+  res.headers.set('Cache-Control', 'no-store');
+  return res;
+}
+
 /** Explicit MFA gate before anything else runs (the SQL enforces it again on its own). */
 async function requireAal2(req: Request, caller: AdminCaller): Promise<Response | null> {
   if (caller.aal === 'aal2' && caller.sessionId) return null;
@@ -303,6 +331,12 @@ Deno.serve(async (req) => {
   const db = actorClient(auth);
   if (body.action === 'create-demo') return createDemo(req, db, auth.userId, body);
   if (body.action === 'handover') return handover(req, db, auth.userId, body);
+  if (body.action === 'owner-link-create') return createOwnerLink(req, db, auth.userId, body);
+  if (body.action === 'owner-link-revoke') {
+    const { data, error } = await db.rpc('platform_owner_link_revoke', { p_actor: auth.userId, p_shop_id: body.shopId });
+    if (error) return rpcError(req, body.action, error);
+    return json(req, 200, data);
+  }
   if (body.action === 'demo-delete') return deleteShop(req, db, auth.userId, body.shopId, body.confirmSlug, body.action);
   if (body.action === 'demo-delete-resume') return deleteShop(req, db, auth.userId, body.shopId, null, body.action);
   if (body.action === 'shop-delete') {

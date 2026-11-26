@@ -129,6 +129,60 @@ describe('NotificationsPage', () => {
     expect(await screen.findByTestId('notifications-notice')).toHaveTextContent('Добавьте его администратором с правом публикации');
   });
 
+  it('warns inside the instruction that the notification bot must be a separate bot, not the storefront bot', async () => {
+    api.get.mockResolvedValue(empty);
+    renderPage();
+    const warning = await screen.findByTestId('notifications-separate-bot-warning');
+    expect(warning).toHaveTextContent(
+      'Важно: для уведомлений необходимо использовать отдельного Telegram-бота. Не подключайте сюда бота, который используется для витрины Mini App. Для витрины создайте второго бота через @BotFather',
+    );
+    // The warning is part of the «Как подключить» instruction next to the numbered steps.
+    expect(warning.closest('aside')).toHaveTextContent('Как подключить');
+    expect(warning.closest('aside')).toContainElement(screen.getByText(/Создайте приватную группу или канал для заказов/));
+  });
+
+  it('refuses the storefront bot with a red error that names the section, keeps the saved connection and never shows the token', async () => {
+    const { AdminApiError } = await vi.importActual<typeof FunctionsApi>('../functions-api');
+    api.get.mockResolvedValue(connected);
+    api.save.mockRejectedValue(new AdminApiError(409, 'bot_used_for_storefront', null));
+    renderPage();
+    expect(await screen.findByText('@noir_orders_bot')).toBeInTheDocument();
+    await userEvent.type(screen.getByTestId('notifications-token'), TOKEN);
+    await userEvent.click(screen.getByTestId('notifications-save'));
+
+    const notice = await screen.findByTestId('notifications-notice');
+    expect(notice).toHaveTextContent(
+      'Этот Telegram-бот уже подключён для витрины Mini App. Для уведомлений необходимо использовать отдельного Telegram-бота. Один бот не может использоваться одновременно для уведомлений и витрины',
+    );
+    // The red (destructive) alert of the project, not the neutral one.
+    expect(notice.className).toContain('text-destructive');
+    expect(notice.textContent).not.toContain(TOKEN.split(':')[1]);
+    // The working connection is still shown as it was: nothing replaced, nothing cleared.
+    expect(screen.getByTestId('notifications-status')).toHaveTextContent('Подключено');
+    expect(screen.getByTestId('notifications-token-hint')).toHaveTextContent('123456789:••••cccc');
+    expect(screen.getByText('@noir_orders_bot')).toBeInTheDocument();
+    expect(screen.getByTestId('notifications-chat')).toHaveValue('@noir_orders');
+    // A conflict is not a wrong token and not an unavailable Telegram.
+    expect(notice).not.toHaveTextContent('Telegram не принял токен');
+    expect(notice).not.toHaveTextContent('Telegram сейчас недоступен');
+  });
+
+  it.each([
+    ['telegram_unauthorized', 'Telegram не принял токен'],
+    ['telegram_unavailable', 'Telegram сейчас недоступен'],
+  ])('a %s error is shown separately from the duplicate-bot error', async (code, text) => {
+    const { AdminApiError } = await vi.importActual<typeof FunctionsApi>('../functions-api');
+    api.get.mockResolvedValue(empty);
+    api.save.mockRejectedValue(new AdminApiError(code === 'telegram_unavailable' ? 502 : 400, code, null));
+    renderPage();
+    await userEvent.type(await screen.findByTestId('notifications-token'), TOKEN);
+    await userEvent.type(screen.getByTestId('notifications-chat'), '@noir_orders');
+    await userEvent.click(screen.getByTestId('notifications-save'));
+    const notice = await screen.findByTestId('notifications-notice');
+    expect(notice).toHaveTextContent(text);
+    expect(notice).not.toHaveTextContent('уже подключён');
+  });
+
   it('a non-owner sees that the section is owner-only', async () => {
     const { AdminApiError } = await vi.importActual<typeof FunctionsApi>('../functions-api');
     api.get.mockRejectedValue(new AdminApiError(403, 'forbidden', null));

@@ -7,6 +7,30 @@ export interface CheckoutErrorView {
   reconcile?: { prices?: Record<string, number>; originalPrices?: Record<string, number | null>; stock?: Record<string, StockStatus> };
   removeVariantIds?: string[];
   resetIdempotencyKey?: boolean;
+  /** The promo code can not be used any more: the cart forgets it and recalculates. */
+  dropPromo?: boolean;
+  /** The bonuses the buyer wanted to spend are not available (any more): the cart forgets them and recalculates. */
+  dropBonus?: boolean;
+}
+
+/** Why a promo code is refused (the reason comes from the server; the buyer never learns more than this). */
+export function promoReasonMessage(reason: unknown): string {
+  switch (reason) {
+    case 'not_found':
+      return 'Такого промокода нет. Проверьте, как он написан.';
+    case 'inactive':
+      return 'Этот промокод сейчас не действует.';
+    case 'exhausted':
+      return 'Этот промокод уже использовали максимальное число раз.';
+    case 'disabled':
+      return 'В этом магазине сейчас не принимают промокоды.';
+    case 'better_discount':
+      return 'Скидка за сумму заказа выгоднее — промокод не применён и не потрачен. Скидки не суммируются.';
+    case 'no_effect':
+      return 'Этот промокод не даёт скидки на такой заказ.';
+    default:
+      return 'Не удалось применить промокод.';
+  }
 }
 
 /** Maps Edge Function error codes to user-facing messages and cart corrections. */
@@ -57,6 +81,18 @@ export function describeCheckoutError(err: unknown): CheckoutErrorView {
         },
       };
     }
+    case 'promo_invalid':
+      return {
+        message: `${promoReasonMessage((d as { reason?: unknown } | null)?.reason)} Заказ не оформлен — проверьте сумму и оформите снова.`,
+        dropPromo: true,
+        resetIdempotencyKey: true,
+      };
+    case 'insufficient_bonus':
+      return { message: 'Бонусов на балансе меньше, чем вы хотели потратить. Проверьте сумму и оформите заказ снова.', dropBonus: true, resetIdempotencyKey: true };
+    case 'bonus_exceeds_order':
+      return { message: 'Нельзя потратить больше бонусов, чем стоит заказ. Проверьте сумму и оформите заказ снова.', dropBonus: true, resetIdempotencyKey: true };
+    case 'bonus_unavailable':
+      return { message: 'Бонусная программа магазина сейчас выключена. Проверьте сумму и оформите заказ снова.', dropBonus: true, resetIdempotencyKey: true };
     case 'item_unavailable':
       return {
         message: 'Некоторые товары больше недоступны и удалены из корзины.',

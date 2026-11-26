@@ -121,6 +121,46 @@ describe('BotConnectionPage — not connected', () => {
     expect(screen.getByTestId('bot-status')).toHaveTextContent('Бот не подключён');
   });
 
+  it('warns inside the instruction that the storefront bot must be a separate bot, not the bot of «Уведомления»', async () => {
+    api.get.mockResolvedValue(empty);
+    renderPage();
+    const warning = await screen.findByTestId('bot-separate-bot-warning');
+    expect(warning).toHaveTextContent(
+      'Важно: бот для витрины должен быть отдельным. Не используйте бота, уже подключённого в разделе „Уведомления“. Для витрины и уведомлений нужны два разных Telegram-бота',
+    );
+    expect(screen.getByTestId('bot-steps')).toContainElement(warning);
+  });
+
+  it('refuses the bot of «Уведомления» with a red error that names the section; nothing is connected and the token is not shown', async () => {
+    const { AdminApiError } = await vi.importActual<typeof FunctionsApi>('../functions-api');
+    api.get.mockResolvedValue(empty);
+    api.connect.mockRejectedValue(new AdminApiError(409, 'bot_used_for_notifications', null));
+    renderPage();
+    await userEvent.type(await screen.findByTestId('bot-token'), TOKEN);
+    await userEvent.click(screen.getByTestId('bot-connect'));
+    const notice = await screen.findByTestId('bot-notice');
+    expect(notice).toHaveTextContent(
+      'Этот Telegram-бот уже подключён в разделе „Уведомления“. Для подключения витрины необходимо создать или использовать другого Telegram-бота. Один бот не может использоваться одновременно для уведомлений и витрины',
+    );
+    expect(notice.className).toContain('text-destructive');
+    expect(notice.textContent).not.toContain(SECRET);
+    expect(screen.getByTestId('bot-status')).toHaveTextContent('Бот не подключён');
+    // «Уведомления» are never read or changed by the refusal.
+    expect(Object.values(notifications).every((fn) => fn.mock.calls.length === 0)).toBe(true);
+  });
+
+  it('a wrong token and an unavailable Telegram are not reported as a duplicate bot', async () => {
+    const { AdminApiError } = await vi.importActual<typeof FunctionsApi>('../functions-api');
+    api.get.mockResolvedValue(empty);
+    api.connect.mockRejectedValueOnce(new AdminApiError(502, 'telegram_unavailable', null));
+    renderPage();
+    await userEvent.type(await screen.findByTestId('bot-token'), TOKEN);
+    await userEvent.click(screen.getByTestId('bot-connect'));
+    const notice = await screen.findByTestId('bot-notice');
+    expect(notice).toHaveTextContent('Telegram сейчас недоступен');
+    expect(notice).not.toHaveTextContent('Уведомления');
+  });
+
   it('a webhook of another service needs an explicit confirmation before it is replaced', async () => {
     const { AdminApiError } = await vi.importActual<typeof FunctionsApi>('../functions-api');
     api.get.mockResolvedValue(empty);
@@ -283,6 +323,30 @@ describe('BotConnectionPage — connected', () => {
     expect(steps).toHaveTextContent('/mybots');
     expect(steps).toHaveTextContent('Configure Mini App');
     expect(screen.getByText(/позволяет включить только в @BotFather/)).toBeInTheDocument();
+  });
+
+  it('a replacement refused because the new bot is the notification bot keeps the working connection untouched', async () => {
+    const { AdminApiError } = await vi.importActual<typeof FunctionsApi>('../functions-api');
+    api.get.mockResolvedValue(connected);
+    api.connect.mockRejectedValue(new AdminApiError(409, 'bot_used_for_notifications', null));
+    renderPage();
+
+    await userEvent.click(await screen.findByTestId('bot-replace'));
+    const form = screen.getByTestId('bot-replace-form');
+    // The warning is also part of the replacement instruction.
+    expect(within(form).getByTestId('bot-replace-separate-bot-warning')).toHaveTextContent('бот для витрины должен быть отдельным');
+    await userEvent.type(within(form).getByTestId('bot-token'), TOKEN);
+    await userEvent.click(within(form).getByTestId('bot-connect'));
+    await userEvent.click(await screen.findByTestId('bot-confirm-ok'));
+
+    const notice = await screen.findByTestId('bot-notice');
+    expect(notice).toHaveTextContent('Этот Telegram-бот уже подключён в разделе „Уведомления“');
+    expect(notice.className).toContain('text-destructive');
+    expect(notice.textContent).not.toContain(SECRET);
+    expect(screen.getByTestId('bot-status')).toHaveTextContent('Бот подключён');
+    expect(screen.getByTestId('bot-username')).toHaveTextContent('@noir_shop_bot');
+    expect(screen.getByTestId('bot-token-hint')).toHaveTextContent('123456789:••••ghij');
+    expect(api.disconnect).not.toHaveBeenCalled();
   });
 
   it('disconnect and replacement both ask for confirmation first', async () => {

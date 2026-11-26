@@ -17,6 +17,7 @@ const NAV = [
   { to: 'orders', label: 'Заказы' },
   { to: 'settings', label: 'Оформление' },
   { to: 'notifications', label: 'Уведомления' },
+  { to: 'loyalty', label: 'Бонусы и промокоды' },
   { to: 'bot', label: 'Подключение бота' },
   { to: 'broadcast', label: 'Рассылка' },
 ];

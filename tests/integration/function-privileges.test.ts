@@ -78,6 +78,15 @@ const EXPECTED: Record<string, Roles> = {
   // Hand-over reservation before any Auth call (20261031090000, audit S2-06): platform-admin Edge Function only.
   'public.platform_reserve_handover(uuid,uuid,text)': r(false, false, true),
   'public.platform_release_handover(uuid,uuid,uuid)': r(false, false, true),
+  // Owner self-registration by an individual link (20261119090000): the platform-admin and owner-registration Edge
+  // Functions only. The link RPCs re-check the platform admin inside; the invite RPCs take the token HASH.
+  'public.platform_owner_link_create(uuid,uuid,text,text,integer)': r(false, false, true),
+  'public.platform_owner_link_revoke(uuid,uuid)': r(false, false, true),
+  'public.owner_invite_throttle(text,text)': r(false, false, true),
+  'public.owner_invite_preview(text)': r(false, false, true),
+  'public.owner_invite_reserve(text,text,uuid)': r(false, false, true),
+  'public.owner_invite_release(text,uuid)': r(false, false, true),
+  'public.owner_invite_complete(text,uuid,uuid,text)': r(false, false, true),
   // Invitation re-send cooldown and release of an expired reservation (20261101090000): platform-admin Edge Function only.
   'public.platform_claim_handover_invitation(uuid,uuid,uuid)': r(false, false, true),
   'public.platform_release_stale_handover(uuid,uuid)': r(false, false, true),
@@ -107,6 +116,10 @@ const EXPECTED: Record<string, Roles> = {
   'public.bot_webhook_release(uuid,bigint)': r(false, false, true),
   'public.bot_webhook_record_menu(uuid,text,text)': r(false, false, true),
   'public.bot_initdata_token(text)': r(false, false, true),
+  // One Telegram bot, one purpose of a shop (20261126090000): the notification-settings Edge Function only; the actor
+  // (owner, or platform admin in aal2) is re-checked inside. bot_assert_available / bot_save_connection /
+  // notify_save_settings above are replaced in place with the same signature and grants.
+  'public.notify_assert_bot_available(uuid,uuid,bigint)': r(false, false, true),
   // Stage 4B (20261113090000): Edge Functions only. Audience of a shop's bot and Premium emoji of the welcome
   // (telegram-webhook / bot-connection), «Рассылка» (bot-connection; every admin RPC re-checks the actor), the buyer's
   // order notification (checkout), deletion of any shop with a step-up TOTP (platform-admin, aal2 actor re-checked).
@@ -124,6 +137,24 @@ const EXPECTED: Record<string, Roles> = {
   'public.platform_shop_delete_preview(uuid,uuid)': r(false, false, true),
   'public.platform_shop_delete_challenge(uuid,uuid)': r(false, false, true),
   'public.platform_shop_delete_begin(uuid,uuid,text)': r(false, false, true),
+  // Stage 4D (20261125090000): bonuses, automatic discounts and promo codes — Edge Functions only (`loyalty` for the admin
+  // panel, `cart-quote` / `checkout` / `my-orders` for the buyer, whose Telegram identity they verified). Every admin RPC
+  // re-checks the actor (owner, or a platform admin in aal2; the notification claim accepts any shop member). The confirmation
+  // and cancellation of an order reach the same code through admin_set_order_status, which keeps its authenticated grant.
+  'public.create_order_v3(text,bigint,jsonb,jsonb,uuid,text,text,text,text,text,bigint,text,integer)': r(false, false, true),
+  'public.loyalty_quote(text,bigint,jsonb,text,integer)': r(false, false, true),
+  'public.loyalty_customer_profile(text,bigint,integer)': r(false, false, true),
+  'public.loyalty_get_overview(uuid,uuid)': r(false, false, true),
+  'public.loyalty_save_settings(uuid,uuid,boolean,numeric,boolean,boolean)': r(false, false, true),
+  'public.loyalty_save_rule(uuid,uuid,uuid,bigint,integer)': r(false, false, true),
+  'public.loyalty_delete_rule(uuid,uuid,uuid)': r(false, false, true),
+  'public.loyalty_save_promo(uuid,uuid,uuid,text,text,bigint,integer,boolean)': r(false, false, true),
+  'public.loyalty_set_promo_active(uuid,uuid,uuid,boolean)': r(false, false, true),
+  'public.loyalty_delete_promo(uuid,uuid,uuid)': r(false, false, true),
+  'public.loyalty_promo_history(uuid,uuid,uuid,integer)': r(false, false, true),
+  'public.bonus_notify_claim(uuid,uuid,uuid,integer)': r(false, false, true),
+  'public.bonus_notify_begin_send(bigint,integer,bigint)': r(false, false, true),
+  'public.bonus_notify_complete(bigint,boolean,bigint,text,boolean)': r(false, false, true),
 };
 
 /** Functions that existed on the hosted project when the hardening migration was written (17.10.2026). */

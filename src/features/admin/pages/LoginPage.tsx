@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Navigate, useLocation, useNavigate } from 'react-router';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router';
 import { z } from 'zod';
 import { PageSpinner } from '@/components/state-views';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -32,7 +32,7 @@ export function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Вход для владельцев</CardTitle>
-          <CardDescription>Учётные записи выдаёт администратор платформы. Регистрации нет.</CardDescription>
+          <CardDescription>Открытой регистрации нет: владелец регистрируется по персональной ссылке администратора платформы.</CardDescription>
         </CardHeader>
         <CardContent>
           <form
@@ -57,6 +57,11 @@ export function LoginPage() {
               <Label htmlFor="password">Пароль</Label>
               <Input id="password" type="password" autoComplete="current-password" aria-invalid={!!errors.password} {...form.register('password')} />
               {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
+              <p className="text-sm">
+                <Link to="/admin/forgot-password" className="text-muted-foreground underline underline-offset-2 hover:text-foreground" data-testid="forgot-password-link">
+                  Забыли пароль?
+                </Link>
+              </p>
             </div>
             {error && (
               <Alert variant="destructive">

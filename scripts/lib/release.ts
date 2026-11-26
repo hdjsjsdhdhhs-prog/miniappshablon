@@ -33,8 +33,13 @@ export const CI_WORKFLOW_PATH = '.github/workflows/ci.yml';
  * 4A (shop's own Telegram bot, 20261107090000) is an Expand stage: additive tables / functions only.
  * 4B (admin, discounts, Telegram communications, 20261113090000) is an Expand stage: new nullable columns, private
  * tables and service-role RPCs; replaced RPCs keep their signature (checked by migration-integrity.test.ts).
+ * 4C (owner registration links, 20261119090000) is an Expand stage: new private tables, one nullable column, new
+ * service-role RPCs, one trigger that fires only when a shop becomes 'deleting'; nothing is dropped or revoked.
+ * 4D (bonuses, automatic discounts and promo codes, 20261125090000) is an Expand stage: new private tables, new nullable /
+ * defaulted columns on public.orders, new service-role RPCs; create_order_v2 is unchanged (create_order_v3 wraps it) and
+ * the replaced functions keep their signatures and grants.
  */
-export const RELEASE_ALLOWED_STAGES: readonly string[] = ['3A', '3B', '4A', '4B'];
+export const RELEASE_ALLOWED_STAGES: readonly string[] = ['3A', '3B', '4A', '4B', '4C', '4D'];
 
 /** Deployment environments of the release, each of which must exist and be protected before anything runs. */
 export const RELEASE_ENVIRONMENTS = ['production', 'production-frontend'] as const;

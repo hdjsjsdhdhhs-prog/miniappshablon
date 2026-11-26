@@ -59,6 +59,12 @@ export const MIGRATION_INTEGRITY_MANIFEST = [
     file: '20261113090000_stage_4b_admin_discounts_broadcasts.sql',
     sha256: 'cb59725584e8c50afce6e60c8966743eac336aab55898eff79b23dabd54f15ba',
   },
+  // Stage 4C.
+  { file: '20261119090000_owner_registration_links.sql', sha256: '8ba4961a9fa3f3263671cac84a621cfc77d8968adfa513b1918ffb26ac62af57' },
+  // Stage 4D.
+  { file: '20261125090000_loyalty_bonuses_discounts_promos.sql', sha256: 'f03e8e11243e3081129519427b5e9eb8562cc3edcaf60542e0de7e735c0b258f' },
+  // Stage 4D, second file: one Telegram bot serves one purpose of a shop.
+  { file: '20261126090000_separate_telegram_bots.sql', sha256: '836515093888396c9acfee6bbd8fae6534d5a4449b1fc8743443e053e882f002' },
 ] as const satisfies readonly MigrationIntegrityEntry[];
 
 export interface MigrationIntegrityEntry {

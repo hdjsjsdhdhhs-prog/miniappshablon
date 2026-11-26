@@ -5,13 +5,13 @@ import { describe, expect, it, vi } from 'vitest';
 import type * as Api from './api';
 import { AdminShopLayout } from './AdminShopLayout';
 
-vi.mock('./api', async (importOriginal) => ({
+vi.mock('@/features/admin/api', async (importOriginal) => ({
   ...(await importOriginal<typeof Api>()),
   fetchAdminShop: vi.fn(async () => ({ id: 'shop-a', slug: 'noir-vapor', name: 'Noir Vapor', mode: 'live', is_demo: false })),
 }));
 
 describe('AdminShopLayout', () => {
-  it('adds «Подключение бота» right after «Уведомления» and keeps the order of the existing tabs', async () => {
+  it('puts «Бонусы и промокоды» between «Уведомления» and «Подключение бота» and keeps the order of the existing tabs', async () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter initialEntries={['/admin/shops/noir-vapor']}>
@@ -30,6 +30,8 @@ describe('AdminShopLayout', () => {
       ['Заказы', '/admin/shops/noir-vapor/orders'],
       ['Оформление', '/admin/shops/noir-vapor/settings'],
       ['Уведомления', '/admin/shops/noir-vapor/notifications'],
+      // «Бонусы и промокоды» sits between «Уведомления» and «Подключение бота», directly to the left of the latter.
+      ['Бонусы и промокоды', '/admin/shops/noir-vapor/loyalty'],
       ['Подключение бота', '/admin/shops/noir-vapor/bot'],
       // «Рассылка» sits right after (to the right of) «Подключение бота».
       ['Рассылка', '/admin/shops/noir-vapor/broadcast'],

@@ -10,7 +10,9 @@
 //
 // The bot token is accepted only by `connect`, verified with getMe and stored in Supabase Vault through a service-role
 // RPC. It is never returned (only a masked hint), logged, or put into any URL except the Bot API's own.
-// Independent of the order notifications (notification-settings): it never reads or changes their bot or chat.
+// Independent of the order notifications (notification-settings): it never reads or changes their bot, token or chat. The only
+// link is the rule «one Telegram bot, one purpose»: SQL compares the Bot ID (getMe) with the bot of the notifications and
+// refuses the connection with bot_used_for_notifications (409) — nothing is saved or changed in Telegram then.
 import { z } from 'npm:zod@4.6.7';
 import { actorClient, telegramApiBase, verifyAdminUser } from '../_shared/admin-auth.ts';
 import { BotFlowError, connectBot, disconnectBot, getBot, saveWelcome, syncBot, type BotDeps } from '../_shared/bot-connection.ts';

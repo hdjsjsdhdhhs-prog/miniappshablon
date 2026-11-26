@@ -2,13 +2,15 @@
 // Creates an order atomically after verifying Telegram initData. The client sends only variant ids and
 // quantities; prices, ownership and stock are resolved in PostgreSQL inside one transaction.
 //
-// Body: { fulfillment, comment, … } → public.create_order_v2 (delivery / pickup). The pre-20261026090000 contract
+// Body: { fulfillment, comment, promoCode?, bonusSpend?, … } → public.create_order_v3, which wraps create_order_v2
+// (delivery / pickup) and applies the discounts / promo code / bonuses of the shop (20261125090000). The pre-20261026090000 contract
 // ({ contact: { name, phone, comment } } → create_order) was removed in 20261030090100 (audit F-03: it stored orders
 // in DEMO shops); such a body is refused before any database call. DEMO shops, per-order size and per-buyer rate
 // limits are enforced in SQL (create_order_v2 + orders trigger), so no caller can skip them.
 import { z } from 'npm:zod@4.6.7';
 import { telegramApiBase } from '../_shared/admin-auth.ts';
 import { serviceClient, verifyTelegramRequest } from '../_shared/auth.ts';
+import { dispatchBonusNotifications } from '../_shared/bonus-notification.ts';
 import { dispatchCustomerNotifications } from '../_shared/customer-notification.ts';
 import { corsHeaders, errorResponse, json, parseDbErrorDetails } from '../_shared/http.ts';
 import { dispatchNotifications } from '../_shared/notify-dispatch.ts';
@@ -22,6 +24,10 @@ const baseShape = {
     .array(z.object({ variantId: z.uuid(), quantity: z.number().int().min(1).max(99) }))
     .min(1)
     .max(50),
+  // Optional price modifiers (20261125090000). The amounts are never taken from here: the server resolves the promo code
+  // of THIS shop and the buyer's own balance, and refuses what it can not honour.
+  promoCode: z.string().trim().max(40).optional(),
+  bonusSpend: z.number().int().min(0).max(1_000_000).optional(),
 };
 
 const fulfillmentBodySchema = z.object({
@@ -59,6 +65,12 @@ const DB_ERRORS: Record<string, number> = {
   item_unavailable: 409,
   insufficient_stock: 409,
   price_changed: 409,
+  // Promo code and bonuses (20261125090000). details: { reason } / { balance } / { max_spend }.
+  promo_invalid: 409,
+  insufficient_bonus: 409,
+  bonus_exceeds_order: 409,
+  bonus_unavailable: 409,
+  invalid_bonus: 400,
   idempotency_conflict: 422,
   order_too_large: 422,
   rate_limited: 429,
@@ -121,8 +133,20 @@ Deno.serve(async (req) => {
     .map((i) => [i.variantId, i.quantity] as const)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const address = body.fulfillment.method === 'delivery' ? body.fulfillment.address : null;
+  const promoCode = body.promoCode?.trim() ? body.promoCode.trim().toUpperCase() : null;
+  const bonusSpend = body.bonusSpend ?? 0;
   const requestHash = await sha256Hex(
-    JSON.stringify({ s: body.shopSlug, i: canonicalItems, f: body.fulfillment.method, a: address, c: body.comment, cur: body.currency }),
+    JSON.stringify({
+      s: body.shopSlug,
+      i: canonicalItems,
+      f: body.fulfillment.method,
+      a: address,
+      c: body.comment,
+      cur: body.currency,
+      // Only when used: the hash of a request without them stays what it always was (an in-flight retry keeps working).
+      ...(promoCode ? { p: promoCode } : {}),
+      ...(bonusSpend > 0 ? { b: bonusSpend } : {}),
+    }),
   );
 
   // Probing guard: a buyer who already got too many "not enough stock" answers in this shop is stopped BEFORE the
@@ -140,7 +164,9 @@ Deno.serve(async (req) => {
     return errorResponse(req, 500, 'internal_error');
   }
 
-  const { data, error } = await serviceClient().rpc('create_order_v2', {
+  // create_order_v3 = create_order_v2 + the price rule; a shop without these features (and a request without a code and
+  // bonuses) is served by create_order_v2 itself inside it.
+  const { data, error } = await serviceClient().rpc('create_order_v3', {
     p_shop_slug: body.shopSlug,
     p_customer_tg_id: user.id,
     p_customer_snapshot: {
@@ -156,6 +182,8 @@ Deno.serve(async (req) => {
     p_comment: body.comment,
     p_expected_currency: body.currency,
     p_expected_total_minor: body.expectedTotalMinor ?? null,
+    p_promo_code: promoCode,
+    p_bonus_spend: bonusSpend,
   });
 
   if (error) {
@@ -173,7 +201,7 @@ Deno.serve(async (req) => {
       if (status === 429 && typeof retryAfter === 'number') res.headers.set('Retry-After', String(retryAfter));
       return res;
     }
-    console.error('create_order_v2 failed', error);
+    console.error('create_order_v3 failed', error);
     return errorResponse(req, 500, 'internal_error');
   }
 
@@ -198,6 +226,8 @@ function scheduleNotifications(orderId: string, shopId: string) {
     await dispatchCustomerNotifications(rpc, { orderId, apiBase }).catch(() => console.warn('buyer notification dispatch failed'));
     await dispatchNotifications(rpc, { shopId, limit: 3, apiBase });
     await dispatchCustomerNotifications(rpc, { shopId, limit: 3, apiBase });
+    // Due retries of «начислено бонусов» messages of this shop (the first attempt is made by the admin panel).
+    await dispatchBonusNotifications(rpc, { shopId, limit: 3, apiBase });
   })().catch(() => console.warn('order notification dispatch failed'));
   const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
   if (runtime?.waitUntil) runtime.waitUntil(task);

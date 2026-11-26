@@ -23,13 +23,17 @@ const A_FILES = [...MIGRATION_STAGES[0].files];
 const B_FILES = [...MIGRATION_STAGES[1].files];
 const C_FILES = [...MIGRATION_STAGES[2].files];
 const D_FILES = [...MIGRATION_STAGES[3].files];
+const E_FILES = [...MIGRATION_STAGES[4].files];
+const F_FILES = [...MIGRATION_STAGES[5].files];
 const A = A_FILES.map(v);
 const B = B_FILES.map(v);
 const C = C_FILES.map(v);
 const D = D_FILES.map(v);
+const E = E_FILES.map(v);
+const F = F_FILES.map(v);
 const ALL = [...REVIEWED_MIGRATIONS];
 // After every reviewed version (an unknown migration added later).
-const EXTRA = '20261120090000';
+const EXTRA = '20261130090000';
 const FILES: Record<string, string> = Object.fromEntries(REVIEWED_MIGRATION_FILES.map((f) => [v(f), f]));
 
 type Row = [local: string, remote: string];
@@ -55,6 +59,8 @@ const production = history(BASE);
 const afterA = history([...BASE, ...A]);
 const afterB = history([...BASE, ...A, ...B]);
 const afterC = history([...BASE, ...A, ...B, ...C]);
+const afterD = history([...BASE, ...A, ...B, ...C, ...D]);
+const afterE = history([...BASE, ...A, ...B, ...C, ...D, ...E]);
 const allApplied = history(ALL);
 
 const apply = (stages: string[], files: string[]) => ({ mode: 'apply', stages, files });
@@ -74,7 +80,7 @@ describe('reviewed manifest', () => {
       '20261026090000_fulfillment_and_demo_lifecycle.sql',
       '20261026100000_admin_catalog_delete.sql',
     ]);
-    expect(MIGRATION_STAGES.map((s) => s.id)).toEqual(['3A', '3B', '4A', '4B']);
+    expect(MIGRATION_STAGES.map((s) => s.id)).toEqual(['3A', '3B', '4A', '4B', '4C', '4D']);
     expect(A_FILES).toEqual([
       '20261030090000_owner_change_security.sql',
       '20261030090100_checkout_demo_guard_and_limits.sql',
@@ -90,7 +96,9 @@ describe('reviewed manifest', () => {
     ]);
     expect(C_FILES).toEqual(['20261107090000_telegram_bot_connection.sql']);
     expect(D_FILES).toEqual(['20261113090000_stage_4b_admin_discounts_broadcasts.sql']);
-    expect(REVIEWED_MIGRATION_FILES).toHaveLength(22);
+    expect(E_FILES).toEqual(['20261119090000_owner_registration_links.sql']);
+    expect(F_FILES).toEqual(['20261125090000_loyalty_bonuses_discounts_promos.sql', '20261126090000_separate_telegram_bots.sql']);
+    expect(REVIEWED_MIGRATION_FILES).toHaveLength(25);
     expect(() => assertManifestValid()).not.toThrow();
   });
 
@@ -123,44 +131,71 @@ describe('reviewed manifest', () => {
 });
 
 describe('production migration gate: accepted states', () => {
-  it('baseline fixture, 3A, 3B, 4A and 4B wholly pending → apply 3A,3B,4A,4B; dry-run must be all 11 files in order', () => {
-    expect(decideProductionMigrationPlan(production, dryRunFiles([...A_FILES, ...B_FILES, ...C_FILES, ...D_FILES]))).toEqual(
-      apply(['3A', '3B', '4A', '4B'], [...A_FILES, ...B_FILES, ...C_FILES, ...D_FILES]),
+  it('baseline fixture, 3A, 3B, 4A, 4B, 4C and 4D wholly pending → apply 3A,3B,4A,4B,4C,4D; dry-run must be all 14 files in order', () => {
+    expect(decideProductionMigrationPlan(production, dryRunFiles([...A_FILES, ...B_FILES, ...C_FILES, ...D_FILES, ...E_FILES, ...F_FILES]))).toEqual(
+      apply(['3A', '3B', '4A', '4B', '4C', '4D'], [...A_FILES, ...B_FILES, ...C_FILES, ...D_FILES, ...E_FILES, ...F_FILES]),
     );
-    expect(() => assertReleaseApplied(production)).toThrow(new RegExp(`still pending: ${[...A, ...B, ...C, ...D].join(', ')}$`));
+    expect(() => assertReleaseApplied(production)).toThrow(new RegExp(`still pending: ${[...A, ...B, ...C, ...D, ...E, ...F].join(', ')}$`));
   });
 
-  it('baseline fixture: the gate never accepts a plan for one stage alone, because db push would apply all 11', () => {
-    expect(() => decideProductionMigrationPlan(production, dryRun(A))).toThrow(/differs from expected stages 3A, 3B, 4A, 4B/);
-    expect(() => decideProductionMigrationPlan(production, dryRun(B))).toThrow(/differs from expected stages 3A, 3B, 4A, 4B/);
-    expect(() => decideProductionMigrationPlan(production, dryRun([...A, ...B]))).toThrow(/differs from expected stages 3A, 3B, 4A, 4B/);
-    // The plan of the release before 4B (3A + 3B + 4A) is not enough any more.
-    expect(() => decideProductionMigrationPlan(production, dryRun([...A, ...B, ...C]))).toThrow(/differs from expected stages 3A, 3B, 4A, 4B/);
+  it('baseline fixture: the gate never accepts a plan for one stage alone, because db push would apply all 14', () => {
+    const all = /differs from expected stages 3A, 3B, 4A, 4B, 4C, 4D/;
+    expect(() => decideProductionMigrationPlan(production, dryRun(A))).toThrow(all);
+    expect(() => decideProductionMigrationPlan(production, dryRun(B))).toThrow(all);
+    expect(() => decideProductionMigrationPlan(production, dryRun([...A, ...B]))).toThrow(all);
+    // The plans of the earlier releases (before 4B: 3A + 3B + 4A; before 4C: … + 4B; before 4D: … + 4C) are not enough any more.
+    expect(() => decideProductionMigrationPlan(production, dryRun([...A, ...B, ...C]))).toThrow(all);
+    expect(() => decideProductionMigrationPlan(production, dryRun([...A, ...B, ...C, ...D]))).toThrow(all);
+    expect(() => decideProductionMigrationPlan(production, dryRun([...A, ...B, ...C, ...D, ...E]))).toThrow(all);
   });
 
-  it('3A wholly applied, 3B, 4A and 4B wholly pending → apply 3B,4A,4B; verify-applied still fails', () => {
-    expect(decideProductionMigrationPlan(afterA, dryRunFiles([...B_FILES, ...C_FILES, ...D_FILES]))).toEqual(
-      apply(['3B', '4A', '4B'], [...B_FILES, ...C_FILES, ...D_FILES]),
+  it('3A wholly applied, 3B, 4A, 4B, 4C and 4D wholly pending → apply 3B,4A,4B,4C,4D; verify-applied still fails', () => {
+    const rest = /differs from expected stages 3B, 4A, 4B, 4C, 4D/;
+    expect(decideProductionMigrationPlan(afterA, dryRunFiles([...B_FILES, ...C_FILES, ...D_FILES, ...E_FILES, ...F_FILES]))).toEqual(
+      apply(['3B', '4A', '4B', '4C', '4D'], [...B_FILES, ...C_FILES, ...D_FILES, ...E_FILES, ...F_FILES]),
     );
-    expect(() => decideProductionMigrationPlan(afterA, dryRun(B))).toThrow(/differs from expected stages 3B, 4A, 4B/);
-    expect(() => decideProductionMigrationPlan(afterA, dryRun([...A, ...B, ...C, ...D]))).toThrow(/differs from expected stages 3B, 4A, 4B/);
+    expect(() => decideProductionMigrationPlan(afterA, dryRun(B))).toThrow(rest);
+    expect(() => decideProductionMigrationPlan(afterA, dryRun([...A, ...B, ...C, ...D, ...E, ...F]))).toThrow(rest);
     expect(() => decideProductionMigrationPlan(afterA, dryRun([]))).toThrow(/dry-run plan none/);
-    expect(() => assertReleaseApplied(afterA)).toThrow(new RegExp(`still pending: ${[...B, ...C, ...D].join(', ')}$`));
+    expect(() => assertReleaseApplied(afterA)).toThrow(new RegExp(`still pending: ${[...B, ...C, ...D, ...E, ...F].join(', ')}$`));
   });
 
-  it('3A and 3B wholly applied, 4A and 4B pending → apply 4A,4B; verify-applied still fails', () => {
-    expect(decideProductionMigrationPlan(afterB, dryRunFiles([...C_FILES, ...D_FILES]))).toEqual(apply(['4A', '4B'], [...C_FILES, ...D_FILES]));
-    expect(() => decideProductionMigrationPlan(afterB, dryRun(C))).toThrow(/differs from expected stages 4A, 4B/);
-    expect(() => decideProductionMigrationPlan(afterB, dryRun([...B, ...C, ...D]))).toThrow(/differs from expected stages 4A, 4B/);
+  it('3A and 3B wholly applied, 4A, 4B, 4C and 4D pending → apply 4A,4B,4C,4D; verify-applied still fails', () => {
+    const rest = /differs from expected stages 4A, 4B, 4C, 4D/;
+    expect(decideProductionMigrationPlan(afterB, dryRunFiles([...C_FILES, ...D_FILES, ...E_FILES, ...F_FILES]))).toEqual(
+      apply(['4A', '4B', '4C', '4D'], [...C_FILES, ...D_FILES, ...E_FILES, ...F_FILES]),
+    );
+    expect(() => decideProductionMigrationPlan(afterB, dryRun(C))).toThrow(rest);
+    expect(() => decideProductionMigrationPlan(afterB, dryRun([...B, ...C, ...D, ...E, ...F]))).toThrow(rest);
     expect(() => decideProductionMigrationPlan(afterB, dryRun([]))).toThrow(/dry-run plan none/);
-    expect(() => assertReleaseApplied(afterB)).toThrow(new RegExp(`still pending: ${[...C, ...D].join(', ')}$`));
+    expect(() => assertReleaseApplied(afterB)).toThrow(new RegExp(`still pending: ${[...C, ...D, ...E, ...F].join(', ')}$`));
   });
 
-  it('3A, 3B and 4A wholly applied (production after the bot-connection release), 4B pending → apply 4B only', () => {
-    expect(decideProductionMigrationPlan(afterC, dryRunFiles(D_FILES))).toEqual(apply(['4B'], D_FILES));
-    expect(() => decideProductionMigrationPlan(afterC, dryRun([...C, ...D]))).toThrow(/differs from expected stages 4B/);
+  it('3A, 3B and 4A wholly applied (production after the bot-connection release), 4B, 4C and 4D pending → apply 4B,4C,4D', () => {
+    const rest = /differs from expected stages 4B, 4C, 4D/;
+    expect(decideProductionMigrationPlan(afterC, dryRunFiles([...D_FILES, ...E_FILES, ...F_FILES]))).toEqual(
+      apply(['4B', '4C', '4D'], [...D_FILES, ...E_FILES, ...F_FILES]),
+    );
+    expect(() => decideProductionMigrationPlan(afterC, dryRun(D))).toThrow(rest);
+    expect(() => decideProductionMigrationPlan(afterC, dryRun([...C, ...D, ...E, ...F]))).toThrow(rest);
     expect(() => decideProductionMigrationPlan(afterC, dryRun([]))).toThrow(/dry-run plan none/);
-    expect(() => assertReleaseApplied(afterC)).toThrow(new RegExp(`still pending: ${D.join(', ')}$`));
+    expect(() => assertReleaseApplied(afterC)).toThrow(new RegExp(`still pending: ${[...D, ...E, ...F].join(', ')}$`));
+  });
+
+  it('3A, 3B, 4A and 4B wholly applied (production after the stage 4B release), 4C and 4D pending → apply 4C,4D', () => {
+    const rest = /differs from expected stages 4C, 4D/;
+    expect(decideProductionMigrationPlan(afterD, dryRunFiles([...E_FILES, ...F_FILES]))).toEqual(apply(['4C', '4D'], [...E_FILES, ...F_FILES]));
+    expect(() => decideProductionMigrationPlan(afterD, dryRun(E))).toThrow(rest);
+    expect(() => decideProductionMigrationPlan(afterD, dryRun([...D, ...E, ...F]))).toThrow(rest);
+    expect(() => decideProductionMigrationPlan(afterD, dryRun([]))).toThrow(/dry-run plan none/);
+    expect(() => assertReleaseApplied(afterD)).toThrow(new RegExp(`still pending: ${[...E, ...F].join(', ')}$`));
+  });
+
+  it('3A, 3B, 4A, 4B and 4C wholly applied (production after the owner-registration release), 4D pending → apply 4D only', () => {
+    expect(decideProductionMigrationPlan(afterE, dryRunFiles(F_FILES))).toEqual(apply(['4D'], F_FILES));
+    expect(() => decideProductionMigrationPlan(afterE, dryRun([...E, ...F]))).toThrow(/differs from expected stages 4D/);
+    expect(() => decideProductionMigrationPlan(afterE, dryRun([]))).toThrow(/dry-run plan none/);
+    expect(() => assertReleaseApplied(afterE)).toThrow(new RegExp(`still pending: ${F.join(', ')}$`));
   });
 
   it('every stage wholly applied → skip, and verify-applied confirms', () => {
@@ -169,10 +204,12 @@ describe('production migration gate: accepted states', () => {
     expect(() => decideProductionMigrationPlan(allApplied, dryRun([B[3]!]))).toThrow(/history shows everything applied but dry-run plans/);
     expect(() => decideProductionMigrationPlan(allApplied, dryRun(C))).toThrow(/history shows everything applied but dry-run plans/);
     expect(() => decideProductionMigrationPlan(allApplied, dryRun(D))).toThrow(/history shows everything applied but dry-run plans/);
+    expect(() => decideProductionMigrationPlan(allApplied, dryRun(E))).toThrow(/history shows everything applied but dry-run plans/);
+    expect(() => decideProductionMigrationPlan(allApplied, dryRun(F))).toThrow(/history shows everything applied but dry-run plans/);
   });
 
-  it('exhaustive: over every subset of the 11 stage migrations only the five whole-stage states are accepted', () => {
-    const stageVersions = [...A, ...B, ...C, ...D];
+  it('exhaustive: over every subset of the 14 stage migrations only the seven whole-stage states are accepted', () => {
+    const stageVersions = [...A, ...B, ...C, ...D, ...E, ...F];
     const accepted: string[] = [];
     for (let mask = 0; mask < 1 << stageVersions.length; mask++) {
       const done = stageVersions.filter((_, i) => mask & (1 << i));
@@ -192,8 +229,9 @@ describe('production migration gate: accepted states', () => {
       }
       expect(verified, `mask ${mask}`).toBe(done.length === stageVersions.length);
     }
-    expect(accepted).toEqual(['0:apply', '5:apply', '9:apply', '10:apply', '11:skip']);
-  });
+    expect(accepted).toEqual(['0:apply', '5:apply', '9:apply', '10:apply', '11:apply', '12:apply', '14:skip']);
+    // 2^14 subsets (was 2^11 before stages 4C and 4D): CPU-bound, takes several seconds, longer on a loaded runner.
+  }, 120_000);
 });
 
 describe('production migration gate: rejected states', () => {
@@ -230,11 +268,19 @@ describe('production migration gate: rejected states', () => {
   });
 
   it('4B applied before 4A (or before any earlier stage) is rejected', () => {
-    const skipC = history([...BASE, ...A, ...B, ...D]);
+    const skipC = history([...BASE, ...A, ...B, ...D, ...E, ...F]);
     expect(() => decideProductionMigrationPlan(skipC, dryRun(C))).toThrow(/stage 4B is applied but the earlier stage 4A is not \(out of order\)/);
     expect(() => assertReleaseApplied(skipC)).toThrow(/out of order/);
-    const onlyD = history([...BASE, ...D]);
+    const onlyD = history([...BASE, ...D, ...E, ...F]);
     expect(() => decideProductionMigrationPlan(onlyD, dryRun([...A, ...B, ...C]))).toThrow(/stage 4B is applied but the earlier stage 3A, 3B, 4A is not \(out of order\)/);
+  });
+
+  it('4D applied before 4C (or before any earlier stage) is rejected', () => {
+    const skipE = history([...BASE, ...A, ...B, ...C, ...D, ...F]);
+    expect(() => decideProductionMigrationPlan(skipE, dryRun(E))).toThrow(/stage 4D is applied but the earlier stage 4C is not \(out of order\)/);
+    expect(() => assertReleaseApplied(skipE)).toThrow(/out of order/);
+    const onlyF = history([...BASE, ...F]);
+    expect(() => decideProductionMigrationPlan(onlyF, dryRun([...A, ...B, ...C, ...D, ...E]))).toThrow(/stage 4D is applied but the earlier stage 3A, 3B, 4A, 4B, 4C is not \(out of order\)/);
   });
 
   it('a gap inside a stage (a middle migration pending, its neighbours applied) is rejected', () => {
@@ -246,9 +292,9 @@ describe('production migration gate: rejected states', () => {
   });
 
   it('a migration missing from a stage (no local row in the history) is rejected', () => {
-    for (const x of [...A, ...B, ...C, ...D]) {
+    for (const x of [...A, ...B, ...C, ...D, ...E, ...F]) {
       const rows = ALL.filter((y) => y !== x).map((y) => (BASE.includes(y) ? applied(y) : pending(y)));
-      const plan = [...A, ...B, ...C, ...D].filter((y) => y !== x);
+      const plan = [...A, ...B, ...C, ...D, ...E, ...F].filter((y) => y !== x);
       expect(() => decideProductionMigrationPlan(list(rows), dryRun(plan)), x).toThrow(new RegExp(`reviewed migration ${x} is missing locally`));
     }
     for (const x of BASE) {
@@ -269,36 +315,40 @@ describe('production migration gate: rejected states', () => {
   });
 
   it('unknown migrations are rejected wherever they appear', () => {
-    const extraPending = list([...BASE.map(applied), ...A.map(pending), ...B.map(pending), ...C.map(pending), ...D.map(pending), pending(EXTRA)]);
-    expect(() => decideProductionMigrationPlan(extraPending, dryRun([...A, ...B, ...C, ...D, EXTRA]))).toThrow(new RegExp(`${EXTRA} is not in the reviewed manifest`));
+    const extraPending = list([...BASE.map(applied), ...A.map(pending), ...B.map(pending), ...C.map(pending), ...D.map(pending), ...E.map(pending), ...F.map(pending), pending(EXTRA)]);
+    expect(() => decideProductionMigrationPlan(extraPending, dryRun([...A, ...B, ...C, ...D, ...E, ...F, EXTRA]))).toThrow(new RegExp(`${EXTRA} is not in the reviewed manifest`));
     const extraApplied = list([...ALL.map(applied), applied(EXTRA)]);
     expect(() => decideProductionMigrationPlan(extraApplied, dryRun([]))).toThrow(/unknown migration/);
     expect(() => assertReleaseApplied(extraApplied)).toThrow(/unknown migration/);
-    const inside = list([...BASE.map(applied), ...A.map(pending), pending('20261101200000'), ...B.map(pending), ...C.map(pending), ...D.map(pending)]);
-    expect(() => decideProductionMigrationPlan(inside, dryRun([...A, '20261101200000', ...B, ...C, ...D]))).toThrow(/20261101200000 is not in the reviewed manifest/);
+    const inside = list([...BASE.map(applied), ...A.map(pending), pending('20261101200000'), ...B.map(pending), ...C.map(pending), ...D.map(pending), ...E.map(pending), ...F.map(pending)]);
+    expect(() => decideProductionMigrationPlan(inside, dryRun([...A, '20261101200000', ...B, ...C, ...D, ...E, ...F]))).toThrow(/20261101200000 is not in the reviewed manifest/);
     // Unknown file only in the dry-run (history is fine).
-    expect(() => decideProductionMigrationPlan(production, dryRun([...A, ...B, ...C, ...D, EXTRA]))).toThrow(/dry-run plan/);
-    expect(() => decideProductionMigrationPlan(afterA, dryRun([...B, ...C, ...D, EXTRA]))).toThrow(/dry-run plan/);
-    expect(() => decideProductionMigrationPlan(afterB, dryRun([...C, ...D, EXTRA]))).toThrow(/dry-run plan/);
-    expect(() => decideProductionMigrationPlan(afterC, dryRun([...D, EXTRA]))).toThrow(/dry-run plan/);
+    expect(() => decideProductionMigrationPlan(production, dryRun([...A, ...B, ...C, ...D, ...E, ...F, EXTRA]))).toThrow(/dry-run plan/);
+    expect(() => decideProductionMigrationPlan(afterA, dryRun([...B, ...C, ...D, ...E, ...F, EXTRA]))).toThrow(/dry-run plan/);
+    expect(() => decideProductionMigrationPlan(afterB, dryRun([...C, ...D, ...E, ...F, EXTRA]))).toThrow(/dry-run plan/);
+    expect(() => decideProductionMigrationPlan(afterC, dryRun([...D, ...E, ...F, EXTRA]))).toThrow(/dry-run plan/);
+    expect(() => decideProductionMigrationPlan(afterD, dryRun([...E, ...F, EXTRA]))).toThrow(/dry-run plan/);
+    expect(() => decideProductionMigrationPlan(afterE, dryRun([...F, EXTRA]))).toThrow(/dry-run plan/);
   });
 
   it('a dry-run with the right versions but a different file name is rejected', () => {
-    const expected = [...A_FILES, ...B_FILES, ...C_FILES, ...D_FILES];
+    const expected = [...A_FILES, ...B_FILES, ...C_FILES, ...D_FILES, ...E_FILES, ...F_FILES];
     for (const [i, f] of expected.entries()) {
       const files = expected.map((x, j) => (j === i ? `${v(f)}_evil.sql` : x));
       expect(() => decideProductionMigrationPlan(production, dryRunFiles(files)), f).toThrow(/dry-run file names/);
     }
     const renamedB = B_FILES.map((x, j) => (j === 0 ? `${v(x)}_platform_admin_MFA.sql` : x));
-    expect(() => decideProductionMigrationPlan(afterA, dryRunFiles([...renamedB, ...C_FILES, ...D_FILES]))).toThrow(/dry-run file names/);
-    expect(() => decideProductionMigrationPlan(afterB, dryRunFiles([`${C[0]}_telegram_bot_connection_v2.sql`, ...D_FILES]))).toThrow(/dry-run file names/);
-    expect(() => decideProductionMigrationPlan(afterC, dryRunFiles([`${D[0]}_stage_4b.sql`]))).toThrow(/dry-run file names/);
+    expect(() => decideProductionMigrationPlan(afterA, dryRunFiles([...renamedB, ...C_FILES, ...D_FILES, ...E_FILES, ...F_FILES]))).toThrow(/dry-run file names/);
+    expect(() => decideProductionMigrationPlan(afterB, dryRunFiles([`${C[0]}_telegram_bot_connection_v2.sql`, ...D_FILES, ...E_FILES, ...F_FILES]))).toThrow(/dry-run file names/);
+    expect(() => decideProductionMigrationPlan(afterC, dryRunFiles([`${D[0]}_stage_4b.sql`, ...E_FILES, ...F_FILES]))).toThrow(/dry-run file names/);
+    expect(() => decideProductionMigrationPlan(afterD, dryRunFiles([`${E[0]}_owner_links.sql`, ...F_FILES]))).toThrow(/dry-run file names/);
+    expect(() => decideProductionMigrationPlan(afterE, dryRunFiles([`${F[0]}_loyalty.sql`, F_FILES[1]!]))).toThrow(/dry-run file names/);
   });
 
   it('a dry-run that differs from the pending stages is rejected', () => {
-    const eleven = [...A, ...B, ...C, ...D];
-    const swapped = [eleven[1]!, eleven[0]!, ...eleven.slice(2)];
-    for (const plan of [[eleven[0]!], [...eleven].reverse(), swapped, eleven.filter((_, i) => i !== 6), [...BASE.slice(-1), ...eleven], [...A, ...B], [...A, ...B, ...C], []]) {
+    const fourteen = [...A, ...B, ...C, ...D, ...E, ...F];
+    const swapped = [fourteen[1]!, fourteen[0]!, ...fourteen.slice(2)];
+    for (const plan of [[fourteen[0]!], [...fourteen].reverse(), swapped, fourteen.filter((_, i) => i !== 6), [...BASE.slice(-1), ...fourteen], [...A, ...B], [...A, ...B, ...C], []]) {
       expect(() => decideProductionMigrationPlan(production, dryRun(plan)), plan.join(',')).toThrow(/dry-run plan/);
     }
     expect(() => decideProductionMigrationPlan(afterA, dryRun(B.slice(0, 3)))).toThrow(/dry-run plan/);
@@ -356,7 +406,8 @@ describe('strict CLI JSON parsing', () => {
   });
 });
 
-describe('check-production-migration-plan.ts (as run by supabase-deploy.yml)', () => {
+// Each test starts several `tsx` processes (a few seconds under load), so the default 5 s is too tight.
+describe('check-production-migration-plan.ts (as run by supabase-deploy.yml)', { timeout: 60_000 }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'migration-gate-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
   let n = 0;
@@ -376,62 +427,63 @@ describe('check-production-migration-plan.ts (as run by supabase-deploy.yml)', (
     return { status: r.status, stdout: r.stdout, stderr: r.stderr, output: readFileSync(out, 'utf8') };
   };
 
-  // Every CLI run starts a process, so this test keeps as many runs as before stage 4B; the fifth accepted state
-  // ("3A + 3B applied" → apply 4A,4B) has its own test right below.
-  it('plan: apply 3A,3B,4A,4B on the baseline fixture, 3B,4A,4B after 3A, 4B after 4A, skip when all applied', () => {
-    const now = run('plan', file(production), file(dryRun([...A, ...B, ...C, ...D])));
+  // Every CLI run starts a process, so this test keeps as many runs as before stage 4B; the other accepted states
+  // ("3A + 3B applied" → apply 4A,4B,4C,4D; "… + 4C applied" → apply 4D) have their own tests right below.
+  it('plan: apply 3A,3B,4A,4B,4C,4D on the baseline fixture, 3B,4A,4B,4C,4D after 3A, 4D after 4C, skip when all applied', () => {
+    const now = run('plan', file(production), file(dryRun([...A, ...B, ...C, ...D, ...E, ...F])));
     expect(now.status, now.stderr).toBe(0);
-    expect(now.output).toBe('mode=apply\nstages=3A,3B,4A,4B\n');
-    expect(now.stdout).toContain('apply whole stage(s) 3A,3B,4A,4B — exactly 11 file(s)');
+    expect(now.output).toBe('mode=apply\nstages=3A,3B,4A,4B,4C,4D\n');
+    expect(now.stdout).toContain('apply whole stage(s) 3A,3B,4A,4B,4C,4D — exactly 14 file(s)');
 
-    const next = run('plan', file(afterA), file(dryRun([...B, ...C, ...D])));
+    const next = run('plan', file(afterA), file(dryRun([...B, ...C, ...D, ...E, ...F])));
     expect(next.status, next.stderr).toBe(0);
-    expect(next.output).toBe('mode=apply\nstages=3B,4A,4B\n');
+    expect(next.output).toBe('mode=apply\nstages=3B,4A,4B,4C,4D\n');
 
-    const last = run('plan', file(afterC), file(dryRun(D)));
+    const last = run('plan', file(afterE), file(dryRun(F)));
     expect(last.status, last.stderr).toBe(0);
-    expect(last.output).toBe('mode=apply\nstages=4B\n');
-    expect(last.stdout).toContain('apply whole stage(s) 4B — exactly 1 file(s): 20261113090000_stage_4b_admin_discounts_broadcasts.sql');
+    expect(last.output).toBe('mode=apply\nstages=4D\n');
+    expect(last.stdout).toContain('apply whole stage(s) 4D — exactly 2 file(s): 20261125090000_loyalty_bonuses_discounts_promos.sql, 20261126090000_separate_telegram_bots.sql');
 
     const skip = run('plan', file(allApplied), file(dryRun([])));
     expect(skip.status, skip.stderr).toBe(0);
     expect(skip.output).toBe('mode=skip\nstages=\n');
   });
 
-  it('3A and 3B applied, 4A and 4B pending: plan applies 4A,4B and verify-applied fails', () => {
-    const plan = run('plan', file(afterB), file(dryRun([...C, ...D])));
+  it('3A and 3B applied, 4A, 4B, 4C and 4D pending: plan applies 4A,4B,4C,4D and verify-applied fails', () => {
+    const plan = run('plan', file(afterB), file(dryRun([...C, ...D, ...E, ...F])));
     expect(plan.status, plan.stderr).toBe(0);
-    expect(plan.output).toBe('mode=apply\nstages=4A,4B\n');
-    expect(plan.stdout).toContain('apply whole stage(s) 4A,4B — exactly 2 file(s)');
+    expect(plan.output).toBe('mode=apply\nstages=4A,4B,4C,4D\n');
+    expect(plan.stdout).toContain('apply whole stage(s) 4A,4B,4C,4D — exactly 5 file(s)');
     expect(run('verify-applied', file(afterB)).status).toBe(1);
   });
 
   it('plan: a rejected state exits non-zero and writes no mode', () => {
-    const r = run('plan', file(history([...BASE, A[0]!])), file(dryRun([...A.slice(1), ...B, ...C, ...D])));
+    const r = run('plan', file(history([...BASE, A[0]!])), file(dryRun([...A.slice(1), ...B, ...C, ...D, ...E, ...F])));
     expect(r.status).toBe(1);
     expect(r.output).toBe('');
     expect(r.stderr).toMatch(/partially applied stage 3A[\s\S]*Deployment stopped before any database change/);
   });
 
   it('plan --expect-stages: the re-check before db push must see exactly the planned stages', () => {
-    const ok = run('plan', file(production), file(dryRun([...A, ...B, ...C, ...D])), '--expect-stages', '3A,3B,4A,4B');
+    const full = file(dryRun([...A, ...B, ...C, ...D, ...E, ...F]));
+    const ok = run('plan', file(production), full, '--expect-stages', '3A,3B,4A,4B,4C,4D');
     expect(ok.status, ok.stderr).toBe(0);
-    const changed = run('plan', file(afterA), file(dryRun([...B, ...C, ...D])), '--expect-stages', '3A,3B,4A,4B');
+    const changed = run('plan', file(afterA), file(dryRun([...B, ...C, ...D, ...E, ...F])), '--expect-stages', '3A,3B,4A,4B,4C,4D');
     expect(changed.status).toBe(1);
     expect(changed.output).toBe('');
-    expect(changed.stderr).toMatch(/state changed since the plan step: expected apply of 3A,3B,4A,4B, now apply 3B,4A,4B/);
-    const nowSkip = run('plan', file(allApplied), file(dryRun([])), '--expect-stages', '4B');
+    expect(changed.stderr).toMatch(/state changed since the plan step: expected apply of 3A,3B,4A,4B,4C,4D, now apply 3B,4A,4B,4C,4D/);
+    const nowSkip = run('plan', file(allApplied), file(dryRun([])), '--expect-stages', '4D');
     expect(nowSkip.status).toBe(1);
-    expect(run('plan', file(production), file(dryRun([...A, ...B, ...C, ...D])), '--expect-stages').status).toBe(1);
-    expect(run('plan', file(production), file(dryRun([...A, ...B, ...C, ...D])), '--bogus', '3A').status).toBe(1);
+    expect(run('plan', file(production), full, '--expect-stages').status).toBe(1);
+    expect(run('plan', file(production), full, '--bogus', '3A').status).toBe(1);
   });
 
   it('verify-applied: succeeds only when every stage is wholly applied', () => {
     const ok = run('verify-applied', file(allApplied));
     expect(ok.status, ok.stderr).toBe(0);
-    expect(ok.stdout).toContain('stages 3A, 3B, 4A, 4B applied');
-    // afterC is production once the bot-connection release is applied and 4B is not yet (afterB: the test above).
-    for (const state of [production, afterA, afterC, history([...BASE, ...A, B[0]!]), history([...BASE, ...B])]) {
+    expect(ok.stdout).toContain('stages 3A, 3B, 4A, 4B, 4C, 4D applied');
+    // afterE is production once the owner-registration release is applied and 4D is not yet (afterB: the test above).
+    for (const state of [production, afterA, afterC, afterD, afterE, history([...BASE, ...A, B[0]!]), history([...BASE, ...B])]) {
       expect(run('verify-applied', file(state)).status).toBe(1);
     }
     expect(run('verify-applied').status).toBe(1);

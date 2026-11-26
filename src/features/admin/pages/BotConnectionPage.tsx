@@ -39,6 +39,21 @@ function StatusBadge({ view }: { view: BotView }) {
   return <Badge className="bg-emerald-600 text-white">Бот подключён</Badge>;
 }
 
+/** One Telegram bot, one purpose: the storefront bot must differ from the bot of «Уведомления» (checked on the server). */
+function SeparateBotWarning({ testId }: { testId: string }) {
+  return (
+    <Alert role="note" className="border-amber-500/70 bg-amber-50 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" data-testid={testId}>
+      <WarningCircleIcon aria-hidden weight="fill" />
+      <AlertDescription className="text-current">
+        <p>
+          <strong className="font-semibold">Важно:</strong> бот для витрины должен быть отдельным. Не используйте бота, уже подключённого в разделе
+          „Уведомления“. Для витрины и уведомлений нужны два разных Telegram-бота
+        </p>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 function Step({ n, title, children }: { n: number; title: string; children?: ReactNode }) {
   return (
     <li className="flex gap-3">
@@ -310,7 +325,8 @@ function WelcomeEditor({ view, onSaved }: { view: BotView; onSaved: (next: BotVi
 /**
  * «Подключение бота». The owner's own bot (created in @BotFather) greets buyers on /start and opens the shop's Mini App.
  * The token is sent to the server once and kept in Supabase Vault; the page only receives a masked hint. Independent of
- * «Уведомления»: their bot and chat are neither read nor changed here.
+ * «Уведомления»: their bot and chat are neither read nor changed here. The only rule shared with them: one Telegram bot serves
+ * one purpose, so the server refuses the bot of the notifications (bot_used_for_notifications) and nothing is saved.
  */
 export function BotConnectionPage() {
   const shop = useAdminShop();
@@ -433,6 +449,7 @@ export function BotConnectionPage() {
                   <p className="text-sm text-muted-foreground">
                     Отправьте команду <span className="rounded bg-muted px-1 font-mono">/newbot</span> и следуйте инструкциям BotFather.
                   </p>
+                  <SeparateBotWarning testId="bot-separate-bot-warning" />
                 </Step>
                 <Step n={3} title="Скопируйте выданный BotFather API Token.">
                   <Alert>
@@ -493,6 +510,7 @@ export function BotConnectionPage() {
                     Вставьте токен нового бота (или новый токен этого же бота). Текущий бот продолжит работать, пока новый не будет полностью подключён.
                     Приветствие и кнопки сохранятся.
                   </p>
+                  <SeparateBotWarning testId="bot-replace-separate-bot-warning" />
                   <ConnectForm pending={connect.isPending} submitLabel="Подключить нового бота" onSubmit={startConnect} />
                 </div>
               )}

@@ -204,7 +204,7 @@ export async function createMember(shopId: string, role: 'owner' | 'manager'): P
 
 /** Calls an admin Edge Function as the signed-in user of `client` (or with an explicit bearer / none). */
 export async function callAdminFunction(
-  name: 'notification-settings' | 'platform-admin' | 'bot-connection',
+  name: 'notification-settings' | 'platform-admin' | 'bot-connection' | 'loyalty',
   as: Db | { bearer: string } | null,
   body: unknown,
 ) {
@@ -256,7 +256,7 @@ export async function initDataFor(
   );
 }
 
-export async function callFunction(name: 'checkout' | 'my-orders', initData: string | null, body: unknown) {
+export async function callFunction(name: 'checkout' | 'my-orders' | 'cart-quote', initData: string | null, body: unknown) {
   const res = await fetch(`${env.url}/functions/v1/${name}`, {
     method: 'POST',
     headers: {

@@ -6,12 +6,14 @@ import { EmptyState, ErrorState, PageSpinner } from '@/components/state-views';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { BONUS_UNIT_MINOR, formatBonuses } from '@/domain/loyalty';
 import { formatMoney } from '@/domain/money';
 import { isOrderStatus, ORDER_STATUS_LABELS, ORDER_TRANSITIONS, type OrderStatus } from '@/domain/order-status';
 import { queryKeys } from '@/domain/query-keys';
 import { cn } from '@/lib/utils';
 import { useAdminShop } from '../admin-context';
 import { fetchAdminOrders, setOrderStatus, type AdminOrder } from '../api';
+import { loyaltyApi } from '../functions-api';
 
 const FILTERS: Array<{ value: OrderStatus | 'active' | 'all'; label: string }> = [
   { value: 'active', label: 'В работе' },
@@ -30,6 +32,51 @@ const ACTION_LABELS: Record<OrderStatus, string> = {
   completed: 'Завершить',
   cancelled: 'Отменить',
 };
+
+/** What the discount of an order was: «Скидка за сумму заказа 5% (от 3 000 ₽)» / «Промокод WELCOME300». */
+function discountTitle(order: AdminOrder): string {
+  const info = (order.discount_info ?? {}) as { percent?: number | null; min_total_minor?: number; code?: string; kind?: string; fixed_minor?: number | null };
+  if (order.discount_type === 'promo') {
+    const value = info.kind === 'percent' ? `${info.percent}%` : formatMoney(info.fixed_minor ?? 0, order.currency);
+    return `Промокод ${info.code ?? ''} (${value})`;
+  }
+  return `Скидка за сумму заказа ${info.percent ?? ''}%${info.min_total_minor ? ` (от ${formatMoney(info.min_total_minor, order.currency)})` : ''}`;
+}
+
+/** Every discount and the bonuses spent / credited, so the administrator sees how the total was formed. Nothing for a plain order. */
+function OrderPriceBreakdown({ order }: { order: AdminOrder }) {
+  const hasBreakdown = order.items_total_minor != null && (order.discount_minor > 0 || order.bonus_spent > 0);
+  if (!hasBreakdown && order.bonus_accrued == null) return null;
+  return (
+    <div className="space-y-1 rounded-md border bg-muted/30 p-3 text-sm" data-testid="admin-order-breakdown">
+      {hasBreakdown && (
+        <>
+          <p className="flex justify-between gap-2">
+            <span className="text-muted-foreground">Сумма товаров</span>
+            <span className="tabular-nums">{formatMoney(order.items_total_minor!, order.currency)}</span>
+          </p>
+          {order.discount_minor > 0 && (
+            <p className="flex justify-between gap-2" data-testid="admin-order-discount">
+              <span>{discountTitle(order)}</span>
+              <span className="tabular-nums">−{formatMoney(order.discount_minor, order.currency)}</span>
+            </p>
+          )}
+          {order.bonus_spent > 0 && (
+            <p className="flex justify-between gap-2" data-testid="admin-order-bonus-spent">
+              <span>Оплачено бонусами ({formatBonuses(order.bonus_spent)})</span>
+              <span className="tabular-nums">−{formatMoney(order.bonus_spent * BONUS_UNIT_MINOR, order.currency)}</span>
+            </p>
+          )}
+        </>
+      )}
+      {order.bonus_accrued != null && (
+        <p className="text-emerald-500" data-testid="admin-order-bonus-accrued">
+          Покупателю начислено {formatBonuses(order.bonus_accrued)}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function OrderCard({ order, onChange }: { order: AdminOrder; onChange: (s: OrderStatus) => void }) {
   const status = isOrderStatus(order.status) ? order.status : 'new';
@@ -78,6 +125,7 @@ function OrderCard({ order, onChange }: { order: AdminOrder; onChange: (s: Order
           </li>
         ))}
       </ul>
+      <OrderPriceBreakdown order={order} />
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold tabular-nums">Итого {formatMoney(order.total_minor, order.currency)}</span>
         <div className="ml-auto flex flex-wrap gap-2">
@@ -103,8 +151,15 @@ export function OrdersPage() {
 
   const change = useMutation({
     mutationFn: ({ id, status }: { id: string; status: OrderStatus }) => setOrderStatus(id, status),
-    onSuccess: () => {
-      toast.success('Статус обновлён');
+    onSuccess: (order, { status }) => {
+      // The bonuses are credited by the confirmation itself (in the database); the message to the buyer is sent right after.
+      const accrued = (order as { bonus_accrued?: number | null } | null)?.bonus_accrued ?? 0;
+      if (status === 'confirmed' && accrued > 0) {
+        toast.success(`Статус обновлён. Покупателю начислено ${formatBonuses(accrued)}`);
+        void loyaltyApi.dispatch(shop.id).catch(() => undefined);
+      } else {
+        toast.success('Статус обновлён');
+      }
       void qc.invalidateQueries({ queryKey: ['admin', 'shop', shop.id] });
       void qc.invalidateQueries({ queryKey: ['shop', shop.id] });
     },
