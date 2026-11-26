@@ -43,12 +43,12 @@ jobs:
     # before db push (budget, all in minutes, kept consistent by scripts/lib/workflows.test.ts):
     #   pre-push steps (non-mutating, each bounded)  65  = sum of their step timeouts, incl. the budget check
     #   reserve: Apply migrations + Verify            60  no step timeout (a database mutation is never cut short)
-    #   Edge Functions: 6 × 10 + list 5               65
+    #   Edge Functions: 9 × 10 + list 5               95
     #   runner margin (set up job, post steps)        10
-    #   job timeout                                   200 (GitHub maximum 360)
+    #   job timeout                                   230 (GitHub maximum 360)
     # The step bounds alone do not prove the reserve: the step "Time budget left for db push" measures the real time
     # since the guard and refuses to start the push after minute 65 (fail-closed, before any database change).
-    timeout-minutes: 200
+    timeout-minutes: 230
     # Secrets live in the `production` environment: they are released only after the owner's approval and only to
     # runs from main (environment deployment branch policy). The `if` keeps a run from any other ref from even asking.
     if: github.ref == 'refs/heads/main'
@@ -189,9 +189,9 @@ jobs:
         if: steps.plan.outputs.mode == 'apply'
         timeout-minutes: 2
         env:
-          JOB_TIMEOUT_MINUTES: '200'
+          JOB_TIMEOUT_MINUTES: '230'
           PUSH_RESERVE_MINUTES: '60'
-          FUNCTIONS_MINUTES: '65'
+          FUNCTIONS_MINUTES: '95'
           RUNNER_MARGIN_MINUTES: '10'
         run: |
           set -euo pipefail
@@ -259,6 +259,21 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: pnpm exec supabase functions deploy telegram-webhook --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Edge Function owner-registration
+        timeout-minutes: 10
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: pnpm exec supabase functions deploy owner-registration --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Edge Function loyalty
+        timeout-minutes: 10
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: pnpm exec supabase functions deploy loyalty --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Edge Function cart-quote
+        timeout-minutes: 10
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: pnpm exec supabase functions deploy cart-quote --project-ref "$SUPABASE_PROJECT_REF"
       - name: List deployed Edge Functions
         timeout-minutes: 5
         env:

@@ -39,7 +39,9 @@
     "platform-admin:mfa-reset": "tsx scripts/platform-admin-mfa-reset.ts",
     "dev:tg-link": "tsx scripts/dev-telegram-link.ts",
     "telegram:mock": "tsx scripts/telegram-mock.ts",
-    "dev:demo-accounts": "tsx scripts/dev-demo-accounts.ts"
+    "dev:demo-accounts": "tsx scripts/dev-demo-accounts.ts",
+    "dev:loyalty-check": "tsx scripts/dev-loyalty-check.ts",
+    "dev:bot-check": "tsx scripts/dev-bot-separation-check.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

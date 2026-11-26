@@ -244,7 +244,8 @@ otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
 otp_expiry = 3600
 
-# Use a production-ready SMTP server
+# Use a production-ready SMTP server. The hosted project's SMTP (Resend) is set in the Dashboard, not here: see SETUP.md.
+# This block is for `supabase config push` only; never put the API key in this file.
 # [auth.email.smtp]
 # enabled = true
 # host = "smtp.sendgrid.net"
@@ -428,6 +429,22 @@ verify_jwt = false
 
 # Called by Telegram (no Supabase JWT): authenticated by the per-connection secret_token header, see the function.
 [functions.telegram-webhook]
+verify_jwt = false
+
+# Owner self-registration by an individual one-time link (20261119090000). Public: the credential is the link token,
+# checked against its SHA-256 in PostgreSQL. It creates the account with the Auth Admin API (service role), so
+# [auth] enable_signup stays false and [auth.email] enable_confirmations is not touched. The «claim» action carries the buyer's own access token, which the
+# function verifies itself.
+[functions.owner-registration]
+verify_jwt = false
+
+# «Бонусы и промокоды» (20261125090000). `loyalty`: admin tab, verifies the caller's access token itself like the other
+# admin functions and passes only that verified user id to service-role RPCs, which re-check the shop's owner / member.
+# `cart-quote`: the buyer's cart preview, authenticated by Telegram initData like checkout / my-orders.
+[functions.loyalty]
+verify_jwt = false
+
+[functions.cart-quote]
 verify_jwt = false
 
 # [edge_runtime.secrets]

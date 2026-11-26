@@ -12,18 +12,18 @@
  * that is missing from the remote history, in version order (and, without --include-all, refuses when such a
  * migration is older than the last applied one). `--dry-run` prints exactly that set. Therefore the gate never
  * "chooses" a stage: it derives which whole stages are pending and requires the dry-run to be exactly their files.
- * Whenever several stages are pending, a single `db push` applies them in stage order (3A, 3B, 4A, then 4B); the
- * gate reports that as e.g. `apply 3A,3B,4A,4B`.
+ * Whenever several stages are pending, a single `db push` applies them in stage order (3A, 3B, 4A, 4B, then 4C); the
+ * gate reports that as e.g. `apply 3A,3B,4A,4B,4C`.
  *
  * Reviewed manifest (explicit file names, no patterns, append-only):
  *   * APPLIED_BASELINE_MIGRATION_FILES — reviewed history that must already be applied before any stage
  *     (incl. 20261026090000 / 20261026100000, which belong to the baseline, not to a release stage);
- *   * MIGRATION_STAGES — release stages in order (3A, 3B, 4A, then 4B); each is applied only as a whole.
+ *   * MIGRATION_STAGES — release stages in order (3A, 3B, 4A, 4B, then 4C); each is applied only as a whole.
  * The local migration directory and the local column of the history must be exactly this manifest.
  *
  * Accepted states (anything else throws, so the job stops before the database is changed):
  *   * apply — baseline applied; stages are a fully-applied prefix followed by a fully-pending suffix
- *     (pending = [3A, 3B, 4A, 4B], [3B, 4A, 4B], [4A, 4B] or [4B]); the dry-run plans exactly the pending stages'
+ *     (pending = [3A, 3B, 4A, 4B, 4C], [3B, 4A, 4B, 4C], [4A, 4B, 4C], [4B, 4C] or [4C]); the dry-run plans exactly the pending stages'
  *     file names in order.
  *   * skip  — baseline and all stages confirmed applied in history, and the dry-run independently reports upToDate
  *     with an empty plan. An empty dry-run alone is never enough.
@@ -80,6 +80,29 @@ export const MIGRATION_STAGES = [
   {
     id: '4B',
     files: ['20261113090000_stage_4b_admin_discounts_broadcasts.sql'],
+  },
+  // Expand: owner self-registration by an individual one-time link (platform-admin «Ссылка владельцу», public Edge
+  // Function `owner-registration`). Additive only: new private tables (links, attempt counter), one nullable column on
+  // private.shop_handover_reservations, new service-role RPCs, one trigger on public.shops that fires only when a shop
+  // becomes 'deleting'; platform_list_shops gains a key. Backward compatible with the deployed frontend and functions.
+  {
+    id: '4C',
+    files: ['20261119090000_owner_registration_links.sql'],
+  },
+  // Expand: bonus program, automatic order-total discounts and promo codes («Бонусы и промокоды»), all OFF by default per
+  // shop. Additive only: new private tables, new nullable / defaulted columns on public.orders, new service-role RPCs
+  // (create_order_v3 wraps the unchanged create_order_v2 and delegates to it for a shop without these features);
+  // order_to_json, admin_set_order_status and private.shop_delete_begin keep their signatures and grants. Backward
+  // compatible with the deployed frontend and functions.
+  // Second file of this (still unpublished) stage: one Telegram bot serves one purpose of a shop («Уведомления» OR
+  // «Подключение бота»). Additive only: one new private registry table with its two triggers (they fire on the connection
+  // tables of 20261025090000 / 20261107090000 and release a bot with its connection), one new service-role RPC; two existing
+  // RPCs (bot_save_connection, notify_save_settings) and bot_assert_available are replaced in place with the same signature
+  // and grants. The previous Edge Functions keep working: a notification save without a Bot ID in its metadata is the only
+  // thing the new notify_save_settings refuses, and the functions of this release always send it.
+  {
+    id: '4D',
+    files: ['20261125090000_loyalty_bonuses_discounts_promos.sql', '20261126090000_separate_telegram_bots.sql'],
   },
 ] as const;
 

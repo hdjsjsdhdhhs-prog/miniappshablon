@@ -26,7 +26,7 @@ const tmpRoot = mkdtempSync(join(tmpdir(), 'migration-integrity-'));
 afterAll(() => rmSync(tmpRoot, { recursive: true, force: true }));
 let n = 0;
 type Eol = 'as-is' | 'lf' | 'crlf';
-/** Copy the 22 real migrations into a fresh directory, optionally with all line endings forced to LF or CRLF. */
+/** Copy the 25 real migrations into a fresh directory, optionally with all line endings forced to LF or CRLF. */
 function copyMigrations(eol: Eol = 'as-is'): string {
   const dir = join(tmpRoot, `m${n++}`);
   mkdirSync(dir);
@@ -50,12 +50,12 @@ const check = (dir: string, manifest?: readonly MigrationIntegrityEntry[]) => ()
 const differs = (file: string) => new RegExp(`content differs from the approved SHA-256 in 1 file\\(s\\):\\n  ${file}: approved [0-9a-f]{64}, actual [0-9a-f]{64}$`);
 
 describe('integrity manifest', () => {
-  it('has exactly one well-formed SHA-256 per reviewed migration, in the gate manifest order (11 + 5 + 4 + 1 + 1 = 22)', () => {
-    expect(MIGRATION_INTEGRITY_MANIFEST).toHaveLength(22);
+  it('has exactly one well-formed SHA-256 per reviewed migration, in the gate manifest order (11 + 5 + 4 + 1 + 1 + 1 + 2 = 25)', () => {
+    expect(MIGRATION_INTEGRITY_MANIFEST).toHaveLength(25);
     expect(MIGRATION_INTEGRITY_MANIFEST.map((e) => e.file)).toEqual([...REVIEWED_MIGRATION_FILES]);
     expect(REVIEWED_MIGRATION_FILES).toEqual([...APPLIED_BASELINE_MIGRATION_FILES, ...MIGRATION_STAGES.flatMap((s) => s.files)]);
     for (const { file, sha256 } of MIGRATION_INTEGRITY_MANIFEST) expect(sha256, file).toMatch(/^[0-9a-f]{64}$/);
-    expect(new Set(MIGRATION_INTEGRITY_MANIFEST.map((e) => e.sha256)).size).toBe(22);
+    expect(new Set(MIGRATION_INTEGRITY_MANIFEST.map((e) => e.sha256)).size).toBe(25);
     expect(() => assertIntegrityManifestValid()).not.toThrow();
   });
 
@@ -76,7 +76,7 @@ describe('integrity manifest', () => {
     );
     expect(() => assertIntegrityManifestValid([...m, m[0]!])).toThrow(new RegExp(`lists ${BASE_FILE} twice`));
     expect(() => assertIntegrityManifestValid([m[1]!, m[0]!, ...m.slice(2)])).toThrow(/order differs/);
-    expect(() => assertIntegrityManifestValid([...m, null as unknown as MigrationIntegrityEntry])).toThrow(/entry 22 is malformed/);
+    expect(() => assertIntegrityManifestValid([...m, null as unknown as MigrationIntegrityEntry])).toThrow(/entry 25 is malformed/);
   });
 
   it('rejects malformed hash values', () => {
@@ -127,7 +127,7 @@ describe('canonical content', () => {
 });
 
 describe('assertMigrationIntegrity: accepted', () => {
-  it('the 22 real migrations of this branch match their approved SHA-256', () => {
+  it('the 25 real migrations of this branch match their approved SHA-256', () => {
     const verified = assertMigrationIntegrity();
     expect(verified).toEqual(MIGRATION_INTEGRITY_MANIFEST.map(({ file, sha256 }) => ({ file, sha256 })));
   });
@@ -269,8 +269,8 @@ describe('CLI scripts (independent of the working directory)', () => {
       const r = run('check-migration-integrity.ts', [], cwd);
       expect(r.status, r.stderr).toBe(0);
       for (const { file, sha256 } of MIGRATION_INTEGRITY_MANIFEST) expect(r.stdout).toContain(`OK  ${sha256}  ${file}`);
-      expect(r.stdout).toContain('all 22 reviewed migration file(s)');
-      expect(r.stdout).toContain('(baseline 11, 3A 5, 3B 4, 4A 1, 4B 1)');
+      expect(r.stdout).toContain('all 25 reviewed migration file(s)');
+      expect(r.stdout).toContain('(baseline 11, 3A 5, 3B 4, 4A 1, 4B 1, 4C 1, 4D 2)');
     }
   });
 
@@ -317,7 +317,7 @@ describe('CLI scripts (independent of the working directory)', () => {
     expect(verify.status).toBe(1);
     expect(verify.stdout).toBe('');
     expect(verify.stderr).toContain(`${B_FILE}: approved`);
-    const plan = runCopy('check-production-migration-plan.ts', ['plan', list, list, '--expect-stages', '3A,3B,4A,4B']);
+    const plan = runCopy('check-production-migration-plan.ts', ['plan', list, list, '--expect-stages', '3A,3B,4A,4B,4C,4D']);
     expect(plan.status).toBe(1);
     expect(plan.stderr).toMatch(/content differs[\s\S]*Deployment stopped before any database change/);
   });
@@ -331,11 +331,11 @@ describe('CLI scripts (independent of the working directory)', () => {
     writeFileSync(out, '');
     const plan = run('check-production-migration-plan.ts', ['plan', list, dry], elsewhere, { GITHUB_OUTPUT: out });
     expect(plan.status, plan.stderr).toBe(0);
-    expect(plan.stdout).toMatch(/^Integrity: 22 reviewed migration file\(s\) match the approved SHA-256\.\nPlan: skip/);
+    expect(plan.stdout).toMatch(/^Integrity: 25 reviewed migration file\(s\) match the approved SHA-256\.\nPlan: skip/);
     expect(readFileSync(out, 'utf8')).toBe('mode=skip\nstages=\n');
     const verify = run('check-production-migration-plan.ts', ['verify-applied', list], elsewhere);
     expect(verify.status, verify.stderr).toBe(0);
-    expect(verify.stdout).toMatch(/^Integrity: 22 reviewed migration file\(s\) match the approved SHA-256\.\nVerified:/);
+    expect(verify.stdout).toMatch(/^Integrity: 25 reviewed migration file\(s\) match the approved SHA-256\.\nVerified:/);
   });
 });
 
@@ -350,11 +350,11 @@ describe('stock status: Expand only, no Contract (3C) in this release', () => {
       .replace(/\s+/g, ' ')
       .toLowerCase();
 
-  it('the release has exactly the Expand stages 3A, 3B, 4A and 4B; no 3C stage and no migration after 4B', () => {
-    expect(MIGRATION_STAGES.map((s) => s.id)).toEqual(['3A', '3B', '4A', '4B']);
+  it('the release has exactly the Expand stages 3A, 3B, 4A, 4B, 4C and 4D; no 3C stage and no migration after 4D', () => {
+    expect(MIGRATION_STAGES.map((s) => s.id)).toEqual(['3A', '3B', '4A', '4B', '4C', '4D']);
     expect(MIGRATION_STAGES[1].files).toContain(STOCK_FILE);
     expect(readdirSync(DEFAULT_MIGRATIONS_DIR).sort()).toEqual([...REVIEWED_MIGRATION_FILES].sort());
-    expect(REVIEWED_MIGRATION_FILES.at(-1)).toBe('20261113090000_stage_4b_admin_discounts_broadcasts.sql');
+    expect(REVIEWED_MIGRATION_FILES.at(-1)).toBe('20261126090000_separate_telegram_bots.sql');
   });
 
   it('4B (admin, discounts, Telegram communications) is Expand: existing tables only gain nullable columns, nothing is dropped or revoked from a table, every public function is service_role only', () => {
